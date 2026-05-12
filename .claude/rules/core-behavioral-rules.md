@@ -12,7 +12,7 @@
 ## Execution Gates
 - Never execute without explicit user approval. Wait to be told.
 - Show commit message and wait for approval before committing.
-- Source edits require plan review approval before proceeding.
+- Source edits require /plan mode + plan-reviewer SHIP for non-trivial changes. Trivial-bypass: touch marker with stated judgment.
 - Never proceed while a review agent is running. Wait for its verdict.
 - REVISE from any warden means re-run after fixes until SHIP. Never touch markers, commit, or proceed on REVISE — no exceptions, no "close enough," no time-pressure rationalization.
 - Quality over speed by default. Never shortcut a warden loop, skip a review round, or rationalize lower standards because of time pressure, autonomy grants, or late-session fatigue. Only skip when the user explicitly says to prioritize speed.
