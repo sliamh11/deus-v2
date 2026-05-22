@@ -5,7 +5,7 @@ governs:
   - src/startup-gate.ts
   - src/checks.ts
   - setup/
-last_verified: "2026-05-23T00:35:00" # auto-bump (auto-merge-lazy-eval)
+last_verified: "2026-05-23T00:40:00" # auto-bump (auto-merge-admin) # auto-bump (auto-merge-lazy-eval)
 test_tasks:
   - "Refactor src/router.ts into smaller modules"
   - "Add a new utility function for parsing timestamps"

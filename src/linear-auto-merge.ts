@@ -105,7 +105,16 @@ async function mergePr(
   try {
     await execFileAsync(
       'gh',
-      ['pr', 'merge', prNumber, '--repo', repo, '--squash', '--delete-branch'],
+      [
+        'pr',
+        'merge',
+        prNumber,
+        '--repo',
+        repo,
+        '--squash',
+        '--delete-branch',
+        '--admin',
+      ],
       { timeout: MERGE_TIMEOUT_MS },
     );
     return { merged: true };
