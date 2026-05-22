@@ -17,6 +17,7 @@ import {
 } from './db.js';
 import { logger } from './logger.js';
 import { extractPrUrl } from './pr-url-extractor.js';
+import { macosNotify } from './linear-notifications.js';
 import type { LinearContext } from './linear-dispatcher.js';
 
 const execFileAsync = promisify(execFile);
@@ -165,6 +166,7 @@ export async function attemptAutoMerge(
           body: `**Auto-merged** - PR ${prUrl} merged after CI passed.`,
         });
       }
+      macosNotify('Deus', `Auto-merged → Done (${prUrl.split('/').pop()})`);
       logger.info({ issueId, prUrl }, 'auto-merge: merged and moved to Done');
     } else {
       logger.warn(

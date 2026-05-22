@@ -14,6 +14,7 @@ import {
   getGateCommentId,
 } from './db.js';
 import { triggerAutoMerge } from './linear-auto-merge.js';
+import { macosNotify } from './linear-notifications.js';
 
 const DEFAULT_WEBHOOK_PORT = 3005;
 
@@ -391,6 +392,7 @@ async function handleIssueUpdate(
 
     finalVerdict = verdict;
     updateWebhookEventStatus(eventKey, 'done', { verdict });
+    macosNotify('Deus', `${data.identifier}: ${gateSpec.name} ${verdict}`);
     logger.info(
       { issueId: data.id, gate: gateSpec.name, verdict, mode: effectiveMode },
       'linear-webhook: gate evaluation complete',

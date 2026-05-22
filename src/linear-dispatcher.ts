@@ -9,6 +9,7 @@ import { FatalError, RetryableError } from './errors/index.js';
 import { fireAndForget } from './async/index.js';
 import { extractPrUrl } from './pr-url-extractor.js';
 import { upsertIssuePr } from './db.js';
+import { notifyPipelineStep } from './linear-notifications.js';
 import { defaultSession } from './agent-runtimes/types.js';
 import type {
   RunContext,
@@ -286,6 +287,7 @@ export async function executeAgentRun(
 async function runIssue(
   ctx: LinearContext,
   issueId: string,
+  identifier: string,
   runContext: RunContext,
 ): Promise<void> {
   const workingState = ctx.stateByName.get('Agent Working')!;
@@ -297,6 +299,10 @@ async function runIssue(
       'linear-dispatcher: failed to move issue to Agent Working',
     );
   }
+
+  notifyPipelineStep(ctx, issueId, identifier, 'Agent started working').catch(
+    () => {},
+  );
 
   const { text, error } = await executeAgentRun(ctx, runContext);
 
@@ -324,6 +330,13 @@ async function runIssue(
       await ctx.client.createComment({ issueId, body });
       const reviewState = ctx.stateByName.get('In Review')!;
       await ctx.client.updateIssue(issueId, { stateId: reviewState.id });
+      notifyPipelineStep(
+        ctx,
+        issueId,
+        identifier,
+        prUrl ? `PR created → In Review` : 'Agent done → In Review',
+        prUrl ?? undefined,
+      ).catch(() => {});
       logger.info({ issueId }, 'linear-dispatcher: issue moved to In Review');
     }
   } catch (err) {
@@ -416,7 +429,7 @@ async function pollLinear(): Promise<void> {
     };
 
     ctx.deps.queue.enqueueTask(chatJid, issue.id, () =>
-      runIssue(ctx, issue.id, runContext),
+      runIssue(ctx, issue.id, issue.identifier, runContext),
     );
 
     dispatched++;
