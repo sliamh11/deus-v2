@@ -195,9 +195,17 @@ export function buildScopedIssuePrompt(
       .join('\n\n');
     parts.push(`<comments>\n${commentBlock}\n</comments>`);
   }
+  const hasAgentHistory = comments.some(
+    (c) =>
+      c.body.includes('Agent run failed') ||
+      c.body.includes('**Auto-merged**') ||
+      c.body.includes('**Auto-merge failed**') ||
+      c.body.includes('PR URL in your response'),
+  );
+
   parts.push(
     `<instructions>
-Read the scope block in the task description. Follow the implementation plan and satisfy all acceptance criteria.
+${hasAgentHistory ? 'A previous agent attempt exists. Review the comments above — check what was already committed, pushed, or opened as a PR. Continue from where the last attempt stopped. Do not redo completed steps.\n\n' : ''}Read the scope block in the task description. Follow the implementation plan and satisfy all acceptance criteria.
 
 ## Git Workflow
 1. Create a feature branch: \`git checkout -b feat/${issueIdentifier.toLowerCase().replace(/[^a-z0-9-]/g, '')}-<short-desc>\`
