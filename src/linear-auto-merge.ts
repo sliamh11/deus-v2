@@ -8,7 +8,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-import { LINEAR_AUTO_MERGE } from './config.js';
+import { isAutoMergeEnabled } from './config.js';
 import {
   getIssuePr,
   getPendingAutoMerges,
@@ -125,7 +125,7 @@ export async function attemptAutoMerge(
   prUrl: string,
   attempt = 0,
 ): Promise<void> {
-  if (!LINEAR_AUTO_MERGE) return;
+  if (!isAutoMergeEnabled()) return;
 
   const checks = await queryPrChecks(prUrl);
   logger.info(
@@ -194,7 +194,7 @@ export async function attemptAutoMerge(
 export async function sweepPendingAutoMerges(
   ctx: LinearContext,
 ): Promise<void> {
-  if (!LINEAR_AUTO_MERGE) return;
+  if (!isAutoMergeEnabled()) return;
 
   const pending = getPendingAutoMerges();
   if (pending.length === 0) return;
@@ -215,7 +215,7 @@ export async function triggerAutoMerge(
   ctx: LinearContext,
   issueId: string,
 ): Promise<void> {
-  if (!LINEAR_AUTO_MERGE) return;
+  if (!isAutoMergeEnabled()) return;
 
   let pr = getIssuePr(issueId);
 

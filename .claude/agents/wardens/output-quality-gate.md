@@ -1,7 +1,7 @@
 ---
 name: output-quality-gate
 gate_to: "In Review"
-allowed_from: ["Agent Working"]
+allowed_from: ["Agent Working", "In Progress"]
 mode: advise
 fallback: SHIP
 cooldown_minutes: 60
