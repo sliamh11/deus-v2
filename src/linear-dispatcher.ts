@@ -46,6 +46,7 @@ export interface GateLabels {
   evaluating?: string;
   scoped?: string;
   revise?: string;
+  wardenSkip?: string;
   effort: Record<number, string>;
   complexity: Record<number, string>;
 }
@@ -518,6 +519,10 @@ export async function initLinearContext(
           const label = await created.issueLabel;
           if (label) gateLabels[def.key] = label.id;
         }
+      }
+
+      if (labelMap.has('warden:skip')) {
+        gateLabels.wardenSkip = labelMap.get('warden:skip');
       }
 
       for (let i = 1; i <= 5; i++) {

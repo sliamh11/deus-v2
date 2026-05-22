@@ -148,7 +148,18 @@ export async function attemptAutoMerge(
       updatePrAutoMergeState(issueId, 'merged');
       const doneState = ctx.stateByName.get('Done');
       if (doneState) {
-        await ctx.client.updateIssue(issueId, { stateId: doneState.id });
+        const labelUpdate: Record<string, unknown> = {
+          stateId: doneState.id,
+        };
+        const addIds: string[] = [];
+        const removeIds: string[] = [];
+        if (ctx.gateLabels.wardenSkip) addIds.push(ctx.gateLabels.wardenSkip);
+        if (ctx.gateLabels.revise) removeIds.push(ctx.gateLabels.revise);
+        if (ctx.gateLabels.evaluating)
+          removeIds.push(ctx.gateLabels.evaluating);
+        if (addIds.length > 0) labelUpdate.addedLabelIds = addIds;
+        if (removeIds.length > 0) labelUpdate.removedLabelIds = removeIds;
+        await ctx.client.updateIssue(issueId, labelUpdate);
         await ctx.client.createComment({
           issueId,
           body: `**Auto-merged** - PR ${prUrl} merged after CI passed.`,
