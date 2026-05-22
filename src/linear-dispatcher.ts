@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { LinearClient } from '@linear/sdk';
+import { DATA_DIR } from './config.js';
 import { parse as parseYaml } from 'yaml';
 import { logger } from './logger.js';
 import { PROJECT_ROOT } from './config.js';
@@ -39,6 +40,14 @@ interface WorkflowState {
   name: string;
 }
 
+export interface GateLabels {
+  evaluating?: string;
+  scoped?: string;
+  revise?: string;
+  effort: Record<number, string>;
+  complexity: Record<number, string>;
+}
+
 export interface LinearContext {
   client: LinearClient;
   stateByName: Map<string, WorkflowState>;
@@ -48,6 +57,8 @@ export interface LinearContext {
   dispatchGroup: RegisteredGroup;
   inFlightDispatch: Set<string>;
   inFlightGate: Set<string>;
+  gateLabels: GateLabels;
+  teamId: string;
 }
 
 let _timer: ReturnType<typeof setInterval> | null = null;
@@ -177,6 +188,21 @@ export async function executeAgentRun(
     }
     if (event.type === 'error') {
       error = event.error;
+    }
+    // Signal container to exit after first result (one-shot gate runs)
+    if (event.type === 'turn_complete') {
+      try {
+        const inputDir = path.join(
+          DATA_DIR,
+          'ipc',
+          runContext.groupFolder,
+          'input',
+        );
+        fs.mkdirSync(inputDir, { recursive: true });
+        fs.writeFileSync(path.join(inputDir, '_close'), '');
+      } catch {
+        /* best-effort */
+      }
     }
   };
 
@@ -359,6 +385,81 @@ export async function initLinearContext(
       deps.registerGroup(DISPATCH_GROUP_JID, dispatchGroup);
     }
 
+    // Discover or create gate status labels for board-level visibility
+    const gateLabels: GateLabels = { effort: {}, complexity: {} };
+    const statusDefs: Array<{
+      key: 'evaluating' | 'scoped' | 'revise';
+      name: string;
+      color: string;
+    }> = [
+      { key: 'evaluating', name: 'Warden: Evaluating', color: '#f59e0b' },
+      { key: 'scoped', name: 'Scoped', color: '#16a34a' },
+      { key: 'revise', name: 'Warden: Revise', color: '#dc2626' },
+    ];
+    // Effort 1-5: green→yellow→red gradient
+    const effortColors = [
+      '#16a34a',
+      '#65a30d',
+      '#ca8a04',
+      '#ea580c',
+      '#dc2626',
+    ];
+    // Complexity 1-5: blue gradient
+    const complexityColors = [
+      '#93c5fd',
+      '#60a5fa',
+      '#3b82f6',
+      '#2563eb',
+      '#1d4ed8',
+    ];
+    try {
+      const allLabels = await client.issueLabels();
+      const labelMap = new Map(allLabels.nodes.map((l) => [l.name, l.id]));
+
+      for (const def of statusDefs) {
+        if (labelMap.has(def.name)) {
+          gateLabels[def.key] = labelMap.get(def.name);
+        } else {
+          const created = await client.createIssueLabel({
+            name: def.name,
+            color: def.color,
+            teamId,
+          });
+          const label = await created.issueLabel;
+          if (label) gateLabels[def.key] = label.id;
+        }
+      }
+
+      for (let i = 1; i <= 5; i++) {
+        const eName = `Effort: ${i}`;
+        const cName = `Complexity: ${i}`;
+        if (labelMap.has(eName)) {
+          gateLabels.effort[i] = labelMap.get(eName)!;
+        } else {
+          const created = await client.createIssueLabel({
+            name: eName,
+            color: effortColors[i - 1],
+            teamId,
+          });
+          const label = await created.issueLabel;
+          if (label) gateLabels.effort[i] = label.id;
+        }
+        if (labelMap.has(cName)) {
+          gateLabels.complexity[i] = labelMap.get(cName)!;
+        } else {
+          const created = await client.createIssueLabel({
+            name: cName,
+            color: complexityColors[i - 1],
+            teamId,
+          });
+          const label = await created.issueLabel;
+          if (label) gateLabels.complexity[i] = label.id;
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, 'linear: failed to setup gate status labels');
+    }
+
     logger.info(
       { teamId, states: [...stateByName.keys()] },
       'linear: context initialized',
@@ -373,6 +474,8 @@ export async function initLinearContext(
       dispatchGroup,
       inFlightDispatch: new Set(),
       inFlightGate: new Set(),
+      gateLabels,
+      teamId,
     };
   } catch (err) {
     if (err instanceof FatalError) {
