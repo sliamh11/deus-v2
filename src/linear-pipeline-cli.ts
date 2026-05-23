@@ -11,7 +11,6 @@ import {
   getPipelineEvents,
   getIssuePr,
   getLatestStatusSummary,
-  getReviseCount,
   getIssuesFromCache,
   getIssueCacheCount,
   getMaxCachedAt,
@@ -21,6 +20,14 @@ import {
 } from './db.js';
 import { readEnvFile } from './env.js';
 import { EVENT_LABELS } from './linear-notifications.js';
+import {
+  initActionContext,
+  handleOpenInBrowser,
+  toggleWardenSkip,
+  triggerGateRerun,
+  moveIssueState,
+  type ActionContext,
+} from './linear-actions.js';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -180,6 +187,7 @@ function printEvents(
 // ── Watch mode ──────────────────────────────────────────────────────────────
 
 interface ActiveIssue {
+  id: string;
   identifier: string;
   title: string;
   stateName: string;
@@ -191,11 +199,14 @@ interface ActiveIssue {
 }
 
 interface QueuedIssue {
+  id: string;
   identifier: string;
   title: string;
   stateName: string;
   createdAt: string;
 }
+
+type SelectableIssue = ActiveIssue | QueuedIssue;
 
 interface RecentIssue {
   identifier: string;
@@ -312,6 +323,7 @@ async function fetchActiveAndQueued(
   for (const row of cached) {
     if (QUEUED_STATES.includes(row.state_name)) {
       queued.push({
+        id: row.issue_id,
         identifier: row.identifier,
         title: row.title,
         stateName: row.state_name,
@@ -322,6 +334,7 @@ async function fetchActiveAndQueued(
 
     const enriched = enrichFromDb(row.issue_id, row.updated_at);
     active.push({
+      id: row.issue_id,
       identifier: row.identifier,
       title: row.title,
       stateName: row.state_name,
@@ -386,13 +399,22 @@ function fetchRecentIssues(): RecentIssue[] {
   );
 }
 
+interface RenderOptions {
+  error?: string;
+  currentRefreshMs?: number;
+  warning?: string;
+  selectedIndex?: number;
+  isPaused?: boolean;
+  confirmPrompt?: string;
+  cmdLine?: string;
+  lastResult?: { message: string; ok: boolean };
+}
+
 function renderDashboardOutput(
   active: ActiveIssue[],
   queued: QueuedIssue[],
   recent: RecentIssue[],
-  error?: string,
-  currentRefreshMs?: number,
-  warning?: string,
+  opts: RenderOptions = {},
 ): string {
   const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
   const cols = process.stdout.columns || 100;
@@ -412,32 +434,37 @@ function renderDashboardOutput(
     failCount > 0 ? `${RED}FAIL ${failCount}${RESET}` : `${DIM}FAIL 0${RESET}`;
   const statsBar = `ACTIVE ${active.length} ${DIM}·${RESET} ${stuckLabel} ${DIM}·${RESET} ${failLabel}`;
 
-  const effectiveRefreshMs = currentRefreshMs ?? REFRESH_MS;
+  const effectiveRefreshMs = opts.currentRefreshMs ?? REFRESH_MS;
   const refreshSec = effectiveRefreshMs / 1000;
+  const pauseLabel = opts.isPaused ? `${YELLOW}[paused]${RESET}` : '';
   const refreshLabel =
     effectiveRefreshMs > REFRESH_MS
       ? `${YELLOW}[every ${refreshSec}s ↓]${RESET}`
       : `${DIM}[every ${refreshSec}s]${RESET}`;
   lines.push(
-    `${BOLD} Deus Pipeline${RESET}    ${statsBar}${DIM}${' '.repeat(Math.max(1, cols - 70))}${now}  ${RESET}${refreshLabel}`,
+    `${BOLD} Deus Pipeline${RESET}    ${statsBar}${DIM}${' '.repeat(Math.max(1, cols - 70))}${now}  ${RESET}${pauseLabel || refreshLabel}`,
   );
   lines.push(`${DIM} ${'─'.repeat(separatorWidth)}${RESET}`);
 
-  if (error) {
-    lines.push(`${RED} ⚠ ${error}${RESET}`);
+  if (opts.error) {
+    lines.push(`${RED} ⚠ ${opts.error}${RESET}`);
     lines.push('');
   }
 
-  if (warning) {
-    lines.push(`${YELLOW} ⚠ ${warning}${RESET}`);
+  if (opts.warning) {
+    lines.push(`${YELLOW} ⚠ ${opts.warning}${RESET}`);
   }
 
   lines.push('');
+
+  let rowIndex = 0;
+  const sel = opts.selectedIndex ?? -1;
 
   if (active.length === 0) {
     lines.push(`${DIM}  No issues in pipeline.${RESET}`);
   } else {
     for (const issue of active) {
+      const cursor = rowIndex === sel ? `${CYAN}▸${RESET}` : ' ';
       const id = issue.identifier.padEnd(8);
       const sg = stateGlyph(issue.stateName);
       const glyph = `${sg.color}${sg.glyph}${RESET}`;
@@ -463,8 +490,9 @@ function renderDashboardOutput(
         issue.reviseCount > 0 ? ` ${RED}×${issue.reviseCount}${RESET}` : '';
 
       lines.push(
-        `  ${CYAN}${id}${RESET}${glyph} ${title} ${pr} ${DIM}${status}${RESET} ${elapsedColored}${revise}`,
+        `${cursor} ${CYAN}${id}${RESET}${glyph} ${title} ${pr} ${DIM}${status}${RESET} ${elapsedColored}${revise}`,
       );
+      rowIndex++;
     }
   }
 
@@ -472,14 +500,16 @@ function renderDashboardOutput(
     lines.push('');
     lines.push(`${DIM} QUEUED (${queued.length})${RESET}`);
     for (const issue of queued) {
+      const cursor = rowIndex === sel ? `${CYAN}▸${RESET}` : ' ';
       const id = issue.identifier.padEnd(8);
       const sg = stateGlyph(issue.stateName);
       const glyph = `${sg.color}${sg.glyph}${RESET}`;
       const title = truncate(issue.title, titleWidth).padEnd(titleWidth);
       const elapsed = formatElapsed(issue.createdAt).padStart(4);
       lines.push(
-        `${DIM}  ${id}${RESET}${glyph} ${DIM}${title} ${' '.repeat(28)} ${elapsed}${RESET}`,
+        `${DIM}${cursor} ${id}${RESET}${glyph} ${DIM}${title} ${' '.repeat(28)} ${elapsed}${RESET}`,
       );
+      rowIndex++;
     }
   }
 
@@ -498,8 +528,22 @@ function renderDashboardOutput(
     }
   }
 
+  if (opts.lastResult) {
+    const rc = opts.lastResult.ok ? GREEN : RED;
+    const icon = opts.lastResult.ok ? '✓' : '✗';
+    lines.push(`${rc} ${icon} ${opts.lastResult.message}${RESET}`);
+  }
+
   lines.push('');
-  lines.push(`${DIM} Ctrl+C to exit${RESET}`);
+  if (opts.confirmPrompt) {
+    lines.push(`${YELLOW} ${opts.confirmPrompt} [y/N]${RESET}`);
+  } else if (opts.cmdLine !== undefined) {
+    lines.push(`${CYAN} :${opts.cmdLine}█${RESET}`);
+  } else {
+    lines.push(
+      `${DIM} ↑↓ select · → detail · o open · r re-eval · l skip · : cmd · Ctrl+C exit${RESET}`,
+    );
+  }
 
   return lines.join('\n');
 }
@@ -554,8 +598,143 @@ async function startWatchMode(): Promise<void> {
   let nextRefreshMs = DISPLAY_REFRESH_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  let selectedIndex = 0;
+  let allIssues: SelectableIssue[] = [];
+  let paused = false;
+  let lastActionResult: string | undefined;
+  let lastActionOk = true;
+  let confirmPending: (() => Promise<void>) | null = null;
+  let confirmLabel = '';
+  let cmdMode = false;
+  let cmdBuffer = '';
+  let actionCtx: ActionContext | null = null;
+  let viewMode: 'list' | 'detail' = 'list';
+  interface DetailData {
+    issue: SelectableIssue;
+    events: Array<{
+      event_type: string;
+      detail: string | null;
+      created_at: string;
+    }>;
+    prUrl: string | null;
+    labelNames: string[];
+    url: string | null;
+  }
+  let detailData: DetailData | null = null;
+
+  let cachedActive: ActiveIssue[] = [];
+  let cachedQueued: QueuedIssue[] = [];
+  let cachedRecent: RecentIssue[] = [];
+  let lastWarning: string | undefined;
+
+  try {
+    actionCtx = await initActionContext(client, teamId);
+  } catch {
+    lastActionResult = 'Actions unavailable';
+    lastActionOk = false;
+  }
+
   function isRateLimitError(msg: string): boolean {
     return /rate.?limit/i.test(msg) || /429/.test(msg) || /too many/i.test(msg);
+  }
+
+  function renderDetailView(data: DetailData): string {
+    const cols = process.stdout.columns || 100;
+    const { separatorWidth } = computeColumnWidths(cols);
+    const lines: string[] = [];
+    const sg = stateGlyph(data.issue.stateName);
+
+    lines.push(
+      `${BOLD} ${data.issue.identifier}${RESET}  ${sg.color}${sg.glyph} ${data.issue.stateName}${RESET}`,
+    );
+    lines.push(`${DIM} ${'─'.repeat(separatorWidth)}${RESET}`);
+    lines.push(`  ${data.issue.title}`);
+    lines.push('');
+
+    if (data.prUrl) {
+      lines.push(`  ${DIM}PR:${RESET} ${CYAN}${data.prUrl}${RESET}`);
+    }
+    if (data.url) {
+      lines.push(`  ${DIM}URL:${RESET} ${CYAN}${data.url}${RESET}`);
+    }
+    if (data.labelNames.length > 0) {
+      lines.push(
+        `  ${DIM}Labels:${RESET} ${data.labelNames.map((l) => `${YELLOW}${l}${RESET}`).join(' ')}`,
+      );
+    }
+
+    lines.push('');
+    lines.push(`${BOLD} Timeline${RESET}`);
+    lines.push(`${DIM} ${'─'.repeat(separatorWidth)}${RESET}`);
+
+    if (data.events.length === 0) {
+      lines.push(`${DIM}  No pipeline events.${RESET}`);
+    } else {
+      const visible = data.events.slice(-20);
+      if (data.events.length > 20) {
+        lines.push(
+          `${DIM}  ...${data.events.length - 20} earlier events omitted${RESET}`,
+        );
+      }
+      for (const e of visible) {
+        const time = e.created_at.slice(0, 16).replace('T', ' ');
+        const color = colorFor(e.event_type);
+        const label = EVENT_LABELS[e.event_type] || e.event_type;
+        const detail = e.detail ? ` ${DIM}— ${e.detail}${RESET}` : '';
+        lines.push(
+          `  ${DIM}${time}${RESET}  ${color}${label.padEnd(22)}${RESET}${detail}`,
+        );
+      }
+    }
+
+    lines.push('');
+    lines.push(`${BOLD} Actions${RESET}`);
+    lines.push(`${DIM} ${'─'.repeat(separatorWidth)}${RESET}`);
+    lines.push(`  ${CYAN}o${RESET}  Open in browser`);
+    lines.push(`  ${CYAN}r${RESET}  Re-run gate`);
+    lines.push(`  ${CYAN}l${RESET}  Toggle warden:skip`);
+    lines.push(`  ${CYAN}:${RESET}  Command mode (:move <state>)`);
+
+    if (lastActionResult) {
+      lines.push('');
+      const rc = lastActionOk ? GREEN : RED;
+      const icon = lastActionOk ? '✓' : '✗';
+      lines.push(`${rc} ${icon} ${lastActionResult}${RESET}`);
+    }
+
+    lines.push('');
+    if (confirmPending) {
+      lines.push(`${YELLOW} ${confirmLabel} [y/N]${RESET}`);
+    } else if (cmdMode) {
+      lines.push(`${CYAN} :${cmdBuffer}█${RESET}`);
+    } else {
+      lines.push(
+        `${DIM} ← back · o open · r re-eval · l skip · : cmd · Ctrl+C exit${RESET}`,
+      );
+    }
+
+    return lines.join('\n');
+  }
+
+  function rerender(): void {
+    let output: string;
+    if (viewMode === 'detail' && detailData) {
+      output = renderDetailView(detailData);
+    } else {
+      output = renderDashboardOutput(cachedActive, cachedQueued, cachedRecent, {
+        error: lastError,
+        currentRefreshMs: nextRefreshMs,
+        warning: lastWarning,
+        selectedIndex,
+        isPaused: paused,
+        confirmPrompt: confirmPending ? confirmLabel : undefined,
+        cmdLine: cmdMode ? cmdBuffer : undefined,
+        lastResult: lastActionResult
+          ? { message: lastActionResult, ok: lastActionOk }
+          : undefined,
+      });
+    }
+    process.stdout.write(CURSOR_HOME + output + '\n' + CLEAR_TO_END);
   }
 
   async function tick(): Promise<void> {
@@ -567,18 +746,18 @@ async function startWatchMode(): Promise<void> {
         teamId,
       );
       const recent = fetchRecentIssues();
-      lastError = undefined;
-      nextRefreshMs = fromCache ? DISPLAY_REFRESH_MS : REFRESH_MS;
-      const warning = fromCache ? undefined : 'cache stale — polling API';
-      const output = renderDashboardOutput(
-        active,
-        queued,
-        recent,
-        undefined,
-        nextRefreshMs,
-        warning,
+      cachedActive = active;
+      cachedQueued = queued;
+      cachedRecent = recent;
+      allIssues = [...active, ...queued];
+      selectedIndex = Math.min(
+        selectedIndex,
+        Math.max(0, allIssues.length - 1),
       );
-      process.stdout.write(CURSOR_HOME + output + '\n' + CLEAR_TO_END);
+      lastError = undefined;
+      lastWarning = fromCache ? undefined : 'cache stale — polling API';
+      nextRefreshMs = fromCache ? DISPLAY_REFRESH_MS : REFRESH_MS;
+      rerender();
     } catch (err) {
       lastError = err instanceof Error ? err.message : 'Unknown error';
       if (isRateLimitError(lastError)) {
@@ -586,22 +765,173 @@ async function startWatchMode(): Promise<void> {
       } else {
         nextRefreshMs = REFRESH_MS;
       }
-      const recent = fetchRecentIssues();
-      const output = renderDashboardOutput(
-        [],
-        [],
-        recent,
-        lastError,
-        nextRefreshMs,
-      );
-      process.stdout.write(CURSOR_HOME + output + '\n' + CLEAR_TO_END);
+      cachedRecent = fetchRecentIssues();
+      rerender();
     } finally {
       rendering = false;
-      timer = setTimeout(tick, nextRefreshMs);
+      if (!paused) {
+        timer = setTimeout(tick, nextRefreshMs);
+      }
     }
   }
 
-  await tick();
+  function resumeRefresh(): void {
+    paused = false;
+    confirmPending = null;
+    confirmLabel = '';
+    cmdMode = false;
+    cmdBuffer = '';
+    timer = setTimeout(tick, 0);
+  }
+
+  async function fetchLabelsForIssue(issueId: string): Promise<string[]> {
+    try {
+      const issue = await client.issue(issueId);
+      const labels = await issue.labels();
+      return labels.nodes.map((l) => l.id);
+    } catch {
+      return [];
+    }
+  }
+
+  async function enterDetailView(): Promise<void> {
+    const issue = allIssues[selectedIndex];
+    if (!issue) return;
+
+    paused = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+
+    const events = getPipelineEvents({ issueId: issue.id });
+    const pr = getIssuePr(issue.id);
+
+    let labelNames: string[] = [];
+    let url: string | null = null;
+    try {
+      const fetched = await client.issue(issue.id);
+      url = fetched.url;
+      const labels = await fetched.labels();
+      labelNames = labels.nodes.map((l) => l.name);
+    } catch {
+      /* best-effort */
+    }
+
+    detailData = {
+      issue,
+      events,
+      prUrl: pr?.pr_url ?? null,
+      labelNames,
+      url,
+    };
+    viewMode = 'detail';
+    rerender();
+  }
+
+  function exitDetailView(): void {
+    viewMode = 'list';
+    detailData = null;
+    resumeRefresh();
+    rerender();
+  }
+
+  async function handleOpen(): Promise<void> {
+    const issue = allIssues[selectedIndex];
+    if (!issue) return;
+
+    const cachedUrl = viewMode === 'detail' && detailData?.url;
+    if (cachedUrl) {
+      const result = handleOpenInBrowser(cachedUrl, issue.identifier);
+      lastActionResult = result.message;
+      lastActionOk = result.ok;
+      rerender();
+      return;
+    }
+
+    try {
+      const fetched = await client.issue(issue.id);
+      const result = handleOpenInBrowser(fetched.url, issue.identifier);
+      lastActionResult = result.message;
+      lastActionOk = result.ok;
+    } catch {
+      lastActionResult = `Failed to fetch URL for ${issue.identifier}`;
+      lastActionOk = false;
+    }
+    rerender();
+  }
+
+  async function handleRerun(): Promise<void> {
+    const issue = allIssues[selectedIndex];
+    if (!issue || !actionCtx) return;
+    const stateName = 'stateName' in issue ? issue.stateName : '';
+    confirmLabel = `Re-run gate on ${issue.identifier}?`;
+    confirmPending = async () => {
+      const result = await triggerGateRerun(
+        actionCtx!,
+        issue.id,
+        issue.identifier,
+        stateName,
+      );
+      lastActionResult = result.message;
+      lastActionOk = result.ok;
+    };
+    paused = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    rerender();
+  }
+
+  async function handleToggleSkip(): Promise<void> {
+    const issue = allIssues[selectedIndex];
+    if (!issue || !actionCtx) return;
+    confirmLabel = `Toggle warden:skip on ${issue.identifier}?`;
+    confirmPending = async () => {
+      const labelIds = await fetchLabelsForIssue(issue.id);
+      const result = await toggleWardenSkip(
+        actionCtx!,
+        issue.id,
+        issue.identifier,
+        labelIds,
+      );
+      lastActionResult = result.message;
+      lastActionOk = result.ok;
+    };
+    paused = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    rerender();
+  }
+
+  async function dispatchCommand(input: string): Promise<void> {
+    const moveMatch = input.trim().match(/^move\s+(.+)$/i);
+    if (moveMatch) {
+      const targetState = moveMatch[1].replace(/^["']|["']$/g, '');
+      const issue = allIssues[selectedIndex];
+      if (!issue || !actionCtx) return;
+      const result = await moveIssueState(
+        actionCtx,
+        issue.id,
+        issue.identifier,
+        targetState,
+      );
+      lastActionResult = result.message;
+      lastActionOk = result.ok;
+      return;
+    }
+    lastActionResult = `Unknown command: ${input}`;
+    lastActionOk = false;
+  }
+
+  const resyncTimerRef = setInterval(() => {
+    seedOrResyncCache(client, teamId).catch((err) => {
+      console.error('issue-cache: background resync failed', err);
+    });
+  }, RESYNC_INTERVAL_MS);
 
   const resyncTimer = setInterval(() => {
     seedOrResyncCache(client, teamId).catch((err) => {
@@ -611,16 +941,152 @@ async function startWatchMode(): Promise<void> {
 
   const cleanup = () => {
     if (timer) clearTimeout(timer);
-    clearInterval(resyncTimer);
+    clearInterval(resyncTimerRef);
+    if (process.stdin.isTTY) {
+      try {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+      } catch {
+        /* ignore */
+      }
+    }
     process.stdout.write(EXIT_ALT_SCREEN + SHOW_CURSOR);
     process.exit(0);
   };
 
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
-  process.on('SIGWINCH', () => {
-    if (!rendering) tick().catch(() => {});
+  process.on('uncaughtException', (err) => {
+    if (process.stdin.isTTY) {
+      try {
+        process.stdin.setRawMode(false);
+      } catch {
+        /* ignore */
+      }
+    }
+    process.stdout.write(EXIT_ALT_SCREEN + SHOW_CURSOR);
+    console.error('Uncaught exception:', err);
+    process.exit(1);
   });
+  process.on('SIGWINCH', () => {
+    if (!rendering && !paused) tick().catch(() => {});
+  });
+
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+
+    process.stdin.on('data', async (key: string) => {
+      if (key === '') {
+        cleanup();
+        return;
+      }
+
+      if (confirmPending) {
+        if (key === 'y' || key === 'Y') {
+          const fn = confirmPending;
+          confirmPending = null;
+          confirmLabel = '';
+          await fn();
+          resumeRefresh();
+        } else {
+          resumeRefresh();
+        }
+        rerender();
+        return;
+      }
+
+      if (cmdMode) {
+        if (key === '\r' || key === '\n') {
+          await dispatchCommand(cmdBuffer);
+          cmdMode = false;
+          cmdBuffer = '';
+          resumeRefresh();
+          rerender();
+        } else if (key === '') {
+          cmdBuffer = cmdBuffer.slice(0, -1);
+          rerender();
+        } else if (key === '' && key.length === 1) {
+          resumeRefresh();
+          rerender();
+        } else if (key.length === 1 && key >= ' ') {
+          cmdBuffer += key;
+          rerender();
+        }
+        return;
+      }
+
+      if (viewMode === 'detail') {
+        if (key === '[D' || (key === '' && key.length === 1)) {
+          exitDetailView();
+          return;
+        }
+        if (key === 'o') {
+          await handleOpen();
+          return;
+        }
+        if (key === 'r') {
+          await handleRerun();
+          return;
+        }
+        if (key === 'l') {
+          await handleToggleSkip();
+          return;
+        }
+        if (key === ':') {
+          cmdMode = true;
+          cmdBuffer = '';
+          rerender();
+          return;
+        }
+        return;
+      }
+
+      switch (key) {
+        case '[A':
+        case 'k':
+          selectedIndex = Math.max(0, selectedIndex - 1);
+          rerender();
+          break;
+        case '[B':
+        case 'j':
+          selectedIndex = Math.min(allIssues.length - 1, selectedIndex + 1);
+          rerender();
+          break;
+        case '[C':
+        case '\r':
+          await enterDetailView();
+          break;
+        case 'o':
+          await handleOpen();
+          break;
+        case 'r':
+          await handleRerun();
+          break;
+        case 'l':
+          await handleToggleSkip();
+          break;
+        case ':':
+          cmdMode = true;
+          cmdBuffer = '';
+          paused = true;
+          if (timer) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+          rerender();
+          break;
+        case '':
+          if (key.length === 1) {
+            rerender();
+          }
+          break;
+      }
+    });
+  }
+
+  await tick();
 }
 
 // ── One-shot mode (existing behavior) ───────────────────────────────────────

@@ -17,7 +17,7 @@ import {
   getPipelineEvents,
 } from './db.js';
 import { triggerAutoMerge } from './linear-auto-merge.js';
-import { macosNotify, notifyPipelineStep } from './linear-notifications.js';
+import { notifyPipelineStep } from './linear-notifications.js';
 import { syncVaultPending } from './linear-vault-sync.js';
 import { RetryableError, UserError, FatalError } from './errors/index.js';
 import { WEBHOOK_MAX_RETRIES, WEBHOOK_BASE_DELAY_MS } from './config.js';
