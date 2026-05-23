@@ -205,12 +205,13 @@ export function buildScopedIssuePrompt(
       c.body.includes('Agent run failed') ||
       c.body.includes('**Auto-merged**') ||
       c.body.includes('**Auto-merge failed**') ||
+      c.body.includes('**Auto-merge blocked**') ||
       c.body.includes('PR URL in your response'),
   );
 
   parts.push(
     `<instructions>
-${hasAgentHistory ? 'A previous agent attempt exists. Review the comments above — check what was already committed, pushed, or opened as a PR. Continue from where the last attempt stopped. Do not redo completed steps.\n\n' : ''}Read the scope block in the task description. Follow the implementation plan and satisfy all acceptance criteria.
+${hasAgentHistory ? 'A previous agent attempt exists. Review the comments above — check what was already committed, pushed, or opened as a PR. Continue from where the last attempt stopped. Do not redo completed steps. If CI failed, check out the existing branch, read the CI logs, fix the failures, and push.\n\n' : ''}Read the scope block in the task description. Follow the implementation plan and satisfy all acceptance criteria.
 
 ## Git Workflow
 1. Create a feature branch: \`git checkout -b feat/${issueIdentifier.toLowerCase().replace(/[^a-z0-9-]/g, '')}-<short-desc>\`
@@ -369,7 +370,13 @@ async function pollLinear(): Promise<void> {
     filter: { state: { id: { eq: readyState.id } } },
   });
 
-  const sorted = [...issues.nodes].sort((a, b) => a.sortOrder - b.sortOrder);
+  const sorted = [...issues.nodes].sort((a, b) => {
+    // Priority first (1=urgent > 2=high > 3=medium > 4=low > 0=none)
+    const pa = a.priority === 0 ? 99 : a.priority;
+    const pb = b.priority === 0 ? 99 : b.priority;
+    if (pa !== pb) return pa - pb;
+    return a.sortOrder - b.sortOrder;
+  });
 
   let dispatched = 0;
   const slots = ctx.deps.queue.availableSlots();
