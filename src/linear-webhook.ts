@@ -79,12 +79,14 @@ export async function retryWithBackoff<T>(
   baseDelayMs: number,
 ): Promise<T> {
   let lastErr: unknown;
+  let firstErr: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
+      if (attempt === 0) firstErr = err;
 
       if (err instanceof UserError) {
         throw err;
@@ -102,11 +104,14 @@ export async function retryWithBackoff<T>(
         break;
       }
 
-      const jitter = Math.random() * baseDelayMs;
-      const delayMs = Math.min(
-        baseDelayMs * Math.pow(2, attempt) + jitter,
-        WEBHOOK_MAX_DELAY_MS,
-      );
+      const retryAfterMs = extractRetryAfterMs(err);
+      const delayMs =
+        retryAfterMs !== null
+          ? Math.min(retryAfterMs, WEBHOOK_MAX_DELAY_MS)
+          : Math.min(
+              baseDelayMs * Math.pow(2, attempt) + Math.random() * baseDelayMs,
+              WEBHOOK_MAX_DELAY_MS,
+            );
 
       const errMsg = err instanceof Error ? err.message : String(err);
       logger.warn(
@@ -115,6 +120,7 @@ export async function retryWithBackoff<T>(
           maxAttempts,
           delayMs: Math.round(delayMs),
           error: errMsg,
+          ...(retryAfterMs !== null && { retryAfterHeader: true }),
         },
         'webhook.retry',
       );
@@ -123,9 +129,15 @@ export async function retryWithBackoff<T>(
     }
   }
 
-  const errMsg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  const lastMsg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  const firstMsg =
+    firstErr instanceof Error ? firstErr.message : String(firstErr);
   logger.error(
-    { attempts_exhausted: maxAttempts, error: errMsg },
+    {
+      attempts_exhausted: maxAttempts,
+      first_error: firstMsg,
+      error: lastMsg,
+    },
     'webhook.failed',
   );
   throw new FatalError(
@@ -134,6 +146,32 @@ export async function retryWithBackoff<T>(
       cause: lastErr,
     },
   );
+}
+
+function extractRetryAfterMs(err: unknown): number | null {
+  if (!(err instanceof Error)) return null;
+  const typed = err as Error & {
+    headers?: Record<string, string>;
+    response?: {
+      headers?: Record<string, string> & { get?: (k: string) => string };
+    };
+  };
+  const raw =
+    typed.headers?.['retry-after'] ??
+    typed.response?.headers?.['retry-after'] ??
+    typed.response?.headers?.get?.('retry-after');
+  if (!raw) return null;
+
+  const seconds = Number(raw);
+  if (!Number.isNaN(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+  const dateMs = Date.parse(raw);
+  if (!Number.isNaN(dateMs)) {
+    const delta = dateMs - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+  return null;
 }
 
 function isNonRetryableHttpError(err: unknown): boolean {
@@ -298,6 +336,90 @@ async function fetchIssueComments(
   }
 }
 
+export async function runInlineCompletionCheck(
+  ctx: LinearContext,
+  issueData: {
+    id: string;
+    identifier: string;
+    title: string;
+    description?: string | null;
+    labels: Array<{ id: string; name: string }>;
+  },
+  gateSpecs: Map<string, GateSpec>,
+): Promise<'SHIP' | 'REVISE'> {
+  const completionGateSpec = gateSpecs.get('Done');
+  if (!completionGateSpec) {
+    logger.warn(
+      { issueId: issueData.id },
+      'inline-completion-check: gate spec for Done not found, blocking merge',
+    );
+    return 'REVISE';
+  }
+
+  ctx.inFlightGate.add(issueData.id);
+  try {
+    let commentBlock = '';
+    const comments = await fetchIssueComments(ctx, issueData.id);
+    if (comments.length > 0) {
+      commentBlock =
+        '\n\n<comments>\n' +
+        comments.map((c) => `[${c.author}]: ${c.body}`).join('\n\n') +
+        '\n</comments>';
+    }
+
+    const prompt =
+      [
+        `<gate-spec>\n${completionGateSpec.content}\n</gate-spec>`,
+        `<invocation-context>pre-merge</invocation-context>`,
+        `<issue>\nTitle: ${issueData.title}\nID: ${issueData.identifier}\n\n${issueData.description ?? '(no description)'}\n</issue>`,
+        `<transition>\nFrom: In Review\nTo: Done (pre-merge check)\n</transition>`,
+      ].join('\n\n') + commentBlock;
+
+    const chatJid = `linear-gate-completion-pre-merge-${issueData.id.slice(0, 8)}`;
+    const runContext: RunContext = {
+      prompt,
+      groupFolder: ctx.dispatchGroup.folder,
+      chatJid,
+      isControlGroup: false,
+      isScheduledTask: true,
+      effort: completionGateSpec.effort ?? 'medium',
+    };
+
+    const { text, error } = await retryWithBackoff(
+      () => executeAgentRun(ctx, runContext),
+      WEBHOOK_MAX_RETRIES,
+      WEBHOOK_BASE_DELAY_MS,
+    );
+
+    const output = text || error || '';
+    const parsedVerdict = parseVerdict(output);
+    const verdict: 'SHIP' | 'REVISE' =
+      parsedVerdict === 'SHIP' ? 'SHIP' : 'REVISE';
+
+    const commentBody = formatGateComment(
+      completionGateSpec.name,
+      verdict,
+      parsedVerdict ? stripEnrichmentSection(output) : output,
+      'pre-merge',
+    );
+    await postOrUpdateComment(ctx, issueData.id, 'Done:pre-merge', commentBody);
+
+    logger.info(
+      { issueId: issueData.id, verdict },
+      'inline-completion-check: verdict',
+    );
+    return verdict;
+  } catch (err) {
+    logger.warn(
+      { issueId: issueData.id, err },
+      'inline-completion-check: failed, blocking merge',
+    );
+    return 'REVISE';
+  } finally {
+    ctx.inFlightGate.delete(issueData.id);
+  }
+}
+
 async function handleIssueUpdate(
   payload: EntityWebhookPayloadWithIssueData,
   ctx: LinearContext,
@@ -446,7 +568,30 @@ async function handleIssueUpdate(
                 const issue = await ctx.client.issue(issueId);
                 const currentState = await issue.state;
                 if (currentState?.name === targetStateName) {
-                  await triggerAutoMerge(ctx, issueId, identifier);
+                  const labels = await issue.labels();
+                  const issueData = {
+                    id: issue.id,
+                    identifier: issue.identifier,
+                    title: issue.title,
+                    description: issue.description,
+                    labels: labels.nodes.map((l) => ({
+                      id: l.id,
+                      name: l.name,
+                    })),
+                  };
+                  const cgVerdict = await runInlineCompletionCheck(
+                    ctx,
+                    issueData,
+                    gateSpecs,
+                  );
+                  if (cgVerdict === 'SHIP') {
+                    await triggerAutoMerge(ctx, issueId, identifier);
+                  } else {
+                    logger.info(
+                      { issueId },
+                      'linear-webhook: deferred completion-gate REVISE, auto-merge blocked',
+                    );
+                  }
                 }
               } catch (retryErr) {
                 logger.warn(
@@ -704,12 +849,28 @@ async function handleIssueUpdate(
     }
 
     if (finalVerdict === 'SHIP' && gateSpec.name === 'output-quality-gate') {
-      triggerAutoMerge(ctx, data.id, data.identifier).catch((err) => {
-        logger.warn(
-          { issueId: data.id, err },
-          'linear-webhook: auto-merge trigger failed',
-        );
-      });
+      void (async () => {
+        try {
+          const cgVerdict = await runInlineCompletionCheck(
+            ctx,
+            data,
+            gateSpecs,
+          );
+          if (cgVerdict === 'SHIP') {
+            await triggerAutoMerge(ctx, data.id, data.identifier);
+          } else {
+            logger.info(
+              { issueId: data.id },
+              'linear-webhook: inline completion-gate REVISE, auto-merge blocked',
+            );
+          }
+        } catch (err) {
+          logger.warn(
+            { issueId: data.id, err },
+            'linear-webhook: inline completion check failed, merge blocked',
+          );
+        }
+      })();
     }
   }
 }
