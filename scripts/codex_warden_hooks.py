@@ -739,13 +739,38 @@ def run_plan_review_gate(event: dict[str, Any], repo_root: Path) -> int:
     tool_name = str(event.get("tool_name") or "")
     if tool_name and not _warden_has_tool(
         config, "plan-reviewer", tool_name,
-        ["Edit", "Write", "MultiEdit", "apply_patch"],
+        ["Edit", "Write", "MultiEdit", "apply_patch", "ExitPlanMode"],
     ):
         return 0
 
     # Marker check first — cheapest, satisfies the gate before any
     # subprocess work in `_managed_paths`.
     if _marker(repo_root, ".plan-reviewed").exists():
+        return 0
+
+    # ExitPlanMode has no file paths — skip _managed_paths (which would
+    # escape via the empty-paths short-circuit) and block on marker alone.
+    if tool_name == "ExitPlanMode":
+        mark_cmd = (
+            f"  python3 {shlex.quote(str(_active_script_path(repo_root)))} "
+            f"mark plan-reviewed SHIP \"reason\""
+        )
+        if _last_verdict_is_blocking(repo_root, "plan-reviewer"):
+            last = _last_verdict(repo_root, "plan-reviewer")
+            reason = (
+                f"[plan-review-gate] BLOCKED: last plan-reviewer verdict was {last}.\n\n"
+                "Re-run the plan-reviewer after fixing the issues. Trivial bypass is "
+                f"not permitted after {last} — no exceptions.\n\n"
+                f"After SHIP:\n{mark_cmd}"
+            )
+        else:
+            reason = (
+                "[plan-review-gate] BLOCKED: no plan-reviewer approval marker.\n\n"
+                "Run the plan-reviewer Warden and wait for VERDICT: SHIP before "
+                "exiting plan mode. Then run:\n\n"
+                f"{mark_cmd}"
+            )
+        _block_pre_tool(reason)
         return 0
 
     # `_managed_paths` returns `(None, [])` outside every worktree;
