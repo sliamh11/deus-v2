@@ -45,6 +45,25 @@ def _call_llama_cpp(prompt: str, model: str = LLAMA_CPP_JUDGE_MODEL) -> str:
     body_dict: dict = {
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
+        "temperature": 0,
+        "seed": 42,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "judge_result",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "quality": {"type": "number"},
+                        "safety": {"type": "number"},
+                        "tool_use": {"type": "number"},
+                        "personalization": {"type": "number"},
+                        "rationale": {"type": "string"}
+                    },
+                    "required": ["quality", "safety", "tool_use", "personalization", "rationale"]
+                }
+            }
+        },
     }
     # Llama-server accepts requests with no "model" field (uses whatever's loaded);
     # only include it when the caller explicitly configured one.
@@ -128,7 +147,8 @@ def _build_eval_prompt(
 
 
 def _parse_result(raw: str) -> JudgeResult:
-    # Strip markdown fences if present
+    # Defensive fallback: response_format guarantees JSON, but older llama-server
+    # versions silently ignore the field — keep parsing guards.
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()

@@ -63,6 +63,21 @@ def _call_ollama(prompt: str, model: str = OLLAMA_MODEL) -> str:
         "model": model,
         "prompt": full_prompt,
         "stream": False,
+        "format": {
+            "type": "object",
+            "properties": {
+                "quality": {"type": "number"},
+                "safety": {"type": "number"},
+                "tool_use": {"type": "number"},
+                "personalization": {"type": "number"},
+                "rationale": {"type": "string"}
+            },
+            "required": ["quality", "safety", "tool_use", "personalization", "rationale"]
+        },
+        "options": {
+            "temperature": 0,
+            "seed": 42,
+        },
     }).encode()
     req = urllib.request.Request(
         _ollama_url("/api/generate"),
@@ -136,6 +151,8 @@ _JSON_BLOCK_RE = re.compile(r"\{[^{}]*\}")
 
 
 def _parse_result(raw: str) -> JudgeResult:
+    # Defensive fallback: constrained decoding guarantees valid JSON, but older
+    # Ollama versions silently ignore the `format` field — keep parsing guards.
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
