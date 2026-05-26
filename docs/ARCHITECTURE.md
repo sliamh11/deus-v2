@@ -522,6 +522,30 @@ Core modules in `src/`:
 
 ---
 
+## Developer Tools
+
+Host-side tools that give agents structural and semantic awareness of the codebase. Each tool answers a different class of question -- pick the right tool for the question, not the habit.
+
+| Tool | Question it answers | Type | Used by |
+|------|-------------------|------|---------|
+| **CodeGraph** | "What depends on this?" / "What breaks if I change this?" / "What's the call chain from A to B?" | MCP server (`codegraph serve --mcp`). Pre-indexed call graph in SQLite -- callers, callees, impact analysis, dependency chains. Auto-syncs on file changes. | Explore, code-reviewer, plan-reviewer, architecture-snapshot, qa-tester, general-purpose |
+| **claude-context** | "Do we already have something that does X?" / "Where is the logic that handles Y?" | MCP server. Semantic code search via Ollama embeddings + Milvus. Finds code by meaning, not text match. | All code-related agents (semantic-search-first rule) |
+| **grep / find** | "Where exactly does string X appear?" / "Which files match pattern Y?" | Shell. Exact text match -- fast and precise when you know the symbol name. | All agents (after semantic/structural narrowing) |
+| **Understand-Anything** | "How does this whole project fit together?" / "Walk me through the architecture." | Claude Code plugin. Interactive knowledge graph -- `/understand` for full analysis, `/understand-chat` for Q&A, `/understand-dashboard` for visualization. | Human operator (learning/onboarding) |
+| **Mermaid** | "Show me a diagram of X." | MCP server. Diagram generation from Mermaid DSL. | architecture-snapshot, any agent producing visual output |
+
+### Code exploration protocol
+
+Agents follow a three-stage pattern when exploring code. Each stage narrows the search space for the next:
+
+1. **Semantic search** (`search_code` via claude-context) -- "what code is *about* this topic?" Identifies candidate areas by meaning.
+2. **Structural query** (`codegraph_callers` / `codegraph_callees` / `codegraph_impact`) -- "what *connects to* these candidates?" Narrows to the dependency cone of the focal file. Cuts irrelevant reads and keeps context windows focused.
+3. **Exact lookup** (grep/read) -- confirms specifics in the filtered set.
+
+Skip stages when the answer is already known (e.g., exact symbol name → grep directly). The protocol saves tokens by avoiding broad grep sweeps and prevents agents from missing indirect callers that text search can't find.
+
+---
+
 ## Static Diagrams
 
 For contexts where Mermaid doesn't render, static PNGs are available:

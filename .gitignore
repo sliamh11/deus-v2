@@ -124,6 +124,10 @@ finetune/adapters/
 finetune/gemma4-tool-fused/
 finetune/judge-lora-gemma3n/
 
+# Developer tools (local indexes)
+.codegraph/
+.understand-anything/
+
 # Private features — local-only code that must never be committed
 # Personal integrations, trading logic, account-specific tools, etc.
 src/private/
