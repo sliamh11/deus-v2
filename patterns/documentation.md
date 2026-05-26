@@ -1,7 +1,7 @@
 ---
 governs:
   - docs/
-last_verified: "2026-05-26" # completion-gate: allow Done from any state
+last_verified: "2026-05-26" # auto-bump
 test_tasks:
   - "Add a new ADR to docs/decisions/ explaining an architectural change"
   - "Update ARCHITECTURE.md after a major refactor"
