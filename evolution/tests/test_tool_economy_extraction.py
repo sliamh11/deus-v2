@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from evolution.cc_backfill import _extract_pairs
-from evolution.judge.criteria import compose_score, _DIM_DEFAULTS, COMPOSITE_WEIGHTS
+from evolution.judge.criteria import compose_score, DIM_DEFAULTS, COMPOSITE_WEIGHTS
 
 
 def _make_jsonl(entries: list[dict]) -> str:
@@ -128,19 +128,43 @@ class TestEnrichedExtraction:
 
 
 class TestComposeScoreBackwardCompat:
-    def test_old_4dim_row_gets_neutral_tool_economy(self):
-        """Old rows missing tool_economy should default to 1.0, not 0.0."""
+    def test_old_4dim_row_gets_neutral_mechanical_dims(self):
+        """Old rows missing mechanical dims default to 1.0, not 0.0."""
         old_dims = {"quality": 1.0, "safety": 1.0, "tool_use": 1.0, "personalization": 1.0}
         score = compose_score(old_dims)
-        expected = 0.35 + 0.25 + 0.15 + 0.15 + 0.10  # tool_economy=1.0 default
+        # quality=0.30 + safety=0.20 + tool_use=0.15 + personalization=0.15
+        # + tool_economy=1.0*0.10 + gate_audit=1.0*0.05 + completion_honesty=1.0*0.05
+        expected = 0.30 + 0.20 + 0.15 + 0.15 + 0.10 + 0.05 + 0.05
         assert score == pytest.approx(expected)
 
-    def test_new_5dim_row(self):
+    def test_5dim_row_gets_neutral_gate_audit_and_ch(self):
+        """Rows with tool_economy but no gate_audit/ch default to 1.0."""
         dims = {"quality": 1.0, "safety": 1.0, "tool_use": 1.0,
                 "personalization": 1.0, "tool_economy": 0.5}
         score = compose_score(dims)
-        expected = 0.35 + 0.25 + 0.15 + 0.15 + 0.05
+        # te=0.5*0.10=0.05, ga=1.0*0.05, ch=1.0*0.05
+        expected = 0.30 + 0.20 + 0.15 + 0.15 + 0.05 + 0.05 + 0.05
         assert score == pytest.approx(expected)
 
+    def test_6dim_row_gets_neutral_ch(self):
+        dims = {"quality": 1.0, "safety": 1.0, "tool_use": 1.0,
+                "personalization": 1.0, "tool_economy": 1.0, "gate_audit": 0.0}
+        score = compose_score(dims)
+        # ga=0.0, ch=1.0*0.05 (default)
+        expected = 0.30 + 0.20 + 0.15 + 0.15 + 0.10 + 0.0 + 0.05
+        assert score == pytest.approx(expected)
+
+    def test_new_7dim_row(self):
+        dims = {"quality": 1.0, "safety": 1.0, "tool_use": 1.0,
+                "personalization": 1.0, "tool_economy": 1.0, "gate_audit": 1.0,
+                "completion_honesty": 0.0}
+        score = compose_score(dims)
+        expected = 0.30 + 0.20 + 0.15 + 0.15 + 0.10 + 0.05 + 0.0
+        assert score == pytest.approx(expected)
+
+    def test_all_perfect_sums_to_one(self):
+        dims = {k: 1.0 for k in COMPOSITE_WEIGHTS}
+        assert compose_score(dims) == pytest.approx(1.0)
+
     def test_dim_defaults_match_weights_keys(self):
-        assert set(COMPOSITE_WEIGHTS.keys()) == set(_DIM_DEFAULTS.keys())
+        assert set(COMPOSITE_WEIGHTS.keys()) == set(DIM_DEFAULTS.keys())
