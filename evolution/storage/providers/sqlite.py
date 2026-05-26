@@ -42,6 +42,7 @@ _UPDATABLE_INTERACTION_COLS = frozenset({
     "timestamp",
     "has_code",
     "user_signal",
+    "correction_mined_at",
 })
 
 # Guard against concurrent schema migrations from multiple threads
@@ -259,6 +260,7 @@ class SQLiteStorageProvider(StorageProvider):
             ("parse_error", "INTEGER DEFAULT 0"),
             ("context_tokens", "INTEGER"),
             ("has_code", "INTEGER DEFAULT 0"),
+            ("correction_mined_at", "TEXT"),
         ]:
             try:
                 # safe: col + coltype come from the literal tuple-list
@@ -947,6 +949,48 @@ class SQLiteStorageProvider(StorageProvider):
         ).fetchall()
         db.close()
         return [dict(r) for r in rows]
+
+    def get_correction_candidates(self, max_followup_len: int) -> list[dict]:
+        db = self._connect()
+        rows = db.execute(
+            """
+            SELECT a.id AS target_id,
+                   a.prompt AS target_prompt,
+                   b.prompt AS followup_prompt,
+                   a.session_id
+            FROM interactions a
+            JOIN interactions b ON b.session_id = a.session_id
+                AND b.timestamp > a.timestamp
+                AND b.id != a.id
+            WHERE a.user_signal IS NULL
+              AND a.session_id IS NOT NULL
+              AND LENGTH(b.prompt) < ?
+            ORDER BY a.session_id, a.timestamp
+            """,
+            (max_followup_len,),
+        ).fetchall()
+        db.close()
+        return [
+            {"target_id": r[0], "target_prompt": r[1], "followup_prompt": r[2], "session_id": r[3]}
+            for r in rows
+        ]
+
+    def bulk_label_corrections(self, ids: list[str], mined_at: str) -> int:
+        if not ids:
+            return 0
+        db = self._connect()
+        updated = 0
+        for iid in ids:
+            cursor = db.execute(
+                """UPDATE interactions
+                   SET user_signal = 'correction', correction_mined_at = ?
+                   WHERE id = ? AND user_signal IS NULL""",
+                (mined_at, iid),
+            )
+            updated += cursor.rowcount
+        db.commit()
+        db.close()
+        return updated
 
     def score_by_reflection_count(self) -> list[dict]:
         """
