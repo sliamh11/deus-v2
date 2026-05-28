@@ -1,7 +1,7 @@
 ---
 name: bouncer-gate
 gate_to: "Ready for Agent"
-allowed_from: ["Todo"]
+allowed_from: []
 mode: advise
 fallback: REVISE
 cooldown_minutes: 3
