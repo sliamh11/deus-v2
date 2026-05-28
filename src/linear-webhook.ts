@@ -986,7 +986,7 @@ async function handleIssueUpdate(
       ? 'strict'
       : gateSpec.mode;
 
-    if (effectiveMode === 'strict' && verdict !== 'SHIP') {
+    if (verdict !== 'SHIP') {
       try {
         let revertStateId = fromStateId;
         let revertStateName = fromState.name;
@@ -1008,7 +1008,7 @@ async function handleIssueUpdate(
         }
         await ctx.client.updateIssue(data.id, {
           stateId: revertStateId,
-          priority: 1,
+          ...(effectiveMode === 'strict' ? { priority: 1 } : {}),
         });
         logger.info(
           {
@@ -1016,8 +1016,9 @@ async function handleIssueUpdate(
             gate: gateSpec.name,
             verdict,
             revertTo: revertStateName,
+            mode: effectiveMode,
           },
-          'linear-webhook: reverted transition (strict mode)',
+          'linear-webhook: reverted transition on REVISE',
         );
       } catch (err) {
         logger.warn(
@@ -1292,19 +1293,19 @@ async function runGateForIssue(
       ? 'strict'
       : gateSpec.mode;
 
-    if (effectiveMode === 'strict' && verdict !== 'SHIP') {
+    if (verdict !== 'SHIP') {
       if (gateSpec.revertTo) {
         const revertState = ctx.stateByName.get(gateSpec.revertTo);
         if (revertState) {
           await ctx.client.updateIssue(issue.id, {
             stateId: revertState.id,
-            priority: 1,
+            ...(effectiveMode === 'strict' ? { priority: 1 } : {}),
           });
         }
       } else {
         logger.warn(
           { issueId: issue.id, gate: gateSpec.name },
-          'startup-sweep: strict mode revert skipped — no revert_to configured',
+          'startup-sweep: revert skipped — no revert_to configured',
         );
       }
     }
