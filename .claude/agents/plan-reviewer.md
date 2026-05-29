@@ -55,13 +55,15 @@ Return a single markdown report. No preamble, no "I'll review...".
 
 ## Scope Memo
 
-After emitting your verdict, write a scope memo to `.claude/.warden-memo.md` (max 200 tokens). Include:
+After emitting your verdict, **write** a scope summary to `.claude/.plan-scope.md` (max 200 tokens). This is a separate file from `.warden-memo.md` (which is managed by the memo-enricher hook and rebuilt on each edit). Include:
 - Files the plan touches (list)
 - Key patterns or ADRs checked
 - Active sequences found (if any)
 - Relevant memory files consulted
 
-This memo is consumed by downstream wardens (code-reviewer, ai-eng-warden) to avoid redundant context discovery. If you cannot write the file (permission denied), skip silently.
+Format with a `## Plan-Reviewer Scope` heading.
+
+This file is consumed by downstream wardens (code-reviewer, ai-eng-warden) to avoid redundant context discovery. If you cannot write the file (permission denied), skip silently.
 
 ## Dismissal feedback
 
