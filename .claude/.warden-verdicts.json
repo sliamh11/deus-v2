@@ -1,26 +1,20 @@
 {
-  "ai-eng-warden": {
-    "reason": "Pipeline error tracking fix - sets a variable and removes a guard condition. No LLM prompts, context management, or AI-specific code changed.",
+  "code-reviewer": {
+    "reason": "LIA-92: prompt-only warden spec additions, no runtime code changes",
     "source": "mark",
-    "ts": "2026-05-28T23:00:46Z",
+    "ts": "2026-05-26T11:58:21Z",
     "verdict": "TRIVIAL"
   },
-  "code-reviewer": {
-    "reason": "Gate error escalation fix SHIP'd by code-reviewer - no blocking issues, 3-line fix",
-    "source": "mark",
-    "ts": "2026-05-28T22:59:04Z",
-    "verdict": "SHIP"
-  },
   "plan-reviewer": {
-    "reason": "Gate error escalation plan SHIP'd by plan-reviewer round 2 - both blocking issues from round 1 resolved",
+    "reason": "LIA-102 content was plan-reviewed and approved (SHIP verdict) by container agent; this is a markdown-only append to a warden spec file with no runtime code changes",
     "source": "mark",
-    "ts": "2026-05-28T22:56:01Z",
+    "ts": "2026-05-27T12:02:02Z",
     "verdict": "SHIP"
   },
   "verification-gate": {
-    "reason": "spec-driven swap per task description: exact code blocks implemented verbatim; gliner dep removed; import-tested",
+    "reason": "Pattern file comment-only bump, no functional changes to verify",
     "source": "mark",
-    "ts": "2026-05-29T16:05:23Z",
+    "ts": "2026-05-26T11:47:30Z",
     "verdict": "TRIVIAL"
   }
 }
