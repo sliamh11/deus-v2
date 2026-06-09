@@ -31,7 +31,7 @@
 ## Workflow
 - Feature branch before implementing. Use git worktree, never checkout in main.
 - One concern per branch. Unrelated changes bundled together are harder to review, revert, and bisect.
-- All independent work runs parallel + background. Don't ask, just do it.
+- Before parallelizing, map independent vs dependent subtasks. Fan out only the independent ones with explicit output contracts and a reconcile step; never parallelize a dependency chain — plan→review→implement→test is sequential by necessity, agents on stale inputs produce stale outputs, and a subtask without full interface context hallucinates its contracts.
 - Default subagent model is Sonnet. Escalate to Opus only with stated reason.
 - Default to cross-platform. Flag OS-specific code loudly in PRs.
 - Chat responses always in English. Hebrew only inside artifacts.
