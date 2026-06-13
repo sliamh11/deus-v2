@@ -6,17 +6,32 @@ vi.mock('child_process', () => ({
   execFile: vi.fn(),
 }));
 
+// Cross-platform kill helper — mocked so the kill-timer tests can assert on it
+// without sending a real signal (SIGKILL is unsupported on Windows).
+vi.mock('./platform.js', () => ({
+  forceKillProcess: vi.fn(),
+}));
+
 import { spawn } from 'child_process';
-import { logReactionSignal } from './evolution-client.js';
+import { forceKillProcess } from './platform.js';
+import {
+  logReactionSignal,
+  logInteraction,
+  parsePositiveMsEnv,
+} from './evolution-client.js';
 
 const mockSpawn = vi.mocked(spawn);
 
 function _fakeChild() {
   return {
+    pid: 12345,
     stderr: { on: vi.fn() },
     on: vi.fn(),
+    unref: vi.fn(),
   } as unknown as ReturnType<typeof spawn>;
 }
+
+const mockForceKill = vi.mocked(forceKillProcess);
 
 beforeEach(() => {
   mockSpawn.mockReset();
@@ -85,6 +100,94 @@ describe('logReactionSignal', () => {
     ).id;
     expect(id1).not.toBe(id2);
     expect(id1).toMatch(/^[0-9a-f-]{36}$/);
+  });
+});
+
+describe('parsePositiveMsEnv (LIA-235)', () => {
+  const FB = 60 * 60 * 1000;
+
+  it('returns the fallback when the env var is unset', () => {
+    expect(parsePositiveMsEnv(undefined, FB, 'X')).toBe(FB);
+  });
+
+  it('returns a valid positive number', () => {
+    expect(parsePositiveMsEnv('300000', FB, 'X')).toBe(300000);
+  });
+
+  it.each(['', 'abc', '0', '-5', 'NaN'])(
+    'falls back to the default on malformed/non-positive value %j',
+    (bad) => {
+      // The trap this guards: Number('') === 0 and Number('abc') === NaN, either
+      // of which would make setTimeout fire on the next tick.
+      expect(parsePositiveMsEnv(bad, FB, 'X')).toBe(FB);
+    },
+  );
+});
+
+describe('logInteraction child lifecycle (LIA-235)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockForceKill.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Far beyond any sane LOG_INTERACTION_TIMEOUT_MS default (1h).
+  const PAST_CEILING_MS = 25 * 60 * 60 * 1000;
+
+  function lastChild() {
+    return mockSpawn.mock.results[mockSpawn.mock.results.length - 1]
+      .value as unknown as {
+      unref: ReturnType<typeof vi.fn>;
+      kill: ReturnType<typeof vi.fn>;
+      on: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  /** Invoke the handler the code registered for a given child event. */
+  function fireChildEvent(child: { on: ReturnType<typeof vi.fn> }, ev: string) {
+    const entry = child.on.mock.calls.find(([e]) => e === ev);
+    if (!entry) throw new Error(`no '${ev}' handler registered`);
+    (entry[1] as () => void)();
+  }
+
+  it('unrefs the fire-and-forget child so it cannot pin host shutdown', () => {
+    logInteraction({
+      id: 'i1',
+      prompt: 'p',
+      response: null,
+      groupFolder: 'whatsapp_main',
+    });
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    expect(lastChild().unref).toHaveBeenCalledOnce();
+  });
+
+  it('SIGKILLs a child that overruns the ceiling', () => {
+    logInteraction({
+      id: 'i2',
+      prompt: 'p',
+      response: null,
+      groupFolder: 'whatsapp_main',
+    });
+    lastChild();
+    expect(mockForceKill).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(PAST_CEILING_MS);
+    expect(mockForceKill).toHaveBeenCalledWith(12345); // the fake child's pid
+  });
+
+  it('does NOT kill a child that exits before the ceiling', () => {
+    logInteraction({
+      id: 'i3',
+      prompt: 'p',
+      response: null,
+      groupFolder: 'whatsapp_main',
+    });
+    const child = lastChild();
+    fireChildEvent(child, 'exit'); // child finished its work → clears the timer
+    vi.advanceTimersByTime(PAST_CEILING_MS);
+    expect(mockForceKill).not.toHaveBeenCalled();
   });
 });
 
