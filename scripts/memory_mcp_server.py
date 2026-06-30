@@ -26,6 +26,7 @@ Register in ~/.claude/settings.json:
 """
 from __future__ import annotations
 
+import os
 import sys
 
 if sys.platform == "win32":
@@ -65,7 +66,14 @@ def memory_recall(query: str, k: int = 3, source: str = "mcp") -> dict:
     Returns:
         ``{"context": str, "paths": [str], "confidence": float, "fell_back": bool}``
     """
-    return memory_query.recall(query, k=k, source=source)
+    # Procedures recall by default on the MCP path (the broad external recall
+    # surface). Kill-switch is an explicit DEUS_PROCEDURE_MEMORY=0; any other value
+    # (incl. unset) keeps them eligible via {"standard"} (None falls through to
+    # recall()'s default which ALSO drops procedures). Intentionally diverges from
+    # the default-off host hook — see docs/decisions/procedure-memory-default-on.md.
+    proc_disabled = os.environ.get("DEUS_PROCEDURE_MEMORY", "").strip() == "0"
+    exclude_kinds = None if proc_disabled else {"standard"}
+    return memory_query.recall(query, k=k, source=source, exclude_kinds=exclude_kinds)
 
 
 def _run_mcp_server() -> None:

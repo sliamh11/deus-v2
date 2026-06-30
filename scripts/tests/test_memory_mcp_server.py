@@ -44,12 +44,40 @@ FAKE_RECALL_RESULT = {
 class TestMemoryRecallTool:
     """Test the memory_recall tool function directly."""
 
-    def test_calls_recall_with_correct_args(self):
+    def test_calls_recall_with_correct_args(self, monkeypatch):
+        # Default (flag unset): procedures ON -> exclude_kinds={"standard"}.
+        monkeypatch.delenv("DEUS_PROCEDURE_MEMORY", raising=False)
         with patch.object(mq, "recall", return_value=FAKE_RECALL_RESULT) as mock_recall:
             result = mms.memory_recall("what timezone?", k=5, source="test")
 
-        mock_recall.assert_called_once_with("what timezone?", k=5, source="test")
+        mock_recall.assert_called_once_with(
+            "what timezone?", k=5, source="test", exclude_kinds={"standard"}
+        )
         assert result == FAKE_RECALL_RESULT
+
+    @pytest.mark.parametrize("value", ["1", " 1 ", "\t1\n", "true", "anything"])
+    def test_procedures_on_by_default_and_for_non_disable_values(
+        self, monkeypatch, value
+    ):
+        # Procedures recall by default. Only an explicit "0" disables, so every
+        # non-"0" value (incl. unset, handled above) keeps procedures eligible.
+        monkeypatch.setenv("DEUS_PROCEDURE_MEMORY", value)
+        with patch.object(mq, "recall", return_value=FAKE_RECALL_RESULT) as mock_recall:
+            mms.memory_recall("how do I capture a procedure?")
+
+        _, kwargs = mock_recall.call_args
+        assert kwargs["exclude_kinds"] == {"standard"}
+
+    @pytest.mark.parametrize("value", ["0", " 0 ", "\t0\n"])
+    def test_explicit_zero_is_the_kill_switch(self, monkeypatch, value):
+        # The ONLY disable is an explicit "0" (stripped). Then exclude_kinds=None,
+        # which falls through to recall()'s default that also drops procedures.
+        monkeypatch.setenv("DEUS_PROCEDURE_MEMORY", value)
+        with patch.object(mq, "recall", return_value=FAKE_RECALL_RESULT) as mock_recall:
+            mms.memory_recall("how do I capture a procedure?")
+
+        _, kwargs = mock_recall.call_args
+        assert kwargs["exclude_kinds"] is None
 
     def test_default_source_is_mcp(self):
         with patch.object(mq, "recall", return_value=FAKE_RECALL_RESULT) as mock_recall:
