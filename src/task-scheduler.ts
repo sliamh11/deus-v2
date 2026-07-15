@@ -206,7 +206,16 @@ async function runTask(
   const currentSessionRef = sessionRef ?? defaultSession('', backend);
 
   const eventSink: RuntimeEventSink = async (event) => {
-    if (event.type === 'session') {
+    // B4 (LIA-404): session SAVES are gated on context_mode === 'group',
+    // mirroring the read-side gate above (candidateSessionRef). An ISOLATED
+    // task's session ref must never be persisted into the group's shared,
+    // resumable session row — otherwise the isolated task's private
+    // conversation would silently resume on the group's next interactive
+    // turn (a cross-context leak, concrete now that deus-native session ids
+    // reference real checkpointer state; the same gate also closes the
+    // already-live asymmetry for every container backend, which emits
+    // session refs unconditionally for any caller).
+    if (event.type === 'session' && task.context_mode === 'group') {
       deps.setSession?.(task.group_folder, event.sessionRef);
     }
     if (event.type === 'output_text') {
@@ -237,7 +246,8 @@ async function runTask(
     } else if (runResult.result) {
       result = runResult.result;
     }
-    if (runResult.sessionRef) {
+    // Same context_mode gate as the eventSink's session-event save above.
+    if (task.context_mode === 'group' && runResult.sessionRef) {
       deps.setSession?.(task.group_folder, runResult.sessionRef);
     }
 

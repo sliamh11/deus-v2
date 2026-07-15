@@ -5,9 +5,15 @@ import type { RuntimeEvent } from './types.js';
 
 // Hoisted mocks — no live network call, no live model call anywhere in this
 // file, matching every other spike/adapter test's hermeticity convention.
-const { createAgentMock, invokeMock } = vi.hoisted(() => ({
+// checkpointerStub: a minimal fake BaseCheckpointSaver surface (getTuple is
+// the only method runTurn itself calls; the rest of the saver is only ever
+// exercised through the REAL LangGraph engine, which this file mocks away
+// via createAgentMock). A single hoisted instance so the createAgent-wiring
+// assertion below can prove the EXACT object was passed through.
+const { createAgentMock, invokeMock, checkpointerStub } = vi.hoisted(() => ({
   createAgentMock: vi.fn(),
   invokeMock: vi.fn(),
+  checkpointerStub: { getTuple: async () => undefined },
 }));
 
 vi.mock('langchain', async (importOriginal) => {
@@ -61,6 +67,18 @@ vi.mock('./tool-broker-langchain-adapter.js', () => ({
   buildSafeTools: vi.fn(() => []),
 }));
 
+// B4 (LIA-404): runTurn now unconditionally calls getCheckpointer() (both
+// for the pre-invoke getTuple read and the createAgent wiring) — without
+// this stub, EVERY runTurn call in this file would touch (or throw on) real
+// filesystem state, since SqliteSaver.fromConnString opens its file eagerly
+// and store/ doesn't exist on a clean checkout. A simple stub is sufficient
+// here (getTuple -> undefined = "always a new session", today's behavior);
+// the dedicated integration test file is where REAL checkpointer behavior
+// is exercised.
+vi.mock('./checkpointer.js', () => ({
+  getCheckpointer: () => checkpointerStub,
+}));
+
 const { createDeusNativeRuntime } = await import('./deus-native-backend.js');
 
 const stubDeps: ContainerRuntimeDeps = {
@@ -97,8 +115,9 @@ describe('DeusNativeBackend', () => {
     expect(caps.web).toBe(true);
     expect(caps.multimodal).toBe(false);
     expect(caps.handoffs).toBe(false);
-    // B4 (checkpointer-to-sessions-table) hasn't landed yet.
-    expect(caps.persistent_sessions).toBe(false);
+    // B4 (LIA-404): checkpointer-backed sessions landed — a stored
+    // session_id is a real, resumable thread identifier.
+    expect(caps.persistent_sessions).toBe(true);
     expect(caps.tool_streaming).toBe(false);
   });
 
@@ -262,10 +281,16 @@ describe('DeusNativeBackend', () => {
     expect(events.some((e) => e.type === 'turn_complete')).toBe(true);
 
     // Bare prompt only — no CLAUDE.md/AGENTS.md/persona context, per the
-    // plan's explicit non-goal.
-    expect(invokeMock).toHaveBeenCalledWith({
-      messages: [{ role: 'user', content: 'find X' }],
-    });
+    // plan's explicit non-goal. B4 (LIA-404): invoke gains a second
+    // argument — the checkpointer thread_id, which must be the SAME id the
+    // RunResult.sessionRef carries (the session row references exactly the
+    // checkpointer state this turn wrote).
+    expect(invokeMock).toHaveBeenCalledWith(
+      {
+        messages: [{ role: 'user', content: 'find X' }],
+      },
+      { configurable: { thread_id: result.sessionRef?.session_id } },
+    );
 
     // OAuth-vs-API-key branching happened via detectAuthMode, and a
     // per-group token was minted.
@@ -279,6 +304,7 @@ describe('DeusNativeBackend', () => {
     // B2's AC1-locked order is untouched.
     const createAgentArgs = createAgentMock.mock.calls[0]?.[0] as {
       middleware?: Array<{ name: string }>;
+      checkpointer?: unknown;
     };
     expect(createAgentArgs.middleware?.map((m) => m.name)).toEqual([
       'permissions',
@@ -287,6 +313,12 @@ describe('DeusNativeBackend', () => {
       'telemetry',
       'prompt-lifecycle',
     ]);
+
+    // B4 (LIA-404): the checkpointer is genuinely wired into createAgent —
+    // identity check against the stub instance (toBe), not just "some field
+    // is present", so a silently-dropped checkpointer can't false-negative
+    // this ticket's core AC.
+    expect(createAgentArgs.checkpointer).toBe(checkpointerStub);
   });
 
   it('branches to OAuth-mode client construction when detectAuthMode() returns "oauth"', async () => {

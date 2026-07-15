@@ -32,6 +32,8 @@ import { RuntimeRegistry } from './registry.js';
 // Shared mutable harness (hoisted so the module mocks below can reach it).
 // - groupsDir: per-test temp `groups/` fixture root, so no test ever reads or
 //   writes the repo's real groups/ directory.
+// - checkpointerDbPath: per-test temp SQLite file for the REAL SqliteSaver
+//   behind B4's checkpointer mock (see the './checkpointer.js' mock below).
 // - makeModel: per-test factory for the scripted model that replaces the
 //   (never-invoked) real ChatAnthropic inside runTurn's createAgent call.
 // - tools: what the mocked buildSafeTools returns (the echo tool for
@@ -42,6 +44,7 @@ import { RuntimeRegistry } from './registry.js';
 // ---------------------------------------------------------------------------
 const harness = vi.hoisted(() => ({
   groupsDir: '',
+  checkpointerDbPath: '',
   makeModel: null as null | (() => unknown),
   tools: [] as unknown[],
   captured: [] as Array<{ systemMessage: unknown; systemPrompt: unknown }>,
@@ -93,6 +96,24 @@ vi.mock('../group-folder.js', async (importOriginal) => {
   };
 });
 
+// B4 (LIA-404): a STATEFUL checkpointer mock — a REAL SqliteSaver routed to
+// the per-test temp file — NOT the simple always-undefined stub
+// deus-native-backend.test.ts uses. This file's assertions specifically test
+// new-vs-resumed injection behavior, which under B4's redefined isNewSession
+// signal (real checkpoint existence, not a session_id string check) only
+// keeps testing what it claims to test if the mocked checkpointer GENUINELY
+// tracks whether a thread_id has been seen before: an always-undefined stub
+// would make every call look "new" and pass the resumed-turn assertions
+// vacuously; a fixed tuple would break the new-session cases. Same mechanism
+// as deus-native-checkpointer-integration.test.ts, reused.
+vi.mock('./checkpointer.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./checkpointer.js')>();
+  return {
+    ...actual,
+    getCheckpointer: () => actual.getCheckpointer(harness.checkpointerDbPath),
+  };
+});
+
 // Hermeticity mocks, mirroring deus-native-backend.test.ts's convention: no
 // live auth-mode detection, no on-disk token mint, no real tool broker, and
 // no tasks-snapshot writes from the scheduler path.
@@ -110,6 +131,9 @@ vi.mock('../container-runner.js', () => ({
 }));
 
 const { createDeusNativeRuntime } = await import('./deus-native-backend.js');
+// Resolves through the './checkpointer.js' mock above, which spreads the
+// actual module — this is the REAL reset function.
+const { _resetCheckpointerForTests } = await import('./checkpointer.js');
 
 const stubDeps: ContainerRuntimeDeps = {
   resolveGroup: () => undefined,
@@ -175,17 +199,30 @@ function toolCallThenAnswerModel(): FakeToolCallingModel {
   });
 }
 
+let checkpointerTempDir = '';
+
 beforeEach(() => {
   harness.groupsDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'b3-lifecycle-groups-'),
   );
+  // B4: fresh temp checkpointer DB per test. The REAL module's memoization
+  // is still active underneath the mock wrapper — the reset must run BEFORE
+  // any test's runTurn call, or a later test would silently keep reusing the
+  // previous test's (deleted) database file.
+  checkpointerTempDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'b4-lifecycle-checkpointer-'),
+  );
+  harness.checkpointerDbPath = path.join(checkpointerTempDir, 'checkpoints.db');
+  _resetCheckpointerForTests();
   harness.makeModel = singleCycleModel;
   harness.tools = [];
   harness.captured.length = 0;
 });
 
 afterEach(() => {
+  _resetCheckpointerForTests();
   fs.rmSync(harness.groupsDir, { recursive: true, force: true });
+  fs.rmSync(checkpointerTempDir, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------

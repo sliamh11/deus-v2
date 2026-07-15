@@ -17,16 +17,30 @@
  *   ONLY group-scoped CLAUDE.md session-open injection (see
  *   lifecycle-events.ts), deliberately minimal; broader context parity is
  *   out of that ticket's literal ACs and can be a follow-up.
- * - No REAL, resumable backend-scoped session persistence (conversation
- *   state/checkpoint) — B3 adds a minimal non-resumable session-open marker
- *   sufficient for the app's existing new-vs-resumed bookkeeping; genuine
- *   resumable persistence via the LangGraph checkpointer remains
- *   B4/LIA-404's job. As a KNOWN, ACCEPTED consequence, session-open
- *   CLAUDE.md content only reaches the model once per session lifecycle
- *   (not every turn), so an actively-used group effectively only 'sees' its
- *   rules once per SESSION_IDLE_RESET_HOURS window until B4 lands real
- *   conversation continuity. `startOrResume` mirrors ContainerRuntime's own
- *   stub.
+ * - Real backend-scoped session persistence via the LangGraph checkpointer
+ *   lands here (B4/LIA-404): the MESSAGE exchange itself genuinely persists
+ *   and resumes across turns. Still deferred: session-open CLAUDE.md content
+ *   injected via `wrapModelCall`'s `systemMessage` remains a per-call,
+ *   EPHEMERAL override — it is never written into the checkpointed
+ *   `messages` state (confirmed: `AgentNode`'s `baseHandler` passes it
+ *   directly to the model call and only ever writes the model's OWN response
+ *   back into graph state) — so B3's documented once-per-session-lifecycle
+ *   injection limitation is NOT fixed by this plan, contrary to an earlier
+ *   draft's incorrect claim; re-supplying system context on every resumed
+ *   turn (or persisting it into message state some other way) is real,
+ *   separate future work, deliberately out of this ticket's scope. Also
+ *   still deferred: `startOrResume` real-lookup parity for
+ *   `multi-agent/orchestrator.ts`'s one-shot task path (correctly out of
+ *   scope — that caller mints a fresh one-shot task per call by design) and
+ *   any cleanup/expiry of accumulated checkpoint rows (unbounded growth, a
+ *   separate future concern).
+ * - Context windowing/summarization for the checkpointed message history
+ *   (flagged by ai-eng-warden review). `agent.invoke()` loads the FULL
+ *   accumulated `messages` channel on every resumed turn and sends it to the
+ *   model as-is — per-turn token cost grows linearly, unbounded, for the
+ *   life of a session. No cap, truncation, or summarization exists yet.
+ *   Deliberately out of this ticket's scope; a real future concern once
+ *   long-lived sessions are common.
  * - The wrapToolCall permission-rules engine and any tool beyond
  *   web_search/web_fetch (B7/LIA-407).
  * - Middleware layer SUBSTANCE. The ordered/configurable middleware stack
@@ -74,6 +88,7 @@ import {
   loadSessionOpenContext,
   type PromptEventRecord,
 } from './lifecycle-events.js';
+import { getCheckpointer } from './checkpointer.js';
 import { PROXY_BIND_HOST } from '../container-runtime.js';
 import { CREDENTIAL_PROXY_PORT } from '../config.js';
 import { detectAuthMode } from '../credential-proxy.js';
@@ -102,9 +117,10 @@ const DEUS_NATIVE_CAPABILITIES: RuntimeCapabilities = {
   multimodal: false,
   // False: same parity gap as every other backend today.
   handoffs: false,
-  // False: B4 (LIA-404) hasn't landed real checkpointer-to-sessions-table
-  // integration yet, so a stored session id must not be assumed replayable.
-  persistent_sessions: false,
+  // True (B4/LIA-404): runTurn wires the LangGraph SqliteSaver checkpointer
+  // (checkpointer.ts) with RuntimeSession.session_id as the thread_id, so a
+  // stored session id IS a real, resumable message-thread identifier.
+  persistent_sessions: true,
   // False: runTurn returns one buffered result, no incremental deltas.
   tool_streaming: false,
 };
@@ -237,13 +253,46 @@ export class DeusNativeRuntime implements AgentRuntime {
         };
       }
 
-      // B3 (LIA-403): literal once-per-session new-vs-resumed signal, read
-      // from runTurn's OWN sessionRef parameter — every caller in the repo
-      // already passes one (orchestrator/task-scheduler pass the persisted
-      // ref or defaultSession('', ...); the non-orchestrator sites always
-      // pass a fresh empty ref). Computed ONCE, before the middleware is
-      // built; this one decision governs the whole turn.
-      const isNewSession = sessionRef.session_id === '';
+      // B4 (LIA-404): the session_id doubles as the LangGraph checkpointer
+      // thread_id, so it's computed FIRST — needed before invoke() runs, not
+      // just as the RunResult.sessionRef output after. Same echo-if-present/
+      // mint-if-empty logic B3 established (keeps db.setSession's dedup on
+      // "same id = touch, don't insert" to one row per real session-open),
+      // unchanged, just computed earlier.
+      const outgoingSessionId =
+        sessionRef.session_id !== ''
+          ? sessionRef.session_id
+          : crypto.randomUUID();
+
+      // B4 (LIA-404): read the real checkpoint state ONCE, and derive BOTH
+      // the injection-gating signal and the tool-call-scoping count from it.
+      // This read happens before invoke()'s own internal getTuple() in the
+      // same process — both read the identical "before this turn" state.
+      const priorTuple = await getCheckpointer().getTuple({
+        configurable: { thread_id: outgoingSessionId },
+      });
+      const priorMessages = Array.isArray(
+        (priorTuple?.checkpoint?.channel_values as { messages?: unknown[] })
+          ?.messages,
+      )
+        ? (priorTuple!.checkpoint.channel_values as { messages: unknown[] })
+            .messages
+        : [];
+      // isNewSession = "does a REAL checkpoint exist for this thread_id" —
+      // deliberately NOT B3's `sessionRef.session_id === ''` string check.
+      // B3-era production rows carry non-empty, UUID-shaped session_ids that
+      // were NEVER real checkpointer threads (B3's own marker was explicitly
+      // "not a real resumable checkpoint ID"); under the old string signal,
+      // the first post-B4 turn for such a row would misclassify as "resumed",
+      // skip session-open CLAUDE.md injection, AND hand the checkpointer a
+      // thread_id it has never seen — a fresh, memoryless context with no
+      // group rules either. Under this checkpoint-existence signal the same
+      // pre-existing id is still echoed back (preserving the DB row's
+      // identity) AND correctly triggers re-injection, because from the
+      // checkpointer's perspective it truthfully IS a new session. This one
+      // signal is the entire upgrade-path fix — no migration, no backfill.
+      const isNewSession = priorTuple === undefined;
+      const priorMessageCount = priorMessages.length;
 
       // Session-open injection fires only on a genuinely NEW session (once
       // per open lifecycle — a resumed turn never even calls
@@ -289,15 +338,22 @@ export class DeusNativeRuntime implements AgentRuntime {
         model,
         tools,
         middleware: allMiddleware,
+        // B4 (LIA-404): real conversation continuity — LangGraph loads the
+        // prior checkpoint for thread_id and appends this turn's input via
+        // the messages channel's own reducer.
+        checkpointer: getCheckpointer(),
       });
 
       // Non-goal (see module doc comment): the prompt sent to createAgent is
       // the bare runContext.prompt — session-open CLAUDE.md content reaches
       // the model via the prompt-lifecycle middleware's wrapModelCall
       // systemMessage injection, never by changing what invoke() receives.
-      const result = await agent.invoke({
-        messages: [{ role: 'user', content: runContext.prompt }],
-      });
+      const result = await agent.invoke(
+        {
+          messages: [{ role: 'user', content: runContext.prompt }],
+        },
+        { configurable: { thread_id: outgoingSessionId } },
+      );
 
       // result.messages is typed as the broad BaseMessage[] union (matches
       // A1's spike's own printTranscriptMessage pattern) -- only the AIMessage
@@ -307,7 +363,15 @@ export class DeusNativeRuntime implements AgentRuntime {
       // These casts read tool_calls/content defensively (both accessed via
       // `?.`/Array.isArray, never assumed present) rather than assert a
       // stronger runtime guarantee than the union actually provides.
-      const messages = result.messages ?? [];
+      //
+      // B4 (LIA-404): with a checkpointer wired in, invoke() on a RESUMED
+      // thread returns the FULL accumulated state (prior turns included),
+      // not just this turn's messages — slicing by priorMessageCount scopes
+      // the tool-call-emission loop below to only THIS turn's messages, so
+      // earlier turns' tool calls are never re-emitted on resume. For a new
+      // session (or a pre-B4 row with no real checkpoint) the count is 0 and
+      // every message is processed — identical to pre-B4 behavior.
+      const messages = (result.messages ?? []).slice(priorMessageCount);
       for (const message of messages) {
         const m = message as {
           tool_calls?: Array<{ name?: string; args?: unknown }>;
@@ -336,24 +400,12 @@ export class DeusNativeRuntime implements AgentRuntime {
       await eventSink({ type: 'output_text', text });
       await eventSink({ type: 'turn_complete' });
 
-      // B3 (LIA-403) root-cause fix: populate RunResult.sessionRef on every
-      // successful turn so message-orchestrator.ts/task-scheduler.ts's
-      // ALREADY-EXISTING, generic `if (runResult.sessionRef) setSession(...)`
-      // persistence finally has something real to persist for this backend.
-      // Echo the incoming session_id back on a resumed turn (keeps
-      // db.setSession's dedup on "same id = touch, don't insert" to one row
-      // per real session-open); mint fresh only on a genuine new-vs-resumed
-      // transition. This session_id is explicitly NOT a real resumable
-      // LangChain/LangGraph checkpoint ID — it carries no conversation
-      // state, purely a "a session is open" marker for the app-wide
-      // session-tracking convention every other backend already participates
-      // in. Real, resumable backend-scoped session persistence is
-      // B4/LIA-404's job and supersedes this marker.
-      const outgoingSessionId =
-        sessionRef.session_id !== ''
-          ? sessionRef.session_id
-          : crypto.randomUUID();
-
+      // B4 (LIA-404): outgoingSessionId (computed at the top of the turn —
+      // it doubled as the checkpointer thread_id) flows back through
+      // RunResult.sessionRef into message-orchestrator.ts/task-scheduler.ts's
+      // existing generic `if (runResult.sessionRef) setSession(...)`
+      // persistence. Unlike B3's cosmetic marker, this id now references
+      // real, resumable checkpointer state for this thread.
       return {
         status: 'success',
         result: text,

@@ -567,6 +567,38 @@ describe('startSchedulerLoop execution path', () => {
       session_id: 'claude-session-next',
     });
   });
+
+  // B4 (LIA-404) cross-context session-isolation regression: an ISOLATED
+  // task's session refs must NEVER be persisted into the group's shared,
+  // resumable session row — via EITHER write site (the eventSink's
+  // session-event save or the post-return runResult.sessionRef save). The
+  // scripted stub actively fires BOTH on every call, so the
+  // not.toHaveBeenCalled() assertion genuinely falsifies the defect rather
+  // than passing by construction. Mirrors the group-mode positive case above.
+  it('does NOT store session refs produced by isolated-context scheduled tasks', async () => {
+    createTask(
+      makeTask({ id: 'task-isolated-no-save', context_mode: 'isolated' }),
+    );
+
+    const runTurn: RunTurnFn = async (_ctx, _session, sink) => {
+      await sink({
+        type: 'session',
+        sessionRef: { backend: 'claude', session_id: 'claude-session-next' },
+      });
+      await sink({ type: 'turn_complete' });
+      return {
+        status: 'success',
+        result: null,
+        sessionRef: { backend: 'claude', session_id: 'claude-session-next' },
+      };
+    };
+
+    const setSession = vi.fn();
+    startSchedulerLoop(makeDeps({ setSession, runTurn }));
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(setSession).not.toHaveBeenCalled();
+  });
 });
 
 describe('safeSlice', () => {
