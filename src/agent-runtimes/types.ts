@@ -65,6 +65,22 @@ export type RuntimeEvent =
   // (Web UI renders it as a reasoning block). Sinks without a handler ignore it.
   | { type: 'activity'; text: string }
   | { type: 'tool_call'; name: string; arguments: Record<string, unknown> }
+  // B6 (LIA-406): per-model-call usage accounting — one event per AIMessage
+  // produced within a turn, emitted unconditionally. Token fields are
+  // `undefined` when the provider reported no usage_metadata (explicit
+  // absence, never fabricated zeros), distinguishing "a model call happened
+  // but usage wasn't reported" from "no model call happened" (no event).
+  // Together with RunResult.usage this is the normalized contract
+  // LIA-149/LIA-320 build on.
+  | {
+      type: 'usage';
+      sessionId: string;
+      provider: string;
+      model: string;
+      inputTokens: number | undefined;
+      outputTokens: number | undefined;
+      totalTokens: number | undefined;
+    }
   | { type: 'session'; sessionRef: RuntimeSession }
   | { type: 'turn_complete' }
   | { type: 'error'; error: string };
@@ -75,6 +91,15 @@ export interface RunResult {
   status: 'success' | 'error';
   result: string | null;
   sessionRef?: RuntimeSession;
+  // B6 (LIA-406): turn-level aggregate, summed across the AIMessages in the
+  // turn that DID carry usage_metadata. Omitted entirely (never a fabricated
+  // zero-object) when no message in the turn reported usage — the
+  // per-message 'usage' events above represent that absence explicitly.
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
   error?: string;
 }
 

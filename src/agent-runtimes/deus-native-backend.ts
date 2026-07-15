@@ -63,6 +63,7 @@ import crypto from 'crypto';
 
 import { ChatAnthropic } from '@langchain/anthropic';
 import { createAgent, type AgentMiddleware } from 'langchain';
+import type { UsageMetadata } from '@langchain/core/messages';
 import Anthropic from '@anthropic-ai/sdk';
 
 import type {
@@ -372,6 +373,12 @@ export class DeusNativeRuntime implements AgentRuntime {
       // session (or a pre-B4 row with no real checkpoint) the count is 0 and
       // every message is processed — identical to pre-B4 behavior.
       const messages = (result.messages ?? []).slice(priorMessageCount);
+      // B6 (LIA-406): turn-level usage aggregate — summed across only the
+      // AIMessages that DID carry usage_metadata; stays undefined (and the
+      // RunResult.usage field is omitted) when none did.
+      let turnUsage:
+        | { inputTokens: number; outputTokens: number; totalTokens: number }
+        | undefined;
       for (const message of messages) {
         const m = message as {
           tool_calls?: Array<{ name?: string; args?: unknown }>;
@@ -384,6 +391,47 @@ export class DeusNativeRuntime implements AgentRuntime {
               name: call.name,
               arguments: (call.args as Record<string, unknown>) ?? {},
             });
+          }
+        }
+
+        // B6 (LIA-406): one 'usage' event per AIMessage, UNCONDITIONALLY —
+        // identified via the `type: 'ai'` discriminator (a plain readonly
+        // field on the concrete AIMessage class), NOT `instanceof AIMessage`
+        // (would need a runtime class import purely for type-narrowing,
+        // unlike the type-only `UsageMetadata` import above, which is erased
+        // at compile time) and NOT duck-typing on usage_metadata presence,
+        // which cannot
+        // distinguish an AIMessage lacking usage data (which must still
+        // emit, with undefined counts) from a Human/ToolMessage (which must
+        // never emit — those aren't a completed model request). When
+        // usage_metadata is absent the token fields are undefined — explicit
+        // absence, never fabricated zeros.
+        if (message.type === 'ai') {
+          const usage = (message as { usage_metadata?: UsageMetadata })
+            .usage_metadata;
+          await eventSink({
+            type: 'usage',
+            sessionId: outgoingSessionId,
+            // Hardcoded because buildProxyRoutedChatAnthropic is the only
+            // model-construction path today (single-provider). If a second
+            // provider path is added, this must become a function of which
+            // client was actually built — it will not track `model` below
+            // automatically.
+            provider: 'anthropic',
+            // Read off the already-constructed ChatAnthropic instance — not
+            // re-hardcoded, so it can't drift if the model tier changes.
+            model: model.model,
+            inputTokens: usage?.input_tokens,
+            outputTokens: usage?.output_tokens,
+            totalTokens: usage?.total_tokens,
+          });
+          if (usage) {
+            turnUsage = {
+              inputTokens: (turnUsage?.inputTokens ?? 0) + usage.input_tokens,
+              outputTokens:
+                (turnUsage?.outputTokens ?? 0) + usage.output_tokens,
+              totalTokens: (turnUsage?.totalTokens ?? 0) + usage.total_tokens,
+            };
           }
         }
       }
@@ -410,6 +458,9 @@ export class DeusNativeRuntime implements AgentRuntime {
         status: 'success',
         result: text,
         sessionRef: { backend: 'deus-native', session_id: outgoingSessionId },
+        // B6 (LIA-406): omitted (not zeroed) when no message in the turn
+        // carried usage_metadata — never fabricate counts.
+        ...(turnUsage !== undefined ? { usage: turnUsage } : {}),
       };
     } catch (err) {
       // Never throw out of runTurn — matches ContainerRuntime.runTurn's

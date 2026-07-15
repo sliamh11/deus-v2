@@ -177,6 +177,49 @@ function toolCallThenAnswerModel(): FakeToolCallingModel {
   });
 }
 
+// B6 (LIA-406): KNOWN, hardcoded usage values for the AC4 reconciliation
+// test — the emitted 'usage' events must carry these EXACT numbers.
+const KNOWN_USAGE = {
+  input_tokens: 42,
+  output_tokens: 17,
+  total_tokens: 59,
+};
+
+/**
+ * B6 (LIA-406): FakeToolCallingModel never populates usage_metadata (its
+ * _generate builds a bare AIMessage — that pristine behavior IS the AC4
+ * "absent usage_metadata" case below). This wrapper stamps KNOWN_USAGE onto
+ * every generated AIMessage for the reconciliation cases. It patches the
+ * INSTANCE (and recursively re-wraps bindTools' result) rather than
+ * subclassing, because FakeToolCallingModel.bindTools hard-codes
+ * `new FakeToolCallingModel(...)` — and createAgent always rebinds tools,
+ * which would silently discard a subclass's _generate override.
+ */
+function withKnownUsage(model: FakeToolCallingModel): FakeToolCallingModel {
+  const originalGenerate = model._generate.bind(model);
+  model._generate = async (
+    ...args: Parameters<FakeToolCallingModel['_generate']>
+  ) => {
+    const result = await originalGenerate(...args);
+    (
+      result.generations[0].message as {
+        usage_metadata?: typeof KNOWN_USAGE;
+      }
+    ).usage_metadata = { ...KNOWN_USAGE };
+    return result;
+  };
+  const originalBindTools = model.bindTools.bind(model);
+  model.bindTools = (
+    ...args: Parameters<FakeToolCallingModel['bindTools']>
+  ) => {
+    const bound = originalBindTools(...args);
+    return bound instanceof FakeToolCallingModel
+      ? withKnownUsage(bound)
+      : bound;
+  };
+  return model;
+}
+
 let checkpointerTempDir = '';
 
 beforeEach(() => {
@@ -330,6 +373,139 @@ describe('tool-call event scoping on resume', () => {
     expect(events2.filter((e) => e.type === 'tool_call')).toHaveLength(0);
     // The turn still completed normally.
     expect(events2.some((e) => e.type === 'turn_complete')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B6 (LIA-406) AC4 — usage-event reconciliation against KNOWN scripted
+// values, driven through the REAL runTurn + real createAgent. Case A: exact
+// token-count reconciliation (event AND RunResult.usage aggregate). Case B:
+// an AIMessage with NO usage_metadata still emits a 'usage' event, with all
+// token fields undefined and RunResult.usage omitted. Case C: multi-model-
+// call turns sum the aggregate across every AIMessage that carried usage.
+// ---------------------------------------------------------------------------
+describe('usage events (B6 LIA-406: AC4 reconciliation)', () => {
+  it('emits a usage event whose token counts equal the scripted usage_metadata exactly, and RunResult.usage matches', async () => {
+    const runtime = createDeusNativeRuntime(stubDeps);
+    harness.makeModel = () =>
+      withKnownUsage(new FakeToolCallingModel({ toolCalls: [[]] }));
+
+    const events: RuntimeEvent[] = [];
+    const result = await runtime.runTurn(
+      runCtx('usagegroup', 'count my tokens'),
+      defaultSession('', 'deus-native'),
+      (event) => {
+        events.push(event);
+      },
+    );
+    expect(result.status).toBe('success');
+
+    // Exactly ONE model call this turn → exactly ONE usage event, carrying
+    // the scripted numbers verbatim (a real reconciliation, not "an event
+    // fired").
+    const usageEvents = events.filter((e) => e.type === 'usage');
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0]).toMatchObject({
+      type: 'usage',
+      sessionId: result.sessionRef?.session_id,
+      provider: 'anthropic',
+      inputTokens: KNOWN_USAGE.input_tokens,
+      outputTokens: KNOWN_USAGE.output_tokens,
+      totalTokens: KNOWN_USAGE.total_tokens,
+    });
+    // AC2: model is read off the ChatAnthropic instance's own .model field
+    // at call time — assert it's a real, non-empty identifier without
+    // re-hardcoding the tier literal here (the exact thing AC2 avoids).
+    const usageEvent = usageEvents[0] as Extract<
+      RuntimeEvent,
+      { type: 'usage' }
+    >;
+    expect(typeof usageEvent.model).toBe('string');
+    expect(usageEvent.model.length).toBeGreaterThan(0);
+
+    // The turn-level aggregate reconciles to the same scripted numbers.
+    expect(result.usage).toEqual({
+      inputTokens: KNOWN_USAGE.input_tokens,
+      outputTokens: KNOWN_USAGE.output_tokens,
+      totalTokens: KNOWN_USAGE.total_tokens,
+    });
+  });
+
+  it('still emits a usage event (with all token fields undefined) when the AIMessage has no usage_metadata, and omits RunResult.usage', async () => {
+    const runtime = createDeusNativeRuntime(stubDeps);
+    // Pristine FakeToolCallingModel: its _generate never sets usage_metadata.
+    harness.makeModel = singleCycleModel;
+
+    const events: RuntimeEvent[] = [];
+    const result = await runtime.runTurn(
+      runCtx('nousagegroup', 'no usage reported'),
+      defaultSession('', 'deus-native'),
+      (event) => {
+        events.push(event);
+      },
+    );
+    expect(result.status).toBe('success');
+
+    // The event STILL fires (AC1's unconditional guarantee) — absence is
+    // represented explicitly as undefined counts, never fabricated zeros.
+    const usageEvents = events.filter((e) => e.type === 'usage');
+    expect(usageEvents).toHaveLength(1);
+    const usageEvent = usageEvents[0] as Extract<
+      RuntimeEvent,
+      { type: 'usage' }
+    >;
+    expect(usageEvent.provider).toBe('anthropic');
+    expect(usageEvent.sessionId).toBe(result.sessionRef?.session_id);
+    expect(usageEvent.inputTokens).toBeUndefined();
+    expect(usageEvent.outputTokens).toBeUndefined();
+    expect(usageEvent.totalTokens).toBeUndefined();
+
+    // No message in the turn carried usage → the aggregate is omitted
+    // entirely, not a zero-object.
+    expect(result.usage).toBeUndefined();
+  });
+
+  it('a tool-calling turn (two model calls) emits one usage event per AIMessage and sums the aggregate', async () => {
+    const runtime = createDeusNativeRuntime(stubDeps);
+    harness.tools = [ECHO_TOOL];
+    harness.makeModel = () =>
+      withKnownUsage(
+        new FakeToolCallingModel({
+          toolCalls: [
+            [{ name: 'echo_tool', args: { value: 'ping' }, id: 'call_1' }],
+            [],
+          ],
+        }),
+      );
+
+    const events: RuntimeEvent[] = [];
+    const result = await runtime.runTurn(
+      runCtx('multiusagegroup', 'call the echo tool'),
+      defaultSession('', 'deus-native'),
+      (event) => {
+        events.push(event);
+      },
+    );
+    expect(result.status).toBe('success');
+
+    // Two model calls (agent-node → tool-node → agent-node) → two
+    // AIMessages → two usage events, each carrying the scripted numbers.
+    const usageEvents = events.filter((e) => e.type === 'usage');
+    expect(usageEvents).toHaveLength(2);
+    for (const event of usageEvents) {
+      expect(event).toMatchObject({
+        inputTokens: KNOWN_USAGE.input_tokens,
+        outputTokens: KNOWN_USAGE.output_tokens,
+        totalTokens: KNOWN_USAGE.total_tokens,
+      });
+    }
+
+    // The aggregate is the SUM across both model calls.
+    expect(result.usage).toEqual({
+      inputTokens: KNOWN_USAGE.input_tokens * 2,
+      outputTokens: KNOWN_USAGE.output_tokens * 2,
+      totalTokens: KNOWN_USAGE.total_tokens * 2,
+    });
   });
 });
 
