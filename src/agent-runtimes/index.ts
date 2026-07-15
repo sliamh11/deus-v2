@@ -18,4 +18,5 @@ export {
 export { createClaudeRuntime } from './claude-backend.js';
 export { createOpenAIRuntime } from './openai-backend.js';
 export { createLlamaCppRuntime } from './llama-cpp-backend.js';
+export { createDeusNativeRuntime } from './deus-native-backend.js';
 export { RuntimeRegistry, initRuntimeRegistry } from './registry.js';

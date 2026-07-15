@@ -1,5 +1,13 @@
 # Multi-Agent Orchestration & Agent Quality Research
 
+> **⚠️ PARTIAL SUPERSESSION (2026-07-15).** The "Runner on host, LLM on host:
+> Rejected" line in the Architectural Finding table below is superseded for the
+> deus-native case by
+> [deus-v2-langchain-runtime.md](deus-v2-langchain-runtime.md) — deus-v2
+> deliberately retires the Claude Agent SDK loop that rejection was protecting,
+> while the tool-isolation concern is addressed there via a conservative
+> web-only tool scope. Everything else in this ADR stands unchanged.
+
 **Status:** Accepted
 **Date:** 2026-05-06
 **Scope:** `src/agent-runtimes/`, `src/message-orchestrator.ts`, `container/agent-runner/`, `.claude/wardens/`, memory atoms

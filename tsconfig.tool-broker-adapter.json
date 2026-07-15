@@ -1,0 +1,18 @@
+{
+  "//": "LIA-401/B1: compiles container/agent-runner/src/tool-broker.ts (+ its local deps tool-summarize.ts/tool-audit.ts/schedule-validator.ts, pulled in transitively) to .js IN PLACE, so the compiled production host service (node dist/, no TS loader) can load it via the dynamic import in src/agent-runtimes/tool-broker-langchain-adapter.ts. Standalone (no extends) to avoid the base tsconfig's outDir:./dist + rootDir:./src, which would misdirect emit and reject files outside src/ (TS6059) -- same rootDir/outDir mismatch class tsconfig.skills.json already solves this way. Compiled .js is gitignored; npm run build regenerates it. Does NOT replace container/agent-runner's OWN separate build (container/agent-runner/tsconfig.json, used by container/build.sh for the Docker image) -- that build targets the container and is untouched by this file.",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "declaration": false,
+    "sourceMap": false,
+    "declarationMap": false,
+    "noEmit": false
+  },
+  "include": ["container/agent-runner/src/tool-broker.ts"]
+}

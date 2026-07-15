@@ -1,12 +1,15 @@
 import type { AgentEffortLevel } from '../types.js';
 
-export type AgentRuntimeId = 'claude' | 'openai' | 'llama-cpp';
+export type AgentRuntimeId = 'claude' | 'openai' | 'llama-cpp' | 'deus-native';
 
 // Canonical accepted-value gate for AgentRuntimeId. Defined here (next to
 // the type) so both `src/config.ts` and `src/ipc.ts` can import it without
 // creating a circular dependency (`ipc.ts` already depends on `config.ts`).
 export function parseAgentBackend(value: unknown): AgentRuntimeId | undefined {
-  return value === 'claude' || value === 'openai' || value === 'llama-cpp'
+  return value === 'claude' ||
+    value === 'openai' ||
+    value === 'llama-cpp' ||
+    value === 'deus-native'
     ? value
     : undefined;
 }

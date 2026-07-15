@@ -132,6 +132,13 @@ packages/*/node_modules/
 packages/*/dist/
 packages/*/package-lock.json
 
+# LIA-401/B1: tool-broker.ts compiled in place (tsconfig.tool-broker-adapter.json)
+# so the host's dist/ build can dynamically import it; npm run build regenerates it.
+container/agent-runner/src/tool-broker.js
+container/agent-runner/src/tool-summarize.js
+container/agent-runner/src/tool-audit.js
+container/agent-runner/src/schedule-validator.js
+
 agents-sdk-docs
 .agents/
 deus.db
