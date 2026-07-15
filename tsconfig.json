@@ -16,5 +16,20 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    // *.oracle.test.ts deliberately imports real, non-mocked production
+    // modules for hermetic ground-truth verification (LIA-401/B1's
+    // deus-native-tool-scope.oracle.test.ts statically imports the real
+    // container/agent-runner/src/tool-broker.ts, outside this project's
+    // rootDir — see tool-broker-langchain-adapter.ts's own comment for why
+    // production code reaches that module only via a runtime dynamic
+    // import instead). Oracle tests are exercised and type-erased by
+    // `vitest run` (its own esbuild transform, independent of this
+    // tsconfig), not by `tsc --noEmit` — same test/typecheck split already
+    // established by container/agent-runner/tsconfig.json's own
+    // "src/**/*.test.ts" exclusion.
+    "src/**/*.oracle.test.ts"
+  ]
 }

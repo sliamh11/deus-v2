@@ -80,6 +80,7 @@ import { initRuntimeRegistry } from './agent-runtimes/registry.js';
 import { createClaudeRuntime } from './agent-runtimes/claude-backend.js';
 import { createOpenAIRuntime } from './agent-runtimes/openai-backend.js';
 import { createLlamaCppRuntime } from './agent-runtimes/llama-cpp-backend.js';
+import { createDeusNativeRuntime } from './agent-runtimes/deus-native-backend.js';
 import {
   initLinearContext,
   startLinearDispatcher,
@@ -161,6 +162,7 @@ async function main(): Promise<void> {
   registry.register(createClaudeRuntime(backendDeps));
   registry.register(createOpenAIRuntime(backendDeps));
   registry.register(createLlamaCppRuntime(backendDeps));
+  registry.register(createDeusNativeRuntime(backendDeps));
   logger.info({ backends: registry.list() }, 'Backend registry initialized');
 
   // Graceful shutdown handlers
