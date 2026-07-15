@@ -11,11 +11,22 @@
  *
  * Non-goals of this adapter, intentionally deferred to later roadmap items
  * (do not add these here):
- * - Loading CLAUDE.md/AGENTS.md/AI_AGENT_GUIDELINES.md/persona context into
- *   the prompt (B2 middleware stack or B3 lifecycle events — whichever ends
- *   up owning it). `runTurn` sends the bare `runContext.prompt`, nothing else.
- * - Real session persistence / checkpointer-to-sessions-table integration
- *   (B4/LIA-404). `startOrResume` mirrors ContainerRuntime's own stub.
+ * - Loading AGENTS.md/AI_AGENT_GUIDELINES.md/persona context and the full
+ *   context-registry.ts parity (claudeSystemAppend/skipForControlGroup/
+ *   projectOnly flags, EXTRA RULES dirs, VAULT: entries) — B3/LIA-403 lands
+ *   ONLY group-scoped CLAUDE.md session-open injection (see
+ *   lifecycle-events.ts), deliberately minimal; broader context parity is
+ *   out of that ticket's literal ACs and can be a follow-up.
+ * - No REAL, resumable backend-scoped session persistence (conversation
+ *   state/checkpoint) — B3 adds a minimal non-resumable session-open marker
+ *   sufficient for the app's existing new-vs-resumed bookkeeping; genuine
+ *   resumable persistence via the LangGraph checkpointer remains
+ *   B4/LIA-404's job. As a KNOWN, ACCEPTED consequence, session-open
+ *   CLAUDE.md content only reaches the model once per session lifecycle
+ *   (not every turn), so an actively-used group effectively only 'sees' its
+ *   rules once per SESSION_IDLE_RESET_HOURS window until B4 lands real
+ *   conversation continuity. `startOrResume` mirrors ContainerRuntime's own
+ *   stub.
  * - The wrapToolCall permission-rules engine and any tool beyond
  *   web_search/web_fetch (B7/LIA-407).
  * - Middleware layer SUBSTANCE. The ordered/configurable middleware stack
@@ -24,9 +35,8 @@
  *   placeholder (permissions -> B7, wardens -> hook-dispatch-facade-
  *   correction.md's deferred remediation options, memory -> group-scoping
  *   safety, telemetry -> real usage accounting).
- * - Lifecycle hook points (B3/LIA-403), replay-safety auditing (B5/LIA-405),
- *   token/usage accounting events (B6/LIA-406), nested subagent dispatch
- *   (B8/LIA-408).
+ * - Replay-safety auditing (B5/LIA-405), token/usage accounting events
+ *   (B6/LIA-406), nested subagent dispatch (B8/LIA-408).
  * - Consuming the middleware stack's inspectable `logs` output (added per
  *   ai-eng-warden review). `buildMiddlewareStack(...).logs` is discarded
  *   here (only `middleware` is destructured) -- each layer's log becomes a
@@ -35,8 +45,10 @@
  *   accounting work for that layer, etc.), not as part of B2 itself.
  */
 
+import crypto from 'crypto';
+
 import { ChatAnthropic } from '@langchain/anthropic';
-import { createAgent } from 'langchain';
+import { createAgent, type AgentMiddleware } from 'langchain';
 import Anthropic from '@anthropic-ai/sdk';
 
 import type {
@@ -57,6 +69,11 @@ import {
   buildMiddlewareStack,
   resolveMiddlewareStackConfig,
 } from './middleware-stack.js';
+import {
+  buildPromptLifecycleHook,
+  loadSessionOpenContext,
+  type PromptEventRecord,
+} from './lifecycle-events.js';
 import { PROXY_BIND_HOST } from '../container-runtime.js';
 import { CREDENTIAL_PROXY_PORT } from '../config.js';
 import { detectAuthMode } from '../credential-proxy.js';
@@ -192,7 +209,7 @@ export class DeusNativeRuntime implements AgentRuntime {
 
   async runTurn(
     runContext: RunContext,
-    _sessionRef: RuntimeSession,
+    sessionRef: RuntimeSession,
     eventSink: RuntimeEventSink,
   ): Promise<RunResult> {
     try {
@@ -220,6 +237,24 @@ export class DeusNativeRuntime implements AgentRuntime {
         };
       }
 
+      // B3 (LIA-403): literal once-per-session new-vs-resumed signal, read
+      // from runTurn's OWN sessionRef parameter — every caller in the repo
+      // already passes one (orchestrator/task-scheduler pass the persisted
+      // ref or defaultSession('', ...); the non-orchestrator sites always
+      // pass a fresh empty ref). Computed ONCE, before the middleware is
+      // built; this one decision governs the whole turn.
+      const isNewSession = sessionRef.session_id === '';
+
+      // Session-open injection fires only on a genuinely NEW session (once
+      // per open lifecycle — a resumed turn never even calls
+      // loadSessionOpenContext) AND only when the group actually has
+      // CLAUDE.md content (systemMessage stays undefined otherwise). The
+      // returned SessionOpenRecord is an inspectable log consumed by tests,
+      // matching B2's own discarded-logs precedent here.
+      const sessionOpenMessage = isNewSession
+        ? loadSessionOpenContext(runContext).systemMessage
+        : undefined;
+
       const model = buildProxyRoutedChatAnthropic(runContext);
       const toolCtx = buildToolBrokerContext(runContext);
       const tools = await buildSafeTools(
@@ -235,10 +270,31 @@ export class DeusNativeRuntime implements AgentRuntime {
         resolveMiddlewareStackConfig(),
       );
 
-      const agent = createAgent({ model, tools, middleware });
+      // B3 (LIA-403): the prompt-lifecycle hook is a SEPARATE, small
+      // middleware APPENDED after B2's stack — never prepended or inserted,
+      // so B2's own already-locked canonical order is untouched (LangChain
+      // composes every middleware's beforeModel/wrapModelCall hooks
+      // regardless of position). promptEvents is the inspectable per-prompt
+      // log, discarded here like B2's own logs.
+      const promptEvents: PromptEventRecord[] = [];
+      const promptLifecycle = buildPromptLifecycleHook(
+        sessionOpenMessage,
+        promptEvents,
+      );
+      // Explicit AgentMiddleware[] annotation: the mixed array literal
+      // otherwise infers a shape that misses createAgent's overloads.
+      const allMiddleware: AgentMiddleware[] = [...middleware, promptLifecycle];
+
+      const agent = createAgent({
+        model,
+        tools,
+        middleware: allMiddleware,
+      });
 
       // Non-goal (see module doc comment): the prompt sent to createAgent is
-      // the bare runContext.prompt — no CLAUDE.md/AGENTS.md/persona context.
+      // the bare runContext.prompt — session-open CLAUDE.md content reaches
+      // the model via the prompt-lifecycle middleware's wrapModelCall
+      // systemMessage injection, never by changing what invoke() receives.
       const result = await agent.invoke({
         messages: [{ role: 'user', content: runContext.prompt }],
       });
@@ -280,9 +336,28 @@ export class DeusNativeRuntime implements AgentRuntime {
       await eventSink({ type: 'output_text', text });
       await eventSink({ type: 'turn_complete' });
 
+      // B3 (LIA-403) root-cause fix: populate RunResult.sessionRef on every
+      // successful turn so message-orchestrator.ts/task-scheduler.ts's
+      // ALREADY-EXISTING, generic `if (runResult.sessionRef) setSession(...)`
+      // persistence finally has something real to persist for this backend.
+      // Echo the incoming session_id back on a resumed turn (keeps
+      // db.setSession's dedup on "same id = touch, don't insert" to one row
+      // per real session-open); mint fresh only on a genuine new-vs-resumed
+      // transition. This session_id is explicitly NOT a real resumable
+      // LangChain/LangGraph checkpoint ID — it carries no conversation
+      // state, purely a "a session is open" marker for the app-wide
+      // session-tracking convention every other backend already participates
+      // in. Real, resumable backend-scoped session persistence is
+      // B4/LIA-404's job and supersedes this marker.
+      const outgoingSessionId =
+        sessionRef.session_id !== ''
+          ? sessionRef.session_id
+          : crypto.randomUUID();
+
       return {
         status: 'success',
         result: text,
+        sessionRef: { backend: 'deus-native', session_id: outgoingSessionId },
       };
     } catch (err) {
       // Never throw out of runTurn — matches ContainerRuntime.runTurn's

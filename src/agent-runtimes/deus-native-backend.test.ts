@@ -274,7 +274,9 @@ describe('DeusNativeBackend', () => {
     // B2 (LIA-402): runTurn wires the middleware stack into createAgent in
     // canonical order — all four layers enabled by default (AC1 at the
     // runtime level; composition semantics are proven in
-    // middleware-stack.test.ts's AC4 ordering test).
+    // middleware-stack.test.ts's AC4 ordering test). B3 (LIA-403) appends
+    // its prompt-lifecycle middleware LAST — appended, never prepended, so
+    // B2's AC1-locked order is untouched.
     const createAgentArgs = createAgentMock.mock.calls[0]?.[0] as {
       middleware?: Array<{ name: string }>;
     };
@@ -283,6 +285,7 @@ describe('DeusNativeBackend', () => {
       'wardens',
       'memory',
       'telemetry',
+      'prompt-lifecycle',
     ]);
   });
 
