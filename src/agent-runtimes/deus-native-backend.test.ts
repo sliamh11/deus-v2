@@ -10,9 +10,16 @@ const { createAgentMock, invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }));
 
-vi.mock('langchain', () => ({
-  createAgent: createAgentMock,
-}));
+vi.mock('langchain', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('langchain')>();
+  return {
+    // Keep the real module (middleware-stack.ts needs the real
+    // createMiddleware — pure construction, no network) and stub only the
+    // agent factory, which is what would otherwise hit the model.
+    ...actual,
+    createAgent: createAgentMock,
+  };
+});
 
 class FakeChatAnthropic {
   config: unknown;
@@ -263,6 +270,20 @@ describe('DeusNativeBackend', () => {
     // OAuth-vs-API-key branching happened via detectAuthMode, and a
     // per-group token was minted.
     expect(getOrCreateGroupTokenMock).toHaveBeenCalledWith('test-folder');
+
+    // B2 (LIA-402): runTurn wires the middleware stack into createAgent in
+    // canonical order — all four layers enabled by default (AC1 at the
+    // runtime level; composition semantics are proven in
+    // middleware-stack.test.ts's AC4 ordering test).
+    const createAgentArgs = createAgentMock.mock.calls[0]?.[0] as {
+      middleware?: Array<{ name: string }>;
+    };
+    expect(createAgentArgs.middleware?.map((m) => m.name)).toEqual([
+      'permissions',
+      'wardens',
+      'memory',
+      'telemetry',
+    ]);
   });
 
   it('branches to OAuth-mode client construction when detectAuthMode() returns "oauth"', async () => {

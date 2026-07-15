@@ -18,9 +18,21 @@
  *   (B4/LIA-404). `startOrResume` mirrors ContainerRuntime's own stub.
  * - The wrapToolCall permission-rules engine and any tool beyond
  *   web_search/web_fetch (B7/LIA-407).
- * - Middleware ordering/toggles (B2/LIA-402), lifecycle hook points
- *   (B3/LIA-403), replay-safety auditing (B5/LIA-405), token/usage accounting
- *   events (B6/LIA-406), nested subagent dispatch (B8/LIA-408).
+ * - Middleware layer SUBSTANCE. The ordered/configurable middleware stack
+ *   itself landed with B2/LIA-402 — see middleware-stack.ts for the real
+ *   mechanism — but every layer there is an explicit observe-only
+ *   placeholder (permissions -> B7, wardens -> hook-dispatch-facade-
+ *   correction.md's deferred remediation options, memory -> group-scoping
+ *   safety, telemetry -> real usage accounting).
+ * - Lifecycle hook points (B3/LIA-403), replay-safety auditing (B5/LIA-405),
+ *   token/usage accounting events (B6/LIA-406), nested subagent dispatch
+ *   (B8/LIA-408).
+ * - Consuming the middleware stack's inspectable `logs` output (added per
+ *   ai-eng-warden review). `buildMiddlewareStack(...).logs` is discarded
+ *   here (only `middleware` is destructured) -- each layer's log becomes a
+ *   real observability/debug sink alongside whichever future item lands
+ *   that layer's substance (B7 for permissions, telemetry's own usage-
+ *   accounting work for that layer, etc.), not as part of B2 itself.
  */
 
 import { ChatAnthropic } from '@langchain/anthropic';
@@ -41,6 +53,10 @@ import {
   buildSafeTools,
   type ToolBrokerContext,
 } from './tool-broker-langchain-adapter.js';
+import {
+  buildMiddlewareStack,
+  resolveMiddlewareStackConfig,
+} from './middleware-stack.js';
 import { PROXY_BIND_HOST } from '../container-runtime.js';
 import { CREDENTIAL_PROXY_PORT } from '../config.js';
 import { detectAuthMode } from '../credential-proxy.js';
@@ -211,7 +227,15 @@ export class DeusNativeRuntime implements AgentRuntime {
         resolveAllowedWebFetchHosts(),
       );
 
-      const agent = createAgent({ model, tools });
+      // B2 (LIA-402): ordered, per-layer-toggleable middleware stack —
+      // permissions -> wardens -> memory -> telemetry (index 0 outermost).
+      // Every layer is an observe-only placeholder this milestone; see
+      // middleware-stack.ts for the mechanism and each layer's caveat.
+      const { middleware } = buildMiddlewareStack(
+        resolveMiddlewareStackConfig(),
+      );
+
+      const agent = createAgent({ model, tools, middleware });
 
       // Non-goal (see module doc comment): the prompt sent to createAgent is
       // the bare runContext.prompt — no CLAUDE.md/AGENTS.md/persona context.
