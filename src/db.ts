@@ -859,6 +859,39 @@ export function setSession(
   })();
 }
 
+/**
+ * @internal - for tests only (matching `_initTestDatabase`'s `_`-prefix
+ * convention). Raw `sessions` rows — INCLUDING orphaned ones — for one
+ * `(group_folder, backend)` pair, exposing the autoincrement `id` and
+ * timestamps the public accessors deliberately hide. Exists so the B5
+ * (LIA-405) replay-safety regression test can assert setSession's dedup
+ * idempotency at the row level (exactly one row, `id` unchanged,
+ * `last_used_at` advanced); see docs/decisions/deus-v2-replay-safety.md.
+ */
+export function _getRawSessionRowsForTests(
+  groupFolder: string,
+  backend: string,
+): Array<{
+  id: number;
+  session_id: string;
+  last_used_at: string | null;
+  orphaned_at: string | null;
+}> {
+  return db
+    .prepare(
+      `SELECT id, session_id, last_used_at, orphaned_at
+       FROM sessions
+       WHERE group_folder = ? AND backend = ?
+       ORDER BY id`,
+    )
+    .all(groupFolder, backend) as Array<{
+    id: number;
+    session_id: string;
+    last_used_at: string | null;
+    orphaned_at: string | null;
+  }>;
+}
+
 export function clearSession(
   groupFolder: string,
   backend?: AgentRuntimeId,

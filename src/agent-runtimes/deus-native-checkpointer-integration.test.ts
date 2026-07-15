@@ -416,3 +416,73 @@ describe('backend mismatch (AC3: switching backends never rewrites the deus-nati
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// B5 (LIA-405) AC4 — session-row idempotency across a same-thread re-invoke:
+// the ONE real idempotency property in today's deus-native path worth a
+// frozen regression test (docs/decisions/deus-v2-replay-safety.md, Section 3).
+// Invoking the SAME thread_id twice in a row with an already-existing
+// session must leave exactly ONE row in `sessions` for (groupFolder,
+// backend): setSession's dedup (db.ts:791-830) touches last_used_at instead
+// of orphaning + inserting. Asserts the row's `id` (autoincrement primary
+// key — `sessions` has no `created_at` column per db.ts:83-93) is unchanged
+// and `last_used_at` advances, via the `_`-prefixed raw-row test accessor.
+// ---------------------------------------------------------------------------
+describe('same-thread re-invoke (B5 AC4: exactly one session row, id stable, last_used_at advances)', () => {
+  it('a second runTurn + save on the same thread_id keeps a single un-orphaned row with the same id and a later last_used_at', async () => {
+    const { _initTestDatabase, setSession, _getRawSessionRowsForTests } =
+      await import('../db.js');
+    _initTestDatabase();
+
+    const runtime = createDeusNativeRuntime(stubDeps);
+
+    // Turn 1: mint the session and persist it the way the orchestrator would.
+    const result1 = await runtime.runTurn(
+      runCtx('idempotentgroup', 'first turn'),
+      defaultSession('', 'deus-native'),
+      () => {},
+    );
+    expect(result1.status).toBe('success');
+    const sessionId = result1.sessionRef?.session_id as string;
+    expect(sessionId).toMatch(UUID_PATTERN);
+    setSession('idempotentgroup', result1.sessionRef!);
+
+    const rowsAfterFirst = _getRawSessionRowsForTests(
+      'idempotentgroup',
+      'deus-native',
+    );
+    expect(rowsAfterFirst).toHaveLength(1);
+    const firstRow = rowsAfterFirst[0];
+    expect(firstRow.orphaned_at).toBeNull();
+    expect(firstRow.last_used_at).not.toBeNull();
+
+    // setSession stamps last_used_at with millisecond-resolution ISO
+    // timestamps — without this gap, both saves could land on the SAME
+    // millisecond and "advances" would be unfalsifiable.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Turn 2: same thread_id (already-existing session), then re-save.
+    const result2 = await runtime.runTurn(
+      runCtx('idempotentgroup', 'second turn'),
+      { backend: 'deus-native', session_id: sessionId },
+      () => {},
+    );
+    expect(result2.status).toBe('success');
+    expect(result2.sessionRef?.session_id).toBe(sessionId);
+    setSession('idempotentgroup', result2.sessionRef!);
+
+    const rowsAfterSecond = _getRawSessionRowsForTests(
+      'idempotentgroup',
+      'deus-native',
+    );
+    // Exactly ONE row — the dedup path updated in place; no orphan + insert.
+    expect(rowsAfterSecond).toHaveLength(1);
+    const secondRow = rowsAfterSecond[0];
+    // The autoincrement primary key is unchanged: same physical row.
+    expect(secondRow.id).toBe(firstRow.id);
+    expect(secondRow.session_id).toBe(sessionId);
+    expect(secondRow.orphaned_at).toBeNull();
+    // last_used_at advanced (ISO-8601 strings compare lexicographically).
+    expect(secondRow.last_used_at! > firstRow.last_used_at!).toBe(true);
+  });
+});
