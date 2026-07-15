@@ -15,18 +15,25 @@
  * memory -> telemetry": permissions sees the request first and the response
  * last; telemetry sits closest to the real model call.
  *
- * Every layer in this module is an explicit observe-only PLACEHOLDER this
- * milestone — B2's acceptance criteria test the ordering/configuration
- * MECHANISM, not real per-layer enforcement. Each factory's doc comment
- * names the future work that replaces its substance. In particular, the
- * wardens layer deliberately does NOT call `codex_warden_hooks.py`: wiring
- * real gates into a non-Claude backend's live tool-call path is exactly the
- * remediation that the Accepted ADR
- * docs/decisions/hook-dispatch-facade-correction.md holds as "deferred —
- * NOT greenlit" pending its own separately-approved decision.
+ * The PERMISSIONS layer is real as of B7/LIA-407: a declarative first-match-
+ * wins rule engine (permission-rules.ts) evaluated inside `wrapToolCall`,
+ * with named profiles (`default` allow-all, `read-only` fail-closed) selected
+ * via `BuildMiddlewareStackDeps.permissionProfile`. The OTHER layers remain
+ * explicit observe-only placeholders — each factory's doc comment names the
+ * future work that replaces its substance. In particular, the wardens layer
+ * deliberately does NOT call `codex_warden_hooks.py`: wiring real gates into
+ * a non-Claude backend's live tool-call path is exactly the remediation that
+ * the Accepted ADR docs/decisions/hook-dispatch-facade-correction.md holds
+ * as "deferred — NOT greenlit" pending its own separately-approved decision.
  */
 
 import { createMiddleware, type AgentMiddleware } from 'langchain';
+import { ToolMessage } from '@langchain/core/messages';
+
+import {
+  evaluatePermission,
+  resolvePermissionProfile,
+} from './permission-rules.js';
 
 /** The four supported middleware layers, by canonical position. */
 export type MiddlewareLayerName =
@@ -69,12 +76,19 @@ export interface OrderMarker {
   phase: 'enter' | 'exit';
 }
 
-/** One observed (allow-all) tool-call decision — permissions/wardens log. */
+/** One observed tool-call decision — permissions/wardens log. */
 export interface ToolCallDecisionRecord {
   toolName: string;
-  /** Placeholder layers never deny; the field exists so a future real
-   *  implementation extends the record rather than reshaping it. */
-  decision: 'allow';
+  /** The permissions layer records real allow/deny outcomes (B7/LIA-407);
+   *  the wardens placeholder still only ever records 'allow'. */
+  decision: 'allow' | 'deny';
+  /** Evaluation provenance (AC1): 'rule' for an explicit rule match,
+   *  'default' for the policy fallback. Populated by the permissions layer;
+   *  absent for the wardens placeholder. */
+  source?: 'rule' | 'default';
+  /** Model-safe evaluation reason — never includes tool-call arguments.
+   *  Populated by the permissions layer; absent for the wardens placeholder. */
+  reason?: string;
 }
 
 /** One memory-layer pass-through observation (no-op beforeModel/afterModel). */
@@ -127,22 +141,60 @@ function orderMarkerHooks(
 }
 
 /**
- * Permissions layer — PLACEHOLDER. A real `wrapToolCall` middleware that
- * currently allows every tool call through and records each decision into
- * an inspectable log. The real substance is B7/LIA-407's declarative
- * permission-rules engine ("Deus-owned declarative rules evaluated inside
- * wrapToolCall" per the base-harness-selection research doc) — observe-only
- * until that lands, never a claim of real enforcement.
+ * Permissions layer — REAL enforcement (B7/LIA-407). A thin `wrapToolCall`
+ * adapter over the pure declarative evaluator in permission-rules.ts:
+ * - resolves `permissionProfile` (default: `'default'`, today's allow-all
+ *   behavior) via the named-profile registry, THROWING on an unknown name
+ *   before any agent construction — never silently weakening the requested
+ *   restriction;
+ * - on ALLOW, records the decision and calls `handler(request)` exactly once
+ *   with the ORIGINAL request object. Never `handler({ ...request })` or any
+ *   tool-call reconstruction (AC5): langchain's `chainToolCallHandlers`
+ *   (dist/agents/utils.js) supports request modification by inner layers, so
+ *   passing the original reference is a deliberate no-rewrite guarantee, not
+ *   an accident;
+ * - on DENY, records the decision and returns a synthetic error-status
+ *   `ToolMessage` carrying the original tool name/id and a stable
+ *   `permission_denied` message naming the profile and reason — the handler
+ *   is never invoked. Denial content deliberately EXCLUDES the tool call's
+ *   arguments (AC2: no needless exposure of potentially sensitive values).
+ *   Returning a `ToolMessage` (not a thrown error or `Command`) follows
+ *   LangChain's installed authentication example and keeps the feedback
+ *   inside the model's ReAct loop; no HITL/interrupt/edit path exists here
+ *   (AC5, plan Non-goals).
  */
 export function buildPermissionsMiddleware(
+  permissionProfile?: string,
   orderMarkers?: OrderMarker[],
 ): BuiltLayer<ToolCallDecisionRecord> {
+  const profileName = permissionProfile ?? 'default';
+  // Throws on an unknown profile name — fail visibly, before createAgent.
+  const policy = resolvePermissionProfile(profileName);
   const log: ToolCallDecisionRecord[] = [];
   const middleware = createMiddleware({
     name: 'permissions',
     wrapToolCall: (request, handler) => {
-      log.push({ toolName: request.toolCall.name, decision: 'allow' });
-      return handler(request);
+      const toolName = request.toolCall.name;
+      const evaluation = evaluatePermission(policy, toolName);
+      log.push({
+        toolName,
+        decision: evaluation.decision,
+        source: evaluation.source,
+        reason: evaluation.reason,
+      });
+      if (evaluation.decision === 'allow') {
+        // AC5: the original request object, delegated exactly once.
+        return handler(request);
+      }
+      return new ToolMessage({
+        tool_call_id: request.toolCall.id ?? '',
+        name: toolName,
+        status: 'error',
+        content:
+          `permission_denied: tool "${toolName}" was blocked by the ` +
+          `"${profileName}" permission profile (${evaluation.reason}). ` +
+          `The call was not executed; continue without this tool.`,
+      });
     },
     ...orderMarkerHooks('permissions', orderMarkers),
   });
@@ -246,6 +298,12 @@ export interface BuildMiddlewareStackDeps {
    *  enabled layer wires a marker-pushing beforeAgent/afterAgent pair when
    *  this is provided. Omit in production. */
   orderMarkers?: OrderMarker[];
+  /** Named permission profile for the permissions layer (B7/LIA-407).
+   *  Omitted => 'default' (allow-all, today's behavior); 'read-only' =>
+   *  the fail-closed read-only preset. An unrecognized name THROWS during
+   *  stack construction — before any agent exists — rather than silently
+   *  weakening the requested restriction. */
+  permissionProfile?: string;
 }
 
 export interface MiddlewareStackResult {
@@ -268,11 +326,22 @@ export function buildMiddlewareStack(
   const middleware: AgentMiddleware[] = [];
   const logs: MiddlewareStackLogs = {};
 
+  // B7 (LIA-407): validate a requested profile name UP FRONT, even when the
+  // permissions layer itself is toggled off — an invalid name must always
+  // fail visibly, never be silently ignored while the caller believes a
+  // restriction is in force.
+  if (deps.permissionProfile !== undefined) {
+    resolvePermissionProfile(deps.permissionProfile);
+  }
+
   for (const layer of CANONICAL_MIDDLEWARE_ORDER) {
     if (config[layer] === false) continue;
     switch (layer) {
       case 'permissions': {
-        const built = buildPermissionsMiddleware(deps.orderMarkers);
+        const built = buildPermissionsMiddleware(
+          deps.permissionProfile,
+          deps.orderMarkers,
+        );
         middleware.push(built.middleware);
         logs.permissions = built.log;
         break;

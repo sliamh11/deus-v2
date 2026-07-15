@@ -343,3 +343,164 @@ describe('DeusNativeBackend', () => {
     expect(detectAuthModeMock).toHaveBeenCalled();
   });
 });
+
+// ── B7 (LIA-407): permission-profile wiring at the PRODUCTION call site ───
+//
+// These tests prove the runContext.backendConfig.permissionProfile seam:
+// omitted => the 'default' allow-all profile (today's behavior, unchanged);
+// 'read-only' => the fail-closed read-only policy; an invalid value fails
+// visibly BEFORE createAgent. createAgent is mocked (as everywhere in this
+// file) but buildMiddlewareStack/createMiddleware are REAL, so the
+// middleware objects captured off createAgentMock are the genuine
+// permissions layer — invoking their wrapToolCall hook directly proves
+// which policy production actually wired, not just which string was passed.
+
+import { ToolMessage } from '@langchain/core/messages';
+
+/** Minimal ToolCallRequest stand-in for direct wrapToolCall invocation
+ *  (same shape as middleware-stack.test.ts's helper — the hook only reads
+ *  toolCall.{name,id} and passes the request through). */
+function makeToolCallRequest(name: string, args: Record<string, unknown>) {
+  return {
+    toolCall: { name, args, id: 'call_wiring_1', type: 'tool_call' as const },
+    tool: undefined,
+    state: {},
+    runtime: {},
+  };
+}
+
+async function invokeWrapToolCall(
+  middleware: { wrapToolCall?: unknown },
+  request: unknown,
+  handler: (req: unknown) => ToolMessage,
+): Promise<unknown> {
+  const hook = middleware.wrapToolCall as (
+    request: unknown,
+    handler: unknown,
+  ) => Promise<unknown> | unknown;
+  return await hook(request, handler);
+}
+
+describe('DeusNativeBackend — permission profile wiring (B7/LIA-407)', () => {
+  const backend = createDeusNativeRuntime(stubDeps);
+
+  beforeEach(() => {
+    createAgentMock.mockReset();
+    invokeMock.mockReset();
+    detectAuthModeMock.mockReturnValue('api-key');
+    getOrCreateGroupTokenMock.mockReset();
+    getOrCreateGroupTokenMock.mockReturnValue('fake-proxy-token');
+  });
+
+  async function runTurnWith(backendConfig?: Record<string, unknown>) {
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMock.mockResolvedValue({ messages: [{ content: 'ok' }] });
+    return backend.runTurn(
+      {
+        prompt: 'test',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+        ...(backendConfig !== undefined ? { backendConfig } : {}),
+      },
+      { backend: 'deus-native', session_id: '' },
+      () => {},
+    );
+  }
+
+  function capturedPermissionsMiddleware() {
+    const args = createAgentMock.mock.calls[0]?.[0] as {
+      middleware?: Array<{ name: string; wrapToolCall?: unknown }>;
+    };
+    const permissions = args.middleware?.[0];
+    expect(permissions?.name).toBe('permissions');
+    return permissions as { name: string; wrapToolCall?: unknown };
+  }
+
+  it("omitted backendConfig wires the default profile: a mutation-named call is still allowed (today's behavior, unchanged)", async () => {
+    const result = await runTurnWith(undefined);
+    expect(result.status).toBe('success');
+
+    const permissions = capturedPermissionsMiddleware();
+    const handler = vi.fn(
+      () => new ToolMessage({ content: 'ran', tool_call_id: 'call_wiring_1' }),
+    );
+    await invokeWrapToolCall(
+      permissions,
+      makeToolCallRequest('write_file', { path: '/x', content: 'y' }),
+      handler,
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('backendConfig.permissionProfile "read-only" wires the read-only policy: mutation denied, read allowed — with canonical order retained', async () => {
+    const result = await runTurnWith({ permissionProfile: 'read-only' });
+    expect(result.status).toBe('success');
+
+    // Canonical order is untouched by the profile selection (B2's AC1 +
+    // B3's appended prompt-lifecycle).
+    const createAgentArgs = createAgentMock.mock.calls[0]?.[0] as {
+      middleware?: Array<{ name: string }>;
+    };
+    expect(createAgentArgs.middleware?.map((m) => m.name)).toEqual([
+      'permissions',
+      'wardens',
+      'memory',
+      'telemetry',
+      'prompt-lifecycle',
+    ]);
+
+    const permissions = capturedPermissionsMiddleware();
+
+    // A mutation tool is DENIED by the wired policy: handler untouched,
+    // synthetic error ToolMessage naming the profile.
+    const deniedHandler = vi.fn(
+      () => new ToolMessage({ content: 'ran', tool_call_id: 'call_wiring_1' }),
+    );
+    const denial = (await invokeWrapToolCall(
+      permissions,
+      makeToolCallRequest('write_file', { path: '/x', content: 'y' }),
+      deniedHandler,
+    )) as ToolMessage;
+    expect(deniedHandler).not.toHaveBeenCalled();
+    expect(denial).toBeInstanceOf(ToolMessage);
+    expect(denial.status).toBe('error');
+    const content =
+      typeof denial.content === 'string'
+        ? denial.content
+        : JSON.stringify(denial.content);
+    expect(content).toContain('permission_denied');
+    expect(content).toContain('read-only');
+
+    // A read tool still flows through — today's web_search/web_fetch calls
+    // remain allowed under the read-only profile (plan AC3).
+    const allowedHandler = vi.fn(
+      () => new ToolMessage({ content: 'ok', tool_call_id: 'call_wiring_1' }),
+    );
+    await invokeWrapToolCall(
+      permissions,
+      makeToolCallRequest('web_search', { query: 'x' }),
+      allowedHandler,
+    );
+    expect(allowedHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('an unrecognized profile name fails visibly BEFORE createAgent (status error, never a silent fallback to default)', async () => {
+    const result = await runTurnWith({ permissionProfile: 'totally-invalid' });
+    expect(result.status).toBe('error');
+    expect(result.result).toBeNull();
+    expect(result.error).toContain(
+      'unknown permission profile "totally-invalid"',
+    );
+    expect(createAgentMock).not.toHaveBeenCalled();
+  });
+
+  it('a non-string permissionProfile value fails visibly BEFORE createAgent', async () => {
+    const result = await runTurnWith({ permissionProfile: 42 });
+    expect(result.status).toBe('error');
+    expect(result.error).toContain(
+      'backendConfig.permissionProfile must be a string',
+    );
+    expect(createAgentMock).not.toHaveBeenCalled();
+  });
+});

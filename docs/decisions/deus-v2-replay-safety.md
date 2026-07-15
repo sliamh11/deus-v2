@@ -7,6 +7,7 @@
 runtime code changes — this ADR records a verified audit finding and defines
 the contract future work (B7/LIA-407) must implement against.
 **Related:**
+
 - `deus-v2-langchain-runtime.md` — its Decision 3 establishes the
   conservative `SAFE_TOOL_NAMES` web-only tool surface this ADR's
   current-safety finding builds on. Not superseded.
@@ -65,7 +66,7 @@ LangGraph's pending-writes reapplication is active on EVERY ordinary
 invoke — it is not gated behind the interrupt/resume API:
 
 - `skipDoneTasks = config.configurable ? !("checkpoint_id" in
-  config.configurable) : true`
+config.configurable) : true`
   (`node_modules/@langchain/langgraph/dist/pregel/loop.js:238`) — `true` for
   every ordinary `agent.invoke({ configurable: { thread_id } })` call, which
   is deus-native's own, exclusive call pattern (it never passes
@@ -74,7 +75,7 @@ invoke — it is not gated behind the interrupt/resume API:
   loads unconditionally on every `initialize()`, regardless of resume
   status.
 - In `tick()` (`loop.js:496-505`): when `skipDoneTasks &&
-  checkpointPendingWrites.length > 0`, any persisted pending write matching
+checkpointPendingWrites.length > 0`, any persisted pending write matching
   a freshly-computed task id is reapplied to that task INSTEAD of
   re-executing the node.
 
@@ -101,7 +102,7 @@ The two non-tool writes in the deus-native path are already idempotent:
   designed recovery path described in Section 2, not a duplication).
 - **`db.setSession`** (`src/db.ts:791-830`): idempotent by its own
   dedup-on-existing-row logic — when the active row for `(group_folder,
-  backend)` already matches the incoming `session_id`/`resume_cursor`/
+backend)` already matches the incoming `session_id`/`resume_cursor`/
   `metadata_json`, it only touches `last_used_at` instead of orphaning and
   inserting. Re-running the same session save is a no-op on row identity.
 
@@ -215,10 +216,16 @@ falls into up front, not discover it during implementation.
 
 ## Consequences
 
-- B7 (LIA-407) must implement the Section 4 contract before wiring any
-  mutating tool into deus-native — this stacks on
+- The Section 4 contract must be implemented before ANY future work wires a
+  mutating tool into deus-native — that obligation is triggered by mutation-
+  tool wiring itself, not by permission-policy evaluation. B7 (LIA-407,
+  `deus-v2-permission-rules.md`) has since landed and is scoped to the
+  permission-engine authorization layer only: it adds no mutation tool, so it
+  does not itself trigger this contract. This stacks on
   `deus-v2-langchain-runtime.md`'s existing rule that widening the tool
-  surface requires the permission engine plus its own review.
+  surface requires the permission engine (now landed) plus its own separate
+  review — that future review is where this Section 4 contract becomes a
+  hard blocker.
 - `web_search`/`web_fetch` remain intentionally replayable; no wrapper is
   added for them.
 - One frozen regression test pins `setSession`'s dedup idempotency; the
@@ -231,7 +238,7 @@ falls into up front, not discover it during implementation.
   open design question this ADR does not resolve, flagged here so it isn't
   discovered mid-implementation.
 - The LangGraph line citations are version-pinned (`@langchain/langgraph@
-  1.4.7`); a future upgrade that changes `loop.js`'s pending-writes
+1.4.7`); a future upgrade that changes `loop.js`'s pending-writes
   semantics invalidates Section 2 and requires re-verification before B7
   builds on it.
 

@@ -41,14 +41,19 @@
  *   life of a session. No cap, truncation, or summarization exists yet.
  *   Deliberately out of this ticket's scope; a real future concern once
  *   long-lived sessions are common.
- * - The wrapToolCall permission-rules engine and any tool beyond
- *   web_search/web_fetch (B7/LIA-407).
- * - Middleware layer SUBSTANCE. The ordered/configurable middleware stack
- *   itself landed with B2/LIA-402 — see middleware-stack.ts for the real
- *   mechanism — but every layer there is an explicit observe-only
- *   placeholder (permissions -> B7, wardens -> hook-dispatch-facade-
- *   correction.md's deferred remediation options, memory -> group-scoping
- *   safety, telemetry -> real usage accounting).
+ * - Any tool beyond web_search/web_fetch. B7/LIA-407 landed the wrapToolCall
+ *   permission-rules engine (permission-rules.ts + middleware-stack.ts's
+ *   real permissions layer, profile-selected via
+ *   backendConfig.permissionProfile below), but it is an AUTHORIZATION layer
+ *   only — SAFE_TOOL_NAMES is unchanged and widening the live tool surface
+ *   still requires its own isolation review plus the replay-safety contract
+ *   (docs/decisions/deus-v2-replay-safety.md).
+ * - Middleware layer SUBSTANCE beyond permissions. The ordered/configurable
+ *   middleware stack itself landed with B2/LIA-402 and B7 made the
+ *   permissions layer real; the remaining layers are explicit observe-only
+ *   placeholders (wardens -> hook-dispatch-facade-correction.md's deferred
+ *   remediation options, memory -> group-scoping safety, telemetry -> real
+ *   usage accounting).
  * - Replay-safety auditing (B5/LIA-405), token/usage accounting events
  *   (B6/LIA-406), nested subagent dispatch (B8/LIA-408).
  * - Consuming the middleware stack's inspectable `logs` output (added per
@@ -102,8 +107,10 @@ const DEUS_NATIVE_CAPABILITIES: RuntimeCapabilities = {
   // with the full inherited environment and no namespace isolation — safe
   // today only because a CONTAINER is the sandbox boundary. deus-native runs
   // in-process on the host with no container between the model and the
-  // machine, so shell execution is not wired until a permission-rules engine
-  // (B7/LIA-407, wrapToolCall) or equivalent stopgap exists.
+  // machine. B7/LIA-407's permission-rules engine now exists, but it is an
+  // application-level AUTHORIZATION layer, not a sandbox — wiring shell
+  // execution still requires real isolation review plus the replay-safety
+  // contract, so this stays false.
   shell: false,
   // Deliberately false: resolveWorkspacePath's `/workspace/*` allowlist was
   // designed and tested as a CONTAINER boundary, not a host boundary — it
@@ -314,10 +321,31 @@ export class DeusNativeRuntime implements AgentRuntime {
 
       // B2 (LIA-402): ordered, per-layer-toggleable middleware stack —
       // permissions -> wardens -> memory -> telemetry (index 0 outermost).
-      // Every layer is an observe-only placeholder this milestone; see
-      // middleware-stack.ts for the mechanism and each layer's caveat.
+      // B7 (LIA-407): the permissions layer is REAL — a declarative
+      // first-match-wins rule engine (permission-rules.ts) selected by the
+      // named profile below; the other layers remain observe-only
+      // placeholders (see middleware-stack.ts for each layer's caveat).
+      //
+      // Profile selection: runContext.backendConfig.permissionProfile.
+      // Omitted => 'default' (allow-all — today's behavior, unchanged);
+      // 'read-only' => the fail-closed read-only preset. Any other value
+      // (unknown name, non-string) THROWS here — before createAgent — and
+      // surfaces as this turn's normal status:'error' RunResult rather than
+      // silently weakening the requested restriction.
+      const rawPermissionProfile =
+        runContext.backendConfig?.['permissionProfile'];
+      if (
+        rawPermissionProfile !== undefined &&
+        typeof rawPermissionProfile !== 'string'
+      ) {
+        throw new Error(
+          `deus-native: backendConfig.permissionProfile must be a string ` +
+            `profile name, got ${typeof rawPermissionProfile}`,
+        );
+      }
       const { middleware } = buildMiddlewareStack(
         resolveMiddlewareStackConfig(),
+        { permissionProfile: rawPermissionProfile },
       );
 
       // B3 (LIA-403): the prompt-lifecycle hook is a SEPARATE, small

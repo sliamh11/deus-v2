@@ -17,8 +17,15 @@
  * tool-broker cases that never spawn a shell and never touch
  * `resolveWorkspacePath` — are ever wired into the deus-native adapter.
  * `bash_exec`/`read_file`/`write_file`/`edit_file`/`glob_files`/`grep_files`
- * and every other broker tool are explicitly excluded until a permission-
- * rules engine (B7/LIA-407, `wrapToolCall`) or an equivalent stopgap exists.
+ * and every other broker tool are explicitly excluded here. B7/LIA-407's
+ * declarative permission-rules engine (`permission-rules.ts`, enforced in
+ * `middleware-stack.ts`'s `wrapToolCall`) has since landed as an
+ * AUTHORIZATION layer over whatever tools ARE wired — it does not itself
+ * widen this inclusion filter, and its landing does not by itself justify
+ * adding a mutating tool here. Widening `SAFE_TOOL_NAMES` still requires its
+ * own separate isolation review (see docs/decisions/deus-v2-permission-rules.md
+ * and deus-v2-replay-safety.md's claim/complete contract for any future
+ * mutating tool).
  * This is an INCLUSION filter (only these two names are ever returned), not
  * an exclusion list, so a future broker tool addition is excluded by default
  * — see the oracle test `deus-native-tool-scope.oracle.test.ts`.

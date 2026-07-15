@@ -4,6 +4,7 @@
 **Date:** 2026-07-15
 **Scope:** `src/agent-runtimes/deus-native-backend.ts`, `src/agent-runtimes/tool-broker-langchain-adapter.ts`, `src/agent-runtimes/types.ts`, `src/index.ts`, `package.json`
 **Related:**
+
 - `multi-agent-orchestration-research.md` — evaluated Runner/LLM placement options in May 2026 and rejected "Runner on host, LLM on host". This ADR partially supersedes that rejection (see Consequences).
 - `backend-neutral-agent-runtime.md` — defines the `AgentRuntime` contract, credential boundary ("adapters must not read raw host secrets"), and context-parity requirement this adapter implements against. Not superseded.
 
@@ -57,7 +58,7 @@ its own ADR superseding or reconciling with that rejection. This is that ADR.
    `write_file`/`edit_file`/`glob_files`/`grep_files` are explicitly not wired
    until the permission-rules engine (B7/LIA-407, `wrapToolCall`) or an
    equivalent stopgap exists. `capabilities()` reports `shell: false,
-   filesystem: false` accordingly. **`web_search` is NOT host-allowlisted**
+filesystem: false` accordingly. **`web_search` is NOT host-allowlisted**
    (added per ai-eng-warden review, round 1): its destination is fixed
    (DuckDuckGo), so it's exempt from `withHostAllowlist`, but its query
    string is model-controlled and sent verbatim — it is the one always-on
@@ -95,7 +96,7 @@ its own ADR superseding or reconciling with that rejection. This is that ADR.
    with an unscoped proxy token and the full `web_search`/`web_fetch`
    surface instead of the curated webhook profile — the exact silent
    downgrade the container-path guard exists to prevent. `DeusNativeRuntime.
-   runTurn` mirrors the same rule directly (returns a `status: 'error'`
+runTurn` mirrors the same rule directly (returns a `status: 'error'`
    result before minting any token or constructing a model), matching the
    per-backend enforcement pattern `buildContainerArgs` already uses rather
    than introducing a new centralized mechanism.
@@ -148,6 +149,13 @@ its own ADR superseding or reconciling with that rejection. This is that ADR.
   web-only inclusion filter are the security boundary; widening the tool
   surface requires B7's permission engine (or equivalent) first, plus its own
   review.
+- **Update (B7/LIA-407):** the permission engine referenced above has since
+  landed — see `deus-v2-permission-rules.md` for the declarative allow/deny
+  rule evaluator and its `default`/`read-only` named profiles. `SAFE_TOOL_NAMES`
+  (`tool-broker-langchain-adapter.ts:124`) is unchanged at `{web_search,
+web_fetch}` and remains the operative boundary; B7 added an authorization
+  layer behind that boundary, it did not widen it. Any future widening still
+  requires its own separate review per this ADR's Decision 3.
 - Session persistence (`persistent_sessions: false`) and Deus context loading
   are deferred to B4 and B2/B3 respectively — `deus-native` is a roadmap
   vehicle, not yet a parity backend.

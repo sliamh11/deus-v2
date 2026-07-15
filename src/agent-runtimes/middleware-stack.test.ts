@@ -1,9 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createAgent, tool, FakeToolCallingModel } from 'langchain';
+import { ToolMessage } from '@langchain/core/messages';
 
 import {
   CANONICAL_MIDDLEWARE_ORDER,
   buildMiddlewareStack,
+  buildPermissionsMiddleware,
   parseMiddlewareStackConfig,
   resolveMiddlewareStackConfig,
   type MiddlewareLayerName,
@@ -262,5 +264,228 @@ describe('resolveMiddlewareStackConfig — DEUS_NATIVE_MIDDLEWARE_CONFIG env var
     expect(() => resolveMiddlewareStackConfig()).toThrow(
       'layer "wardens" must be a boolean',
     );
+  });
+});
+
+// ── B7 (LIA-407): real permissions layer — SUPPLEMENTARY coverage ─────────
+//
+// The independent oracle (middleware-stack.oracle.test.ts, authored blind to
+// this implementation) pins the agent-level DENY contract: non-delegation,
+// the model-visible denial ToolMessage, argument non-exposure, and the deny
+// decision log. This block complements it — it does NOT re-assert those —
+// with what the oracle deliberately left implementation-authored (plan AC2/
+// AC5): the direct-invocation ALLOW path's request-identity guarantee, the
+// direct-level deny shape, default-profile behavior, invalid-profile
+// fail-visibly semantics, and a real-createAgent proof that compliant
+// (allowed) flows are not impeded.
+
+/** Minimal ToolCallRequest stand-in for DIRECT wrapToolCall invocation —
+ *  the hook only reads request.toolCall.{name,id} and passes the request
+ *  through, so state/runtime/tool can be inert stubs. */
+function makeToolCallRequest(
+  name: string,
+  args: Record<string, unknown>,
+  id = 'call_direct_1',
+) {
+  return {
+    toolCall: { name, args, id, type: 'tool_call' as const },
+    tool: undefined,
+    state: {},
+    runtime: {},
+  };
+}
+
+/** Casts through the middleware's generic hook signature so tests can call
+ *  wrapToolCall directly with the minimal request above. */
+async function invokeWrapToolCall(
+  middleware: { wrapToolCall?: unknown },
+  request: unknown,
+  handler: (req: unknown) => Promise<ToolMessage> | ToolMessage,
+): Promise<unknown> {
+  const hook = middleware.wrapToolCall as (
+    request: unknown,
+    handler: unknown,
+  ) => Promise<unknown> | unknown;
+  return await hook(request, handler);
+}
+
+describe('buildPermissionsMiddleware — allow path delegates the ORIGINAL request (AC2, AC5)', () => {
+  it('read-only profile + an allowed read tool: handler called exactly once with the SAME request and args references (frozen/nested)', async () => {
+    const { middleware, log } = buildPermissionsMiddleware('read-only');
+
+    // Deep-frozen, nested args: any reconstruction (handler({...request}) or
+    // rebuilt toolCall) would break the toBe identity assertions below.
+    const args = Object.freeze({
+      query: Object.freeze({ text: 'deus', lang: 'en' }),
+    }) as unknown as Record<string, unknown>;
+    const request = makeToolCallRequest('web_search', args, 'call_allow_1');
+
+    const handlerResult = new ToolMessage({
+      content: 'searched ok',
+      tool_call_id: 'call_allow_1',
+    });
+    let received: unknown;
+    const handler = vi.fn((req: unknown) => {
+      received = req;
+      return handlerResult;
+    });
+
+    const result = await invokeWrapToolCall(middleware, request, handler);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    // Reference identity — the AC5 no-rewrite guarantee.
+    expect(received).toBe(request);
+    expect((received as { toolCall: { args: unknown } }).toolCall.args).toBe(
+      args,
+    );
+    // The handler's own result flows back unmodified.
+    expect(result).toBe(handlerResult);
+
+    expect(log).toEqual([
+      {
+        toolName: 'web_search',
+        decision: 'allow',
+        source: 'rule',
+        reason: expect.stringContaining('web_search'),
+      },
+    ]);
+  });
+
+  it('default profile (omitted argument): an UNMATCHED tool is allowed via the policy default', async () => {
+    const { middleware, log } = buildPermissionsMiddleware();
+    const request = makeToolCallRequest('echo_tool', { value: 'ping' });
+    const handler = vi.fn(
+      () => new ToolMessage({ content: 'ok', tool_call_id: 'call_direct_1' }),
+    );
+
+    await invokeWrapToolCall(middleware, request, handler);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(log).toEqual([
+      {
+        toolName: 'echo_tool',
+        decision: 'allow',
+        source: 'default',
+        reason: expect.stringContaining('default is allow'),
+      },
+    ]);
+  });
+});
+
+describe('buildPermissionsMiddleware — deny path at the direct hook level (AC2)', () => {
+  it('read-only profile + a mutation tool: handler never invoked; synthetic error ToolMessage carries name/id/profile/reason but NOT the arguments', async () => {
+    const SENTINEL = 'DIRECT_SENTINEL_should_not_leak';
+    const { middleware, log } = buildPermissionsMiddleware('read-only');
+    const request = makeToolCallRequest(
+      'bash_exec',
+      { command: SENTINEL },
+      'call_deny_1',
+    );
+    const handler = vi.fn(
+      () => new ToolMessage({ content: 'ran', tool_call_id: 'call_deny_1' }),
+    );
+
+    const result = await invokeWrapToolCall(middleware, request, handler);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(result).toBeInstanceOf(ToolMessage);
+    const denial = result as ToolMessage;
+    expect(denial.status).toBe('error');
+    expect(denial.tool_call_id).toBe('call_deny_1');
+    expect(denial.name).toBe('bash_exec');
+    const content =
+      typeof denial.content === 'string'
+        ? denial.content
+        : JSON.stringify(denial.content);
+    expect(content).toContain('permission_denied');
+    expect(content).toContain('read-only');
+    expect(content).toContain('bash_exec');
+    expect(content).not.toContain(SENTINEL);
+
+    expect(log).toEqual([
+      {
+        toolName: 'bash_exec',
+        decision: 'deny',
+        source: 'rule',
+        reason: expect.stringContaining('bash_exec'),
+      },
+    ]);
+  });
+});
+
+describe('permission profile selection — invalid names fail visibly (plan Scope)', () => {
+  it('buildPermissionsMiddleware throws on an unknown profile name', () => {
+    expect(() => buildPermissionsMiddleware('no-such-profile')).toThrow(
+      'unknown permission profile "no-such-profile"',
+    );
+  });
+
+  it('buildMiddlewareStack throws on an unknown profile name BEFORE returning any middleware', () => {
+    expect(() =>
+      buildMiddlewareStack({}, { permissionProfile: 'no-such-profile' }),
+    ).toThrow('unknown permission profile "no-such-profile"');
+  });
+
+  it('the up-front validation fires even when the permissions layer is toggled OFF (never silently ignore a requested restriction)', () => {
+    expect(() =>
+      buildMiddlewareStack(
+        { permissions: false },
+        { permissionProfile: 'no-such-profile' },
+      ),
+    ).toThrow('unknown permission profile "no-such-profile"');
+  });
+});
+
+describe('permissions middleware — compliant (allowed) flows are not impeded through a real agent (AC2/AC3 allow side)', () => {
+  it('read-only profile + a scripted call to an allowed read tool: the tool executes and its real result reaches the graph', async () => {
+    const readSpy = vi.fn(async (args: { query: string }) => {
+      return `results-for:${args.query}`;
+    });
+    const readTool = tool(readSpy, {
+      name: 'web_search',
+      description: 'test double for an allowed read tool',
+      schema: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    });
+    const model = new FakeToolCallingModel({
+      toolCalls: [
+        [{ name: 'web_search', args: { query: 'deus' }, id: 'call_ro_1' }],
+        [],
+      ],
+    });
+    const { middleware, logs } = buildMiddlewareStack(
+      { wardens: false, memory: false, telemetry: false },
+      { permissionProfile: 'read-only' },
+    );
+
+    const agent = createAgent({ model, tools: [readTool], middleware });
+    const result = await agent.invoke({
+      messages: [{ role: 'user', content: 'search for deus' }],
+    });
+
+    // The allowed tool genuinely ran...
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    // ...its REAL output (not a denial) is the tool message in the graph...
+    const toolMessage = (result as { messages: unknown[] }).messages.find(
+      (m): m is ToolMessage =>
+        ToolMessage.isInstance(m as never) &&
+        (m as ToolMessage).tool_call_id === 'call_ro_1',
+    );
+    expect(toolMessage).toBeDefined();
+    expect(toolMessage?.status).not.toBe('error');
+    expect(String(toolMessage?.content)).toContain('results-for:deus');
+    // ...and the decision log recorded a rule-sourced allow.
+    expect(logs.permissions).toEqual([
+      {
+        toolName: 'web_search',
+        decision: 'allow',
+        source: 'rule',
+        reason: expect.stringContaining('web_search'),
+      },
+    ]);
   });
 });
