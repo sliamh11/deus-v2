@@ -1,5 +1,5 @@
 ---
-last_verified: "2026-07-16" # auto-bump @1784219413
+last_verified: "2026-07-16" # auto-bump @1784221373
 governs:
   - src/
   - evolution/
