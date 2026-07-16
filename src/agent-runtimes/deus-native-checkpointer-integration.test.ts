@@ -849,9 +849,9 @@ describe('nested dispatch (B8 LIA-408): parent-to-child usage and session reconc
       (e) => e.model === CONFIGURED_CHILD_MODEL_ID,
     );
     expect(childUsageEvent).toBeDefined();
-    expect(
-      usageEvents.some((e) => e.model === PARENT_REQUESTED_MODEL_ID),
-    ).toBe(false);
+    expect(usageEvents.some((e) => e.model === PARENT_REQUESTED_MODEL_ID)).toBe(
+      false,
+    );
     expect(childUsageEvent?.sessionId).toBe(sessionId);
     expect(childUsageEvent?.provider).toBe('anthropic');
     expect(childUsageEvent).toMatchObject({
