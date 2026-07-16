@@ -1,147 +1,305 @@
-# LIA-432 — Stream Odysseus activity over SSE
+# LIA-408 — Nested Subagent Dispatch Primitive
 
-## File map and responsibilities
+## Scope Restatement
 
-| File | Change and responsibility |
-| ---- | ------------------------- |
-| `src/agent-runtimes/activity-broadcaster.ts` (new) | Define the exported activity envelope, process-local fan-out broadcaster, documented no-throw lifecycle, and `deus-native` runtime decorator so every registry-resolved caller shares one ordered event stream. |
-| `src/agent-runtimes/activity-broadcaster.test.ts` (new) | Unit-test schema mapping, global ordering, fan-out/isolation, decorator transparency, and broadcaster lifecycle, including safe publication after close. |
-| `src/odysseus-activity-stream.test.ts` (new) | Exercise the authenticated `/v1/activity` route over real HTTP streams, including multi-event/multi-client delivery, admission limits, abort cleanup, Odysseus-only shutdown, cross-cutting broadcaster ownership, keepalives, and reconnect-without-replay behavior. |
-| `src/odysseus-server.ts` (edited) | Add broadcaster dependency injection, the activity route and SSE formatter, independent activity-stream accounting, per-connection cleanup, and an explicit Odysseus stop helper that owns only the HTTP server and its activity-route subscriptions. |
-| `src/index.ts` (edited) | Construct and inject the shared broadcaster, decorate only the registered `deus-native` runtime, give the Odysseus server a single shutdown owner outside the generic webhook-server loop, and close the process-wide broadcaster only at the true end of shutdown. |
-| `src/agent-runtimes/deus-native-backend.test.ts` (extended) | Lock the decorator integration behavior for a `deus-native` error result that does not emit its own `error` event, without changing the downstream sink or `RunResult`. |
+This change implements exactly these five acceptance criteria for the `deus-native` runtime:
 
-## 1. Scope summary
+- [ ] A parent agent can dispatch a nested `createAgent` instance.
+- [ ] Each dispatch declares an explicit output contract.
+- [ ] Invalid subagent output is rejected or surfaced as a contract failure.
+- [ ] Each subagent can select a model independently of the parent.
+- [ ] Dispatch results return to the parent with traceable agent and model metadata.
 
-G5 adds an authenticated, localhost-only Odysseus SSE subscription that exposes live events emitted by `deus-native` turns, regardless of whether the turn originated from Odysseus chat, a normal channel handled by `src/message-orchestrator.ts`, a scheduled task in `src/task-scheduler.ts`, a Linear run in `src/linear-dispatcher.ts`, or the multi-agent path in `src/multi-agent/orchestrator.ts`. It defines a stable event contract, fans each event out to all connected clients, and handles disconnect/reconnect and shutdown cleanup. It does not build the Companion app or an activity-monitor UI; those remain separate tickets.
+The implementation is limited to a one-shot, in-process child agent created from the current `DeusNativeRuntime.runTurn()` in `src/agent-runtimes/deus-native-backend.ts`. It does not create a container or call `AgentRuntime.runTurn()` recursively.
 
-For LIA-352's Companion voice overlay, the `deus-native` `activity`, `tool_call`, `output_text`, `turn_complete`, and `error` events are sufficient to drive the progress/“thinking” animation states and completion signal, so G5 is a full, direct unblock. For LIA-64's activity-monitor TUI tab, the same stream supplies current activity text, tool invocations, usage, run/group identity, and completion/failure state for `deus-native` turns specifically, providing real and useful data to build the tab against; it does not supply “container status” for container-backed Claude, OpenAI, or llama-cpp turns because `deus-native` is a host-side, zero-container execution path and G5 intentionally does not instrument those runtimes (see Non-goals). The intended ticket reading is therefore that G5 ships `deus-native`-only activity now; if LIA-64 is later scoped to require container status or other activity for non-`deus-native` backends, that requires its own follow-up ticket and ADR against the container-backed runtime path and is explicitly not part of what G5 unblocks.
+`src/multi-agent/orchestrator.ts` remains unchanged. Its `MultiAgentOrchestrator.dispatch()` path topologically schedules `SubagentTask[]`, launches independent container/runtime sessions, and interprets `STATUS_MARKER_RE` text. B8 instead creates a child LangChain agent inside one `deus-native` turn and validates its output against a schema. The two primitives coexist because they have different isolation, scheduling, and lifecycle boundaries; B8 does not reuse the status-marker parser and does not subsume the container orchestrator in this ticket.
 
-Operationally, because Claude remains the default backend and `deus-native` is opt-in via `DEUS_AGENT_BACKEND`, `/v1/activity` is expected to remain silent for any group/session not running on `deus-native`; consumers for LIA-352 or LIA-64 must distinguish that expected backend-not-selected state from a broken stream.
+The following boundaries also remain unchanged:
 
-## 2. Event schema
+- `SAFE_TOOL_NAMES` in `src/agent-runtimes/tool-broker-langchain-adapter.ts` remains exactly `web_search` and `web_fetch`; no shell, filesystem, browser, IPC, scheduling, or mutation tool is added.
+- The `claude`, `openai`, and `llama-cpp` backends are untouched.
+- `src/agent-runtimes/types.ts` keeps the existing `RuntimeEvent` and `RunResult` vocabulary; no parallel nested-agent event/result protocol is added.
+- `RuntimeCapabilities.handoffs` remains `false` in `deus-native-backend.ts:105-134`. A child tool call returns control to the same parent turn; it does not transfer conversation or session ownership, so the five ACs do not justify advertising handoff support.
 
-Add the exported contract beside the new broadcaster in a new `src/agent-runtimes/activity-broadcaster.ts` module. Keep it separate from the OpenAI-compatible `chunkFrame()` / `completionFrame()` schema in `src/odysseus-server.ts`: `/v1/chat/completions` must remain wire-compatible with OpenAI, while the activity endpoint is a Deus-owned observational contract.
+## Design
 
-Each SSE message will carry both an SSE `id:` line and an SSE `event:` line, followed by one JSON `data:` object with this shape:
+### Consolidated File Map
 
-| Field       | Shape                                                                                | Contract                                                                                                                                                                                             |
-| ----------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`        | string                                                                               | `${streamId}:${sequence}`; exactly matches the SSE `id:` line.                                                                                                                                       |
-| `streamId`  | UUID string                                                                          | Random once per `RuntimeActivityBroadcaster` instance/process epoch. A change tells a reconnecting client that the server restarted and sequence values are from a new epoch.                        |
-| `sequence`  | positive integer                                                                     | Allocated once by the broadcaster before fan-out, monotonically increasing across every published activity event in that process. It is global to the broadcaster, not per client or per turn.       |
-| `type`      | `output_text \| activity \| tool_call \| usage \| session \| turn_complete \| error` | The discriminant and the value used in the SSE `event:` line.                                                                                                                                        |
-| `timestamp` | ISO-8601 string                                                                      | Server publication time, generated once before fan-out so all clients receive the same timestamp. Ordering is defined by `sequence`, not wall-clock time.                                            |
-| `runId`     | UUID string                                                                          | Minted once by the runtime decorator for each `AgentRuntime.runTurn()` call and reused for all of that turn's events, so consumers can correlate interleaved groups and identify the terminal event. |
-| `source`    | object                                                                               | `{ backend: 'deus-native', groupFolder: string, chatJid: string }`, taken from `AgentRuntime.name()` and `RunContext.groupFolder` / `RunContext.chatJid`; no prompt or filesystem path is exposed.   |
-| `payload`   | object                                                                               | Variant-specific fields copied from the existing `RuntimeEvent` without adding provider-specific frame fields.                                                                                       |
+| Path | Change |
+| --- | --- |
+| `ORACLE_BRIEF.md` | Retain as the provenance for the already-authored independent oracle; do not replace it with a self-authored oracle. |
+| `src/agent-runtimes/nested-dispatch.oracle.test.ts` | Keep as the canonical walking-skeleton oracle under the default `src/**/*.test.ts` Vitest glob; make its existing `createNestedDispatcher({ resolveModel })` seam pass without weakening its assertions. |
+| `src/agent-runtimes/nested-dispatch.test.ts` | Add focused unit tests for request validation, JSON-schema compilation, success/failure envelopes, tool adaptation, fresh child dependencies, and usage metadata. |
+| `src/agent-runtimes/deus-native-checkpointer-integration.test.ts` | Extend the existing real-`createAgent`/`FakeToolCallingModel` integration harness to prove child usage is attributed to the parent session and reconciled into `RunResult.usage` without creating child checkpoint state. |
+| `src/agent-runtimes/nested-dispatch.ts` | Add the oracle-defined core factory, request/result types, one nested `createAgent` invocation per dispatch, output extraction, independent schema validation, and trace metadata. |
+| `src/agent-runtimes/nested-dispatch-tool.ts` | Add the parent-facing `dispatch_nested_agent` LangChain tool, inline JSON-schema contract compilation, child prompt construction, and `ToolMessage` success/error adaptation. |
+| `src/agent-runtimes/deus-native-model.ts` | Extract and parameterize `buildProxyRoutedChatAnthropic()` so the parent retains its default while each child supplies its own model id through the same credential-proxy route. |
+| `src/agent-runtimes/deus-native-usage.ts` | Extract the B6 per-AI-message usage emission/aggregation logic so parent and child calls share the exact `RuntimeEvent` and `RunResult.usage` semantics. |
+| `src/agent-runtimes/deus-native-backend.ts` | Construct the dispatcher/tool inside `runTurn()`, give children fresh safe tools and middleware, aggregate child usage, and remove B8 from the module's deferred non-goals. |
+| `docs/decisions/deus-v2-subagent-dispatch.md` | Add the B8 ADR covering the in-process boundary, schema contract, failure semantics, model factory, middleware/tool isolation, session/usage association, and coexistence with the container orchestrator. |
+| `docs/decisions/INDEX.md` | Index the new ADR. |
+| `docs/decisions/deus-v2-langchain-runtime.md` | Add the B8 decision as the governed extension of the original single-agent `deus-native` loop and preserve the web-only tool boundary. |
+| `AGENTS.md` | Add `nested-dispatch.ts`/`nested-dispatch-tool.ts` to the core-entrypoint map, as required when an architectural entrypoint changes. |
 
-The `RuntimeEvent` mapping from `src/agent-runtimes/types.ts` is exhaustive:
+`package.json`, `package-lock.json`, `src/agent-runtimes/types.ts`, `src/multi-agent/orchestrator.ts`, and `src/multi-agent/types.ts` require no change. `zod@^4.4.3` is already a direct production dependency.
 
-| `RuntimeEvent` variant | SSE `type`      | `payload`                                                                                                                                                                     |
-| ---------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `output_text`          | `output_text`   | `{ text }`                                                                                                                                                                    |
-| `activity`             | `activity`      | `{ text }`                                                                                                                                                                    |
-| `tool_call`            | `tool_call`     | `{ name, arguments }`                                                                                                                                                         |
-| `usage`                | `usage`         | `{ sessionId, provider, model, inputTokens, outputTokens, totalTokens }`; preserve `undefined` token semantics by omitting those keys in JSON rather than fabricating zeroes. |
-| `session`              | `session`       | `{ sessionRef }`                                                                                                                                                              |
-| `turn_complete`        | `turn_complete` | `{}`                                                                                                                                                                          |
-| `error`                | `error`         | `{ error }`                                                                                                                                                                   |
+### Canonical Primitive and Parent Tool
 
-Only `deus-native` turns are included. Although `RuntimeEventSink` is shared by the Claude, OpenAI, llama-cpp, and deus-native implementations, the ticket explicitly asks for “deus-native activity,” and expanding this external contract to all backends would be backend-wide observability scope not required by G5. Coverage is nevertheless channel-agnostic: every group and invocation path using the `deus-native` registry entry is included. The event set does not expose prompt bodies or wire the test-only `ToolCallDecisionRecord`, `MemoryPassRecord`, `ModelCallRecord`, `SessionOpenRecord`, or `PromptEventRecord` arrays from `src/agent-runtimes/middleware-stack.ts` and `src/agent-runtimes/lifecycle-events.ts` into a new public contract.
+Implement against the independent oracle's seam, not a competing interface:
 
-For LIA-352, the `activity`, `tool_call`, `output_text`, `turn_complete`, and `error` variants are sufficient for the Companion voice overlay's progress/“thinking” states and completion signal, making this a full, direct unblock. For LIA-64, the schema provides current activity text, tool invocations, usage, response text, group/run identity, and completion/failure for `deus-native` turns only, which is a useful dataset for building the activity-monitor tab but cannot provide the ticket's “container status” for Claude/OpenAI/llama-cpp turns. G5 intentionally ships this `deus-native`-only contract now; any later requirement for container-backend activity or status belongs in a follow-up ticket and ADR for that runtime path, not in G5.
+```ts
+const dispatcher = createNestedDispatcher({ resolveModel });
+const result = await dispatcher.dispatch({
+  agentId,
+  model,
+  prompt,
+  outputContract,
+});
+```
 
-The process-wide `streamId` plus broadcaster-wide `sequence` is stable across reconnects to the same running host because an event is numbered once, before every subscriber receives the identical envelope. A per-connection counter would not satisfy this: two clients or a reconnect could assign different IDs to the same runtime event. JavaScript's safe-integer range is ample for a process-lifetime counter; guard against overflow by refusing publication with a logged error rather than silently wrapping and violating ordering.
+`createNestedDispatcher()` accepts the oracle-required `resolveModel(modelId)` dependency and optional production dependencies for fresh child tools, fresh child middleware, provider/session trace context, and child-message usage observation. Those optional dependencies preserve the minimal `createNestedDispatcher({ resolveModel })` construction used by `nested-dispatch.oracle.test.ts`.
 
-## 3. Fan-out mechanism
+`dispatch()` validates `agentId`, `model`, `prompt`, and the presence of a Zod-compatible `outputContract` before calling `resolveModel`. It resolves the model on every call, constructs one child with `createAgent({ model, tools, middleware })`, invokes it with only the explicit child prompt, and validates the terminal child output. It does not call another `AgentRuntime`, use a container, or share the parent's transcript.
 
-Create `RuntimeActivityBroadcaster` in the new `src/agent-runtimes/activity-broadcaster.ts`. It will own a Node `EventEmitter`, `streamId`, the next sequence, and a closed flag. Its small API is `publish(runId: string, source: RuntimeActivitySource, event: RuntimeEvent): void`, `subscribe(handler: (envelope: RuntimeActivityEnvelope) => void): () => void`, `subscriberCount(): number` for lifecycle assertions, and idempotent `close(): void`. The decorator signature is `withRuntimeActivityBroadcast(runtime: AgentRuntime, broadcaster: RuntimeActivityBroadcaster): AgentRuntime`. This is the Observer pattern: the process-wide broadcaster is the subject, and each activity-route connection is an independently removable observer. Publication is O(number of current subscribers), which is the necessary cost of delivering one immutable envelope to every live client; lookup/removal state remains process-local and bounded by the five-connection admission cap.
+The production adapter `buildNestedDispatchTool()` exposes this core primitive to the parent as a LangChain tool named `dispatch_nested_agent`. The parent model emits:
 
-`publish()` constructs one immutable envelope and synchronously emits it to a snapshot of subscribers; subscription wrappers isolate listener/write failures so one disconnected client cannot throw into `AgentRuntime.runTurn()` or prevent delivery to other clients. Its exported doc comment must guarantee that `publish()` never throws because the broadcaster is closed: after `close()` marks the instance closed and removes its listeners, every later `publish()` is a safe no-op that allocates no ID/sequence and invokes no subscriber. A post-close `subscribe()` is likewise inert and returns a no-op unsubscribe. Sequence-overflow refusal logs metadata but does not throw into a producer. These shutdown semantics are defense in depth for a late event from a detached turn and preserve the decorator's downstream sink even after process-wide observation has ended. There is no external broker because Deus is a single host process and the consumers are HTTP connections in that same process.
+```ts
+{
+  agentId: string;
+  model: string;
+  prompt: string;
+  outputContract: {
+    name: string;
+    description?: string;
+    schema: Record<string, unknown>;
+  };
+}
+```
 
-Do not extend `src/events/bus.ts` for this ticket. `EventBus.emit()` is an asynchronously and sequentially awaited pipeline-reaction bus with the `DeusEvent` taxonomy from `src/events/types.ts`; making every runtime token/tool event flow through it would let an SSE listener back-pressure the agent and would conflate the accepted pipeline event-hub contract in `docs/decisions/event-hub.md` with a high-frequency transport stream. The dedicated broadcaster is a best-effort observation seam with different lifecycle and delivery semantics.
+The schema is inline and required on every tool call, making the contract explicit per dispatch rather than relying on a hidden global response type or the older `[STATUS:...]` convention. `nested-dispatch-tool.ts` adds the contract name, description, and serialized schema to the child prompt with an instruction to return one JSON value, compiles the schema, and passes the compiled validator to `dispatcher.dispatch()`.
 
-Add a `withRuntimeActivityBroadcast(runtime, broadcaster)` decorator in the same new module. In `src/index.ts`, construct one broadcaster at the composition root, wrap only `createDeusNativeRuntime(backendDeps)`, and register that decorated runtime through the existing `RuntimeRegistry.register()` call. Pass the same broadcaster through `OdysseusServerDeps` to `startOdysseusServer()`. The decorator creates a `runId` per `runTurn()`, tees every existing event to `publish()` before invoking the caller's original `RuntimeEventSink`, and otherwise preserves `name()`, `capabilities()`, `startOrResume()`, `close()`, downstream sink ordering, and the returned `RunResult`.
+### Design Patterns
 
-This single registry-boundary decorator covers the existing sinks in `message-orchestrator.ts`, `task-scheduler.ts`, `linear-dispatcher.ts`, `multi-agent/orchestrator.ts`, and `odysseus-server.ts` without editing each caller. Track whether an `error` event was observed; if the wrapped deus-native call returns `RunResult.status === 'error'` without emitting one (the current `DeusNativeRuntime.runTurn()` catch path does this), publish one broadcaster-only `RuntimeEvent`-shaped `error` envelope using `RunResult.error`. Do not inject that synthetic event into the caller's sink, which would change existing channel behavior. If the wrapped call unexpectedly throws, publish the same terminal error and rethrow so existing caller semantics remain intact.
+- **Factory with dependency injection:** `createNestedDispatcher()`, `buildProxyRoutedChatAnthropic()`, and the child tool/middleware builders create isolated instances per dispatch. Injecting `resolveModel` is the oracle-defined test seam and prevents the dispatcher from hard-coding a provider client.
+- **Strategy:** each dispatch supplies its own output-contract parser, while production compiles the parent-declared JSON Schema into that strategy. The model resolver is likewise a per-model strategy selected by the request's `model` value.
+- **Adapter:** `buildNestedDispatchTool()` translates between the LangChain tool-call/`ToolMessage` protocol and the Deus-owned `NestedDispatchResult` union. The core dispatcher stays independently testable and does not depend on a parent tool-call id.
 
-## 4. New route
+### Output Contract and Enforcement
 
-Add exactly one route to the `createOdysseusServer()` router in `src/odysseus-server.ts`:
+Use Zod as the Deus-owned validation boundary:
 
-- `GET /v1/activity` — long-lived deus-native activity SSE subscription.
+1. The parent tool requires an inline JSON Schema for every dispatch.
+2. `nested-dispatch-tool.ts` calls `z.fromJSONSchema()` inside a guarded compiler. An unconvertible or malformed schema becomes a contract failure before model resolution or child construction.
+3. `nested-dispatch.ts` checks at runtime that `outputContract` exposes the required parse operation, so dynamically malformed direct callers fail before `resolveModel`; this is required by the existing oracle's missing-contract case.
+4. After child invocation, the dispatcher extracts the final AI response, parses JSON when the content is JSON text, and runs the compiled contract's asynchronous safe parse. Only the parsed value is returned as `output`.
+5. Invalid JSON, missing terminal output, or schema-invalid data returns `status: 'contract_failure'`. Invalid raw output is not echoed back into the parent context; only sanitized validation issues are surfaced.
 
-All other methods on `/v1/activity` return the same `405` JSON shape as the existing route method gates. The route participates in the existing method-before-auth routing discipline, then reuses `extractBearer()` and `timingSafeEqualStr()` against the same validated `ODYSSEUS_HTTP_TOKEN`; no query-string token, cookie, alternate credential, or auth bypass is added. It remains reachable only through the existing `127.0.0.1` bind in `startOdysseusServer()`.
+The core result is a discriminated union:
 
-Apply the existing module-level `isRateLimited(remoteAddr)` check to each initial connection and reconnection, just as for `/v1/models` and `/v1/chat/completions`; keepalives and delivered activity events do not consume additional rate-limit entries. Advertise a 15-second SSE retry delay so a single normally reconnecting client stays below `RATE_LIMIT_MAX = 5` per 60 seconds when it is not also making other Odysseus requests.
+```ts
+type NestedDispatchResult<T> =
+  | {
+      status: 'success';
+      output: T;
+      metadata: NestedDispatchMetadata;
+    }
+  | {
+      status: 'contract_failure';
+      error: { code: 'subagent_output_contract_failed'; message: string; issues?: unknown };
+      metadata: NestedDispatchMetadata;
+    }
+  | {
+      status: 'error';
+      error: { code: 'subagent_execution_failed'; message: string };
+      metadata: NestedDispatchMetadata;
+    };
+```
 
-Use a separate `activeActivitySse` counter, but cap it with the existing `MAX_CONCURRENT_SSE` value. Do not share the current `activeSse` counter: `/v1/activity` connections are intentionally long-lived, so five monitor clients could otherwise consume every slot indefinitely and make unrelated `/v1/chat/completions` streaming turns return `503`. The separate counter still bounds activity sockets to five without adding a new config surface. Reset it in `_resetServerStateForTest()` alongside `activeSse`, and return the existing `503 { error: 'too many concurrent streams' }` shape when its cap is reached.
+`NestedDispatchMetadata` always contains `agentId` and the resolved/requested `model`; the production path also includes `provider: 'anthropic'`, `parentSessionId`, and child-local `usage` when the provider reported it. Metadata is attached on success, contract failure, and execution failure so a failed dispatch remains traceable.
 
-The activity route only subscribes; it does not resolve a group, enqueue a `GroupQueue` task, touch `inFlight`, or trigger a turn.
+`buildNestedDispatchTool()` serializes success as a normal tool result. For `contract_failure` or `error`, it returns a `ToolMessage` with the current `ToolRuntime.toolCallId`, `name: 'dispatch_nested_agent'`, and `status: 'error'`. This matches the model-visible denial pattern in `buildPermissionsMiddleware()` at `src/agent-runtimes/middleware-stack.ts:166-201`: the parent remains inside its ReAct loop and may retry or handle the failure. Contract and execution failures use distinct codes.
 
-## 5. Connect, multiple events, and clean disconnect
+LangChain structured-output helpers are not the correctness boundary. The child is instructed to emit JSON, but Deus validates the returned value independently. This choice keeps the core compatible with the canonical oracle's Zod-compatible parser and bare final `AIMessage`, and avoids making B8 correctness depend on LangChain's response-format retry/control-flow behavior. A future optimization may add `toolStrategy`; it must retain the independent post-validation path.
 
-On admission, write status 200 with the existing SSE headers used by `handleChatCompletion()` — `Content-Type: text/event-stream`, `Cache-Control: no-cache`, and `Connection: keep-alive` — then write `retry: 15000\n\n` to flush headers and establish the reconnect delay. Register the response with the broadcaster only after admission and header setup. Each published envelope is written with a dedicated activity-frame formatter that emits `id:`, `event:`, and JSON `data:` lines; do not reuse `writeSse()`, whose `data:`-only assumption and OpenAI frame input belong to `/v1/chat/completions`.
+### Verified Signatures
 
-Reuse `KEEPALIVE_MS = 20_000`, but keep the activity timer running for the entire subscription and write the same comment frame `: ping\n\n` whenever the response remains writable. This differs from the chat path at `src/odysseus-server.ts:591-594`, which pings only until `firstTokenSeen` because that response ends with the turn. The activity stream may be quiet between unrelated turns and must keep intermediaries from treating that silence as a dead connection. Call `unref()` on the interval so it cannot pin process exit.
+The external API claims are verified against the packed artifacts for the locked production versions (`langchain@1.5.3`, `@langchain/core@1.2.2`, `zod@4.4.3`):
 
-Give each connection one idempotent `finalize()` closure with a once flag, mirroring the `releaseSlot()` / `finalize()` discipline around `src/odysseus-server.ts:520-568`. In one place it must clear and null the keepalive interval, invoke and clear the broadcaster unsubscribe function, remove the response from the server's active-activity set, decrement `activeActivitySse` exactly once, detach any explicitly installed close/error handlers if needed, and optionally call `res.end()` only when the server is ending a still-writable response. Register client abort with `res.once('close', finalize)`; request/response error handling remains guarded by the server's existing handlers.
+- `createAgent` has overloads for ordinary, JSON-schema, Zod, `ToolStrategy`, and provider-strategy response formats in `langchain/dist/agents/index.d.ts:161-232`.
+- `responseFormat` produces `structuredResponse` when configured in `langchain/dist/agents/types.d.ts:606-658`, and `invoke()` exposes it in the final state in `langchain/dist/agents/ReactAgent.d.ts:111-134`.
+- `toolStrategy()` accepts Zod/serializable/JSON schemas in `langchain/dist/agents/responses.d.ts:105-110`; its `handleError` option is `boolean | string | callback`, with `false` meaning throw, at `responses.d.ts:82-103`.
+- `StructuredOutputParsingError` is the framework error for schema-invalid structured tool arguments in `langchain/dist/agents/errors.d.ts:14-20`.
+- `ToolRuntime.toolCallId` is a required string in `@langchain/core/dist/tools/types.d.ts:286-361`; the `tool()` overloads accepting `(input, runtime)` are in `@langchain/core/dist/tools/index.d.ts:222-227`, and structured tools may return `ToolMessage` at `index.d.ts:16`.
+- `z.fromJSONSchema(schema, params?)` returns a `ZodType` in `zod/v4/classic/from-json-schema.d.ts:9-11`; that declaration labels the converter semi-experimental, so compilation is isolated and regression-tested rather than trusted implicitly.
 
-For explicit shutdown, make the server own an idempotent `closeActivityStreams()` cleanup registered by `createOdysseusServer()`, and expose an idempotent `stopOdysseusServer(server): Promise<void>` helper that calls that cleanup before `server.close()` and resolves when the server close callback completes. Track the per-server cleanup/stop promise in module-private state rather than adding methods to Node's public `Server` type. Each active response receives a final SSE comment such as `: server shutdown\n\n`, then `res.end()`; its normal `close` event may call `finalize()` again, but the once flag makes that harmless. Also invoke the same activity-stream cleanup as a server `close` backstop. Draining those permanent responses before `server.close()` avoids waiting forever for long-lived SSE sockets.
+Of these APIs, B8 relies directly on `createAgent`, `ToolRuntime.toolCallId`, `ToolMessage`, and `z.fromJSONSchema()`. `toolStrategy`, `structuredResponse`, `handleError`, and `StructuredOutputParsingError` are documented here because they were evaluated as the framework-native alternative, but are deliberately not required for contract correctness.
 
-Draining `/v1/activity` responses is not sufficient on its own: Node's `server.close()` callback does not fire until every open connection ends, including a still-streaming `/v1/chat/completions` turn (bounded elsewhere only by the 10-minute `ABSOLUTE_TURN_MS`). Since `stopOdysseusServer()` is now awaited in `src/index.ts`'s `shutdown()` before the queue/channel drain (see below), an unbounded wait here could starve that drain for far longer than typical process-manager grace periods. `stopOdysseusServer()` therefore races `server.close()`'s callback against a `ODYSSEUS_STOP_GRACE_MS = 10_000` timeout; if the grace period elapses first, it force-closes any remaining sockets via `server.closeIdleConnections()` / `closeAllConnections()` (Node >=18.2 APIs; this repo requires Node >=20) so the close callback — and therefore `stopOdysseusServer()` — resolves promptly regardless of what else is still open.
+### Independent Model Selection
 
-Give the Odysseus server exactly one HTTP-server shutdown owner in `src/index.ts`: the live wiring declares `webhookServers: Server[]` at `src/index.ts:139`, closes every member in the generic loop at `src/index.ts:172`, pushes the ingress gateway and standalone Linear webhook servers at `src/index.ts:363` and `src/index.ts:562`, creates `odysseusServer` at `src/index.ts:476`, and currently pushes that same instance at `src/index.ts:481`. Remove/replace the `webhookServers.push(odysseusServer)` wiring at line 481 so the array contains only the other webhook servers; in `shutdown()`, `await stopOdysseusServer(odysseusServer)` when it exists before the generic `webhookServers` loop, and do not close that instance again in the loop. `stopOdysseusServer()` is therefore the sole closer of the Odysseus `Server`, avoiding a double `server.close()` while preserving generic shutdown for the gateway and Linear servers. Crucially, neither `closeActivityStreams()` nor `stopOdysseusServer()` closes the injected `RuntimeActivityBroadcaster`; they remove only activity-route subscriptions and close the Odysseus HTTP resource.
+Move `buildProxyRoutedChatAnthropic()` from `deus-native-backend.ts:175-211` into `deus-native-model.ts` and change its signature to accept `modelId`:
 
-The process-wide broadcaster remains owned by the `src/index.ts` composition root. Preserve the live shutdown sequence at `src/index.ts:171-178`, with this precise extension: stop Linear admission; await the dedicated Odysseus stop; close the other `webhookServers`; stop the ingress tunnel and proxy servers; `await queue.shutdown(10000)`; await every `channel.disconnect()`; then call `activityBroadcaster.close()` immediately before `process.exit(0)`. This is the latest process-wide shutdown boundary, after channels, scheduled work admitted through the queue, Linear dispatch, and channel-owned multi-agent work have all had their available shutdown/drain window. It matters because `GroupQueue.shutdown(_gracePeriodMs)` at `src/group-queue.ts:366-383` only sets `shuttingDown` and reports detached containers; it does not use the grace-period argument or await in-flight turns. Closing the broadcaster inside the earlier Odysseus stop would therefore let a non-Odysseus turn call the decorator's tee against a closed shared dependency during channel disconnection. Moving `close()` to the process tail preserves observation throughout that window, while the documented post-close no-op prevents any still-late detached turn from throwing or disrupting its original sink after the final close.
+```ts
+buildProxyRoutedChatAnthropic(
+  runContext: RunContext,
+  modelId: string,
+): ChatAnthropic
+```
 
-## 6. Reconnection behavior
+The parent passes the existing default constant `claude-opus-4-8`. `resolveModel` passes each dispatch's requested child model to the same factory on every call; it does not inherit or cache the parent's client. Both parent and child preserve `PROXY_BIND_HOST:CREDENTIAL_PROXY_PORT`, `detectAuthMode()`, placeholder credentials, and the per-group `x-deus-proxy-token`. The provider remains Anthropic for this ticket; the AC requires an independently selected model, not a new multi-provider router.
 
-Choose fire-and-forward-only delivery: the server does not replay missed events and does not retain a ring buffer. A reconnect starts receiving events published after its new subscription. `Last-Event-ID` is accepted as an ordinary request header but deliberately ignored; clients compare their last `{ streamId, sequence }` with the next envelope. A matching `streamId` and a jump in `sequence` proves a gap; a changed `streamId` proves the host restarted and began a new ordering epoch. This meets the acceptance criterion, which requires documented and tested reconnection behavior but does not require lossless delivery, while avoiding in-memory retention of potentially sensitive `tool_call.arguments` and avoiding a new history-size/config contract.
+Trace metadata reads the actual constructed client's `model` value when available and otherwise retains the requested id. Tests dispatch two children with different model ids and assert two separate resolver calls and clients.
 
-Document this behavior in the exported contract doc comment on `RuntimeActivityEnvelope` / `RuntimeActivityBroadcaster` in the new module and in the `handleActivityStream()` route doc comment in `src/odysseus-server.ts`. A new ADR is not required for this bounded, process-local transport addition: `docs/decisions/event-hub.md` already establishes the single-process boundary, and this plan explicitly preserves rather than changes that bus's semantics. If a later consumer requires durable replay across process restarts, that is a materially different persistence/privacy decision and should get its own ticket and ADR.
+### Middleware, Tools, Context, and Session Isolation
 
-Set `retry: 15000` on connect as the server's SSE reconnection hint. Authentication remains mandatory on every reconnect; a client that cannot resend the bearer header will receive `401`, and the server must never fall back to query credentials.
+The parent keeps its existing middleware/checkpointer setup at `deus-native-backend.ts:322-385`. Each child dispatch calls `buildMiddlewareStack(resolveMiddlewareStackConfig(), { permissionProfile })` again. This produces a fresh array and fresh middleware instances in the same canonical `permissions -> wardens -> memory -> telemetry` order; no parent middleware object is inherited by reference. The child does not receive the parent's session-open `promptLifecycle` middleware because it is not opening or resuming a user conversation.
 
-## 7. Test plan
+Each child also calls `buildSafeTools()` again with the same group-scoped broker context and web-fetch allowlist. The child never receives `dispatch_nested_agent`, so its tool set is a strict subset of the parent's and recursive nesting is not introduced. No dispatch argument can select or add tools.
 
-Split HTTP coverage into a new sibling `src/odysseus-activity-stream.test.ts` rather than growing the already 927-line `src/odysseus-server.test.ts`. Follow the current test's style: mock the same side-effecting modules, call `createOdysseusServer(deps, TOKEN)`, listen on an ephemeral `127.0.0.1` port, and use real `http.request()` / `http.get()` streams. Give each test a fresh injected `RuntimeActivityBroadcaster`; teardown must stop the server/route subscriptions first and close the process-wide broadcaster last, matching production ownership. Add focused unit coverage in a new `src/agent-runtimes/activity-broadcaster.test.ts`, and extend the existing `src/agent-runtimes/deus-native-backend.test.ts` only for the registry/decorator integration behavior.
+The parent's permission middleware wraps `dispatch_nested_agent`. Under the current `default` profile it is allowed. Under `read-only`, the existing fail-closed default denies this new meta-tool because it is not in the reviewed broker catalog; B8 does not silently weaken or reclassify that profile.
 
-Concrete cases, mapped to the acceptance criteria:
+Children are one-shot and receive no checkpointer. They do not create a `RuntimeSession`, session DB row, or child thread id. The production dispatcher receives the parent's `outgoingSessionId` only as trace context, and returns that as `metadata.parentSessionId`.
 
-1. **Endpoint/auth/method contract (AC: endpoint exposed).** `GET /v1/activity` without or with an invalid bearer returns `401`; an authenticated non-GET returns `405`; an authenticated GET returns 200 with `text/event-stream`, `no-cache`, and `keep-alive`, plus the 15-second retry directive. Assert the same bearer token path is used and no query token is accepted.
-2. **Schema and global ordering (AC: documented schema/stable ordering).** Publish scripted `tool_call`, `usage`, `output_text`, and `turn_complete` events through the broadcaster. Parse SSE frames and assert exhaustive field shape, identical `id:`/JSON `id`, ISO timestamp, `backend: 'deus-native'`, group folder, JID, shared `runId`, one `streamId`, strictly increasing `sequence`, and correct variant payloads. A unit test publishes from two run IDs/groups and proves the single broadcaster sequence still establishes total publication order.
-3. **Multiple events on one connection (AC: receive multiple runtime events).** Hold one real GET open, publish at least three events after subscription, and resolve the test as soon as three complete SSE frames have arrived rather than waiting for connection end. Assert delivery order matches publication order.
-4. **Multi-client fan-out (AC: live fan-out).** Connect two authenticated clients before publishing, emit two events, and assert both clients receive byte-equivalent IDs/envelopes in the same order. Abort one, publish a third, and assert the remaining client still receives it while the aborted client has been unsubscribed.
-5. **Only deus-native, all deus-native callers (AC: data sufficient for LIA-352/LIA-64).** Unit-test `withRuntimeActivityBroadcast()` with a fake deus-native runtime: its downstream sink receives the original events unchanged and in order, while the broadcaster adds source/run metadata. Verify the production composition in `src/index.ts` wraps only the `createDeusNativeRuntime()` registration, leaving the Claude/OpenAI/llama-cpp registrations undecorated. In `deus-native-backend.test.ts`, cover a returned error with no emitted `error` and assert the broadcaster receives one terminal error without changing the original downstream sink or `RunResult`.
-6. **Client abort cleanup (AC: disconnect cleanly).** Spy on the activity keepalive's `clearInterval`, connect, assert `broadcaster.subscriberCount() === 1`, destroy the client request, wait for the response `close`, then assert subscriber count is zero, the interval was cleared, and a later publish causes no write/error. Reconnect and disconnect five-plus times sequentially to prove the separate activity admission counter is released rather than eventually returning `503`.
-7. **Server shutdown cleanup (AC: disconnect cleanly).** Keep two clients connected, `await stopOdysseusServer(server)`, and assert both clients observe end/close, the broadcaster has zero route subscribers, all keepalive handles were cleared, and the server close callback completes. Assert the broadcaster itself remains open; this catches both the otherwise easy deadlock where `server.close()` waits on permanent SSE responses and an accidental return to Odysseus-owned broadcaster shutdown.
-8. **Shared-broadcaster shutdown ordering (cross-cutting lifecycle oracle).** Subscribe a non-SSE recorder to the shared broadcaster, stop the Odysseus server, and then run a decorated fake deus-native runtime with a channel/task/Linear-shaped `RunContext` rather than an SSE client. Assert its events still publish to the recorder and its original downstream sink/`RunResult` remain unchanged during the window after `stopOdysseusServer()` resolves but before process-wide `close()`. Then close the broadcaster and run/publish again: assert no exception, no subscriber invocation or new envelope, and unchanged downstream sink/`RunResult`. In `activity-broadcaster.test.ts`, independently call `close()` twice followed by `publish()` and assert the same documented safe no-op guarantee. This directly proves both the ownership reordering and its defense-in-depth fallback for a detached late producer.
-9. **Fire-and-forward reconnection (AC: reconnection documented and tested).** Connect client A, receive sequence N, disconnect it, publish N+1 while no client is present, then reconnect client B with `Last-Event-ID: <streamId>:N`. Assert N+1 is not replayed; publish N+2 and assert B's first data event is N+2 with the same stream ID, making the gap detectable. A second test constructs a new broadcaster and proves its changed `streamId` identifies a restart epoch even though its numeric sequence restarts.
-10. **Keepalive behavior.** With fake timers or a captured interval callback, advance `KEEPALIVE_MS` both before and after a data event and assert `: ping` is written in both cases, then disconnect and prove advancing again writes nothing. This locks the intentional difference from chat's `!firstTokenSeen` keepalive condition.
-11. **Admission/rate behavior.** Assert reconnects consume the existing rate bucket, delivered events/pings do not, and the activity cap uses its own counter. Where the sixth same-address request is intercepted first by the five-per-minute rate limiter, unit-test the activity admission helper/counter directly or reset only the rate bucket between admissions; do not weaken or reorder auth/rate limiting merely to make the cap easier to test.
+### Usage and Result Propagation
 
-Run at minimum `npx vitest run src/agent-runtimes/activity-broadcaster.test.ts src/agent-runtimes/deus-native-backend.test.ts src/odysseus-server.test.ts src/odysseus-activity-stream.test.ts`, `npm run typecheck`, `npm run build`, and `git diff --check`. The implementation reviewer should also inspect the final producer-to-consumer wiring in `src/index.ts` so passing unit tests cannot mask an unwired facade.
+Extract the B6 loop at `deus-native-backend.ts:403-465` into a turn-scoped collector in `deus-native-usage.ts`. Its `record(messages, { provider, model })` method:
 
-## 8. Non-goals and explicit exclusions
+- Emits one existing `RuntimeEvent.type === 'usage'` for every child or parent `AIMessage`.
+- Uses the parent `outgoingSessionId` for every event, the actual provider/model for that model call, and `undefined` token fields when `usage_metadata` is absent.
+- Returns the local aggregate for inclusion in child metadata while maintaining a combined aggregate for the final parent `RunResult.usage`.
+- Omits aggregates when no AI message supplied usage metadata; it never fabricates zeros.
 
-- No Companion application work, views, notifications, or client state management from LIA-352.
-- No activity-monitor UI, filtering UI, persistence, or visualization from LIA-64.
-- No replay database, ring buffer, durable event history, cross-process broker, or delivery guarantee beyond live best-effort fan-out.
-- No new authentication mode, token transport, config variable, non-local bind, CORS change, or query-string credential.
-- No changes to the existing `/v1/chat/completions` OpenAI chunk schema or conversation/session behavior from LIA-294/LIA-295.
-- No activity from Claude, OpenAI, or llama-cpp turns in G5.
-- No expansion of `RuntimeEvent`, no new tools, no prompt/body capture, and no promotion of middleware/lifecycle test records into public telemetry.
-- No change to GroupQueue serialization, scheduled-task behavior, Linear dispatch behavior, or existing channel sinks.
+The child graph's messages are not inserted into the parent graph. The dispatcher records them once through the shared collector, then returns only the validated result envelope as the parent tool message. The parent graph's later message scan therefore cannot double-count child usage. `RunResult.sessionRef` remains the existing parent session, and `RunResult.usage` becomes the sum of reported parent and child usage without changing `src/agent-runtimes/types.ts`.
 
-**Rollback:** This is a single additive PR: the new module, route, and counter are additive, and the only production-sequencing change is moving Odysseus HTTP-server shutdown ownership out of the generic `webhookServers` loop into a dedicated `stopOdysseusServer()` call in `src/index.ts`; that ownership change reverts cleanly with a single-commit revert because nothing else depends on the new ownership shape.
+## Concrete Implementation Steps
 
-## 9. Open questions and risks
+1. **Freeze the independent oracle as the canonical red test.**
 
-1. **Resolved scope limitation: backend-neutral observability.** G5 is `deus-native`-only. It fully unblocks LIA-352's progress/“thinking” and completion cues, while LIA-64 receives useful activity data only for `deus-native` turns; LIA-64's “container status” for container-backed Claude/OpenAI/llama-cpp turns is out of scope and requires a follow-up ticket and ADR if later required.
-2. **Emission timing in the current backend.** `DeusNativeRuntime.runTurn()` currently emits `tool_call`, `usage`, `output_text`, and `turn_complete` while processing the completed `agent.invoke()` result, so G5 forwards each event immediately when emitted but does not make LangGraph produce those events earlier during a long model/tool execution. Wiring `middleware-stack.ts` hooks into real-time progress would expand the runtime contract and is intentionally excluded; the plan reviewer should decide whether the ticket's word “live” requires a prerequisite/follow-up for earlier backend emission.
-3. **Browser client bearer headers.** Native `EventSource` cannot set an `Authorization` header in ordinary browsers. A Companion web renderer would need an authenticated `fetch()` streaming client or a trusted native/main-process bridge. Query tokens are not an acceptable workaround because they leak through URLs and would weaken the existing auth model.
-4. **Tool argument sensitivity and slow clients.** `tool_call.arguments` may contain user data. The localhost bearer boundary matches the existing Odysseus security model, and no replay buffer reduces retention, but implementation should close a client whose socket remains back-pressured rather than accumulating an unbounded Node response buffer. That disconnect is best-effort transport behavior and should be logged without the event payload.
-5. **Dedicated broadcaster versus `EventBus`.** The live tree has `src/events/bus.ts` even though there is no runtime-activity fan-out today. The dedicated broadcaster is intentional because its synchronous best-effort/high-frequency semantics differ from `EventBus.emit()`'s sequential awaited pipeline reactions. The reviewer should confirm this separation is preferable to broadening the accepted event-hub ADR before implementation.
-6. **Documentation durability.** This plan uses source contract comments rather than a new ADR because replay is explicitly absent and no cross-process architecture is introduced. If LIA-352/LIA-64 will be developed outside this repository or the schema is treated as a long-lived public API, promote the same contract into a dedicated docs page or ADR in that later consumer ticket without changing G5's runtime scope.
+   Preserve `ORACLE_BRIEF.md` and `src/agent-runtimes/nested-dispatch.oracle.test.ts`. Run the oracle in its current red state and record that the failure is the missing `./nested-dispatch.js` import. Do not add `subagent-dispatch.oracle.test.ts`, rename the seam, mock away `createAgent`, or weaken the existing assertions.
+
+2. **Add the core `createNestedDispatcher` factory.**
+
+   Create `src/agent-runtimes/nested-dispatch.ts` with the typed request/result/metadata union and optional dependency hooks described above. Validate the request before model resolution, resolve the model per dispatch, build fresh child dependencies, call a nested `createAgent`, normalize the terminal output, validate it with the supplied contract, and retain trace metadata on every result path. Omit `checkpointer` from the child configuration.
+
+3. **Parameterize model construction and centralize B6 usage collection.**
+
+   Create `src/agent-runtimes/deus-native-model.ts` by moving the credential-proxy logic from `deus-native-backend.ts:175-211` without changing authentication or routing; add the `modelId` parameter and parent default constant. Create `src/agent-runtimes/deus-native-usage.ts` by extracting the exact per-AI-message semantics from `deus-native-backend.ts:403-465` and make it return both local and turn aggregates.
+
+4. **Build the parent-facing tool adapter.**
+
+   Create `src/agent-runtimes/nested-dispatch-tool.ts`. Define the required tool-call shape, compile `outputContract.schema` with `z.fromJSONSchema()`, construct the child-only prompt, call the dispatcher, and return either the success envelope or an error-status `ToolMessage` tied to `ToolRuntime.toolCallId`. Ensure schema compilation and missing/invalid contract failures happen before `resolveModel` or `createAgent`.
+
+5. **Wire nested dispatch into `DeusNativeRuntime.runTurn()`.**
+
+   Modify `src/agent-runtimes/deus-native-backend.ts` to resolve the middleware configuration/profile once, create the shared usage collector after `outgoingSessionId` is known, build the production dispatcher with per-dispatch model/tool/middleware factories, append `dispatch_nested_agent` only to the parent tool list, and process parent usage through the same collector. Keep the parent checkpointer and lifecycle hook unchanged; remove only the B8 non-goal text. Leave `DEUS_NATIVE_CAPABILITIES.handoffs` false.
+
+6. **Add focused tests without replacing the oracle.**
+
+   Add `src/agent-runtimes/nested-dispatch.test.ts` for pure validation, adapter, factory-freshness, and metadata behavior. Extend `src/agent-runtimes/deus-native-checkpointer-integration.test.ts` for end-to-end parent-session usage reconciliation and absence of child checkpoint/session state. Strengthen the independent oracle only if implementation exposes a real untested contract gap; never relax it.
+
+7. **Record the architectural decision and entrypoint.**
+
+   Add `docs/decisions/deus-v2-subagent-dispatch.md`, index it in `docs/decisions/INDEX.md`, cross-reference it from `docs/decisions/deus-v2-langchain-runtime.md`, and update the `AGENTS.md` core-entrypoint table. State explicitly that the new schema contract replaces status-marker parsing only for this in-process primitive and that `src/multi-agent/orchestrator.ts` continues unchanged.
+
+## Testing Plan
+
+### Contract Unit Tests
+
+In `src/agent-runtimes/nested-dispatch.test.ts`, cover:
+
+- A valid Zod-compatible object contract returns only its parsed output.
+- JSON text is parsed before schema validation; malformed JSON and wrong primitive/field types return `contract_failure`.
+- Missing required fields and `additionalProperties: false` are enforced after `z.fromJSONSchema()` compilation.
+- An invalid/unsupported JSON Schema becomes a contract failure before `resolveModel` or child construction.
+- Omitting `outputContract` from a dynamically malformed direct request fails before `resolveModel`, matching the oracle.
+- Contract failure never has `status: 'success'`, never includes raw invalid output, and retains `agentId`/`model` metadata.
+- Model resolution or child invocation errors use `subagent_execution_failed`, not the contract-failure code, and retain metadata.
+- Success, contract failure, and execution failure all serialize through the tool adapter; failures produce `ToolMessage.status === 'error'` with the original `toolCallId`.
+- Per-dispatch tool and middleware factories return different references across calls; the child receives no dispatch tool and no checkpointer.
+- Two sequential dispatches call `resolveModel` separately with different ids and report the actual child model in metadata.
+- Child usage metadata is returned only when reported; absent usage produces undefined event fields and no fabricated aggregate.
+
+### Walking-Skeleton Oracle
+
+Use the existing `src/agent-runtimes/nested-dispatch.oracle.test.ts` unchanged as the primary AC proof. It already:
+
+1. Creates a real parent `createAgent` with a real LangChain tool call.
+2. Calls `createNestedDispatcher({ resolveModel }).dispatch(...)` from that tool.
+3. Captures a second real `createAgent` construction for the child.
+4. Proves the child model differs from the parent and that model resolution occurs per dispatch.
+5. Validates a successful payload against the dispatch's Zod-compatible contract.
+6. Proves schema-invalid child output is never success and retains agent/model trace metadata.
+7. Proves a missing contract fails before model selection.
+
+Because `vitest.config.ts` includes `src/**/*.test.ts`, this exact oracle is part of plain `npm test`. The implementation is not complete until that default suite resolves `./nested-dispatch.js` and passes; a narrower command using a differently named oracle is not acceptable.
+
+### Usage and Session Reconciliation
+
+Extend `src/agent-runtimes/deus-native-checkpointer-integration.test.ts`, following its existing `withKnownUsage()` convention, with a scripted parent model that calls `dispatch_nested_agent` and a child model carrying different known usage values. Assert:
+
+- Parent usage events name the parent model; child usage events name the independently selected child model.
+- Every event uses the parent `RunResult.sessionRef.session_id` and provider `anthropic`.
+- The tool result visible to the parent contains `agentId`, child model, provider, parent session id, and child-local usage.
+- `RunResult.usage` equals the exact parent-plus-child totals.
+- A child AI message without `usage_metadata` still emits undefined token fields and contributes no zero values.
+- Only the parent thread exists in the real test checkpointer; child messages are absent from the persisted parent transcript except for the serialized tool result, and no child `RuntimeSession` or checkpoint thread is created.
+
+### Regression and Verification Commands
+
+Run the canonical oracle and focused suite first:
+
+```bash
+npm test -- \
+  src/agent-runtimes/nested-dispatch.oracle.test.ts \
+  src/agent-runtimes/nested-dispatch.test.ts \
+  src/agent-runtimes/deus-native-checkpointer-integration.test.ts
+```
+
+Then run affected regressions and the full default glob:
+
+```bash
+npm test -- \
+  src/agent-runtimes/deus-native-backend.test.ts \
+  src/agent-runtimes/middleware-stack.test.ts \
+  src/agent-runtimes/middleware-stack.oracle.test.ts \
+  src/agent-runtimes/permission-rules.test.ts \
+  src/agent-runtimes/permission-rules.oracle.test.ts \
+  src/agent-runtimes/deus-native-tool-scope.oracle.test.ts
+npm test
+npm run typecheck
+npm run build
+npm run lint
+git diff --check
+```
+
+## Risks and Open Questions
+
+### Risks
+
+- **MEDIUM: LangChain middleware and nested-agent behavior are comparatively immature.** A library upgrade could change middleware composition, tool-return handling, or nested graph behavior. Bound the risk by creating fresh middleware arrays through the public `buildMiddlewareStack()` API, using only public `createAgent`/`tool` types, omitting child checkpointing, and retaining a real-graph oracle with `FakeToolCallingModel`. Pin the verified declaration paths in the ADR and re-run the oracle on dependency upgrades.
+- **`z.fromJSONSchema()` is explicitly semi-experimental.** Unsupported schema features or conversion changes could alter validation. Keep compilation in one Deus-owned adapter, catch conversion errors before child execution, independently safe-parse every returned value, and freeze supported behavior with valid/invalid schema tests. Do not write a second hand-rolled validator whose semantics can drift from the declared contract.
+- **Model-visible JSON instructions are not enforcement.** A child may ignore the requested shape or emit malformed JSON. That is expected to produce a traceable `contract_failure`; no unvalidated value reaches the parent as success.
+- **Usage can be double-counted if child messages leak into the parent scan.** Keep child graph state isolated, record child messages exactly once in the dispatcher callback, and assert exact totals plus persisted transcript shape in the integration test.
+- **Arbitrary model ids can cause provider errors or unexpected cost.** The resolver still routes only through the existing Anthropic credential proxy, and failures retain requested agent/model metadata. A reviewed model allowlist or alias registry would be separate policy scope.
+
+### Open Questions
+
+- **Should the `read-only` permission profile allow `dispatch_nested_agent`?** This plan leaves it fail-closed because the meta-tool is not in B7's reviewed catalog. Allowing it requires an explicit permission-policy decision, even though the child currently receives only read-only web tools.
+- **Should child model selection accept every Anthropic model id or only named aliases?** The AC requires independence but does not define a policy. The minimal implementation passes the requested id to the existing proxy-routed constructor; a human may require a bounded registry before release.
+- **Does product language intend `handoffs` to include temporary delegation?** This plan interprets the capability as conversation/session ownership transfer and leaves it false. If the capability is redefined to mean any subagent call, that semantic change should update all backends consistently rather than only B8.
+- **Should child agents receive parent lifecycle/persona context?** The ticket requires context isolation/orchestration ownership but does not define inherited context. This plan sends only the explicit task and output contract, while rebuilding the standard middleware stack; broader context inheritance needs an explicit privacy and token-budget decision.
+
+None of these ambiguities requires silently expanding B8. If a human selects a different interpretation, update the new ADR and the corresponding tests before implementation diverges.
+
+## Explicitly Out of Scope
+
+- No modifications to `src/multi-agent/orchestrator.ts`, `src/multi-agent/types.ts`, its topological/parallel scheduling, container lifecycle, prompt templates, or `STATUS_MARKER_RE` parsing.
+- No replacement or weakening of `ORACLE_BRIEF.md` or `src/agent-runtimes/nested-dispatch.oracle.test.ts`, and no competing self-authored oracle under another filename.
+- No changes to `claude`, `openai`, or `llama-cpp`; B8 is `deus-native`-only.
+- No widening of `SAFE_TOOL_NAMES`, host filesystem/shell access, child-selected tool sets, or new mutating tool path.
+- No replay-safety/idempotency mechanism. The child receives only existing read-only web tools, so `docs/decisions/deus-v2-replay-safety.md`'s claim/complete contract is not triggered. Any future mutating child tool must satisfy that ADR first.
+- No recursive child-of-child dispatch, dependency graph, parallel fan-out, cancellation protocol, depth limit, or budget scheduler. Children do not receive `dispatch_nested_agent`.
+- No persistent child sessions, child checkpointer namespaces, resume semantics, or child session DB rows.
+- No new provider router, model alias registry, pricing policy, or automatic fallback; only the model id varies within the existing Anthropic path.
+- No new `RuntimeEvent`, `RunResult`, or `AgentRuntime` types, and no change to `handoffs` capability semantics.
+- No automatic schema-repair loop or hidden retry policy. Contract failure is surfaced to the parent, which may choose whether to retry.
+- No general persona, memory, or parent-transcript inheritance for children beyond the freshly constructed middleware stack and explicit child prompt.
