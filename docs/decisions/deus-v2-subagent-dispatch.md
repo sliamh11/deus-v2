@@ -295,14 +295,21 @@ have exactly one implementation to keep correct.
 
 **Risks:**
 
-- Arbitrary child model ids route through the existing Anthropic credential
-  proxy with no allowlist/registry — a malformed or unexpected model id
-  surfaces as a normal `subagent_execution_failed` result (traceable), but a
-  cost-control policy for permitted child models is a separate, later
-  decision.
+- ~~Arbitrary child model ids route through the existing Anthropic credential
+  proxy with no allowlist/registry~~ — **mitigated by LIA-429**
+  (`docs/decisions/deus-native-model-selection.md`): the production
+  `deus-native` path no longer routes the parent's raw requested model id to
+  the credential proxy at all; the child's model is resolved from the
+  configured role/main selection and re-validated against
+  `NATIVE_PROVIDER_REGISTRY`'s allowlist before construction. The generic
+  low-level `createNestedDispatcher({ resolveModel })` seam this ticket
+  built still accepts a caller-defined raw-string `resolveModel`, by
+  design, for any FUTURE caller that doesn't apply a model policy — a
+  cost-control policy remains that caller's responsibility.
 - Nested dispatch adds a second in-process `createAgent` graph per dispatch
-  within the same host turn; very high dispatch fan-out from one turn is not
-  rate-limited or budgeted by this ticket.
+  within the same host turn; very high dispatch fan-out from one turn is
+  still not rate-limited or budgeted (per-turn dispatch cap remains open,
+  tracked in `deus-native-backend.ts`'s KNOWN GAP comment).
 
 ## Reversibility and rollback
 

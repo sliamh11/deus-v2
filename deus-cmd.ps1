@@ -653,6 +653,6 @@ switch ($Command.ToLower()) {
         Write-Host "  deus backend    Manage default AI backend and model (show|set|model|list)"
         Write-Host "  deus logs       Review system health logs (rotate|review|summary|pinned)"
         Write-Host "  deus listen     Record from mic, transcribe, and copy to clipboard"
-        Write-Host "  deus chat       Terminal chat on the deus-native backend (/status, /exit)"
+        Write-Host "  deus chat       Terminal chat; use 'deus chat model set|show' for model selection"
     }
 }

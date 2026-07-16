@@ -119,6 +119,7 @@ Use these instead of rediscovering the system:
 | Linear notifications        | `src/linear-notifications.ts`                                     | Unified pipeline comment (rolling timeline) + macOS desktop notifications                                                                                                                                         |
 | Pipeline CLI                | `src/linear-pipeline-cli.ts`                                      | `deus pipeline` -- event audit from the terminal                                                                                                                                                                  |
 | Native CLI chat             | `src/cli/deus-native-chat.ts`, `src/cli/deus-native-chat-server.ts`, `src/cli/deus-native-chat-client.ts` | `deus chat` -- thin terminal client → authenticated loopback endpoint in the daemon → `deus-native` controller/session store (LIA-428; see `docs/decisions/deus-native-cli-chat.md`)                              |
+| Native model selection      | `src/agent-runtimes/model-selection.ts`, `src/cli/deus-native-model-config.ts` | Validated main/per-role model registry, durable config, and nested-tool enforcement (LIA-429) |
 | Codex Warden hooks          | `scripts/codex_warden_hooks.py`                                   | Installs and runs Codex hook equivalents for Warden gates (plan-reviewer, code-reviewer, verification-gate, threat-modeler)                                                                                       |
 | Development client tiers    | [`docs/DEVELOPMENT_CLIENT_TIERS.md`](docs/DEVELOPMENT_CLIENT_TIERS.md) | Distinguishes the Tier 1 product runtime from optional Tier 2 development CLIs and documents their guardrail guarantees                                                                                      |
 
@@ -136,6 +137,7 @@ Commands that must remain stable across backends:
 - `DEUS_AGENT_BACKEND=claude|openai`
 - `deus pipeline`
 - `deus chat`
+- `deus chat model set|show`
 - `/settings`
 - `/settings session_idle_hours=N`
 - `/settings timeout=N`

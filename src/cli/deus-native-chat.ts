@@ -43,6 +43,7 @@ import type {
   RuntimeSession,
 } from '../agent-runtimes/types.js';
 import { CONFIG_DIR } from '../config.js';
+import type { EffectiveNativeModelConfig } from '../agent-runtimes/model-selection.js';
 
 // ---------------------------------------------------------------------------
 // Fixed synthetic CLI identity.
@@ -66,6 +67,7 @@ export const NATIVE_CHAT_PROTOCOL_VERSION = 1;
 export interface DeusNativeChatOptions {
   cwd: string;
   resume: true;
+  models: EffectiveNativeModelConfig;
 }
 
 /**
@@ -297,6 +299,7 @@ export function createDeusNativeChatController(deps: {
           chatJid: CLI_CHAT_JID,
           isControlGroup: false,
           stream: true,
+          backendConfig: { modelSelection: options.models },
         };
 
         // Backend-scoped read is load-bearing: sessions are per-backend and

@@ -78,8 +78,8 @@ const DISPATCH_TOOL_JSON_SCHEMA = {
     model: {
       type: 'string',
       description:
-        'The model id this subagent should use, independent of your own ' +
-        'model.',
+        'Requested model id for schema compatibility. Deus may replace it ' +
+        'with the configured role or main model; result metadata reports the effective model.',
     },
     prompt: {
       type: 'string',
@@ -165,6 +165,7 @@ function childPromptFor(input: DispatchNestedAgentToolInput): string {
  */
 export function buildNestedDispatchTool(
   deps: CreateNestedDispatcherDeps,
+  modelPolicy?: NestedDispatchToolModelPolicy,
 ): StructuredTool {
   const dispatcher = createNestedDispatcher(deps);
 
@@ -207,9 +208,20 @@ export function buildNestedDispatchTool(
         );
       }
 
+      // No `modelPolicy` supplied: falls back to the raw parent-requested
+      // `model` string, unvalidated, same as before LIA-429. Production
+      // (deus-native-backend.ts) always supplies a policy, so this fallback
+      // only matters for a FUTURE caller of `buildNestedDispatchTool` that
+      // omits one — see docs/decisions/deus-v2-subagent-dispatch.md's Risks
+      // section, which covers the generic dispatcher's own raw-string
+      // `resolveModel` seam but not this tool-level fallback specifically;
+      // a caller opting out of a policy inherits that same open risk.
+      const effectiveModel =
+        modelPolicy?.resolveEffectiveModelId(agentId, model) ?? model;
+
       const result: NestedDispatchResult<unknown> = await dispatcher.dispatch({
         agentId: input.agentId,
-        model: input.model,
+        model: effectiveModel,
         prompt: childPromptFor(input),
         outputContract: compiledContract,
       });
@@ -242,7 +254,8 @@ export function buildNestedDispatchTool(
       name: DISPATCH_NESTED_AGENT_TOOL_NAME,
       description:
         'Dispatches a nested, isolated Deus subagent to perform a ' +
-        'self-contained task with its own independently selected model. ' +
+        'self-contained task. Deus can enforce the configured role or main ' +
+        'model selection; result metadata reports the effective model. ' +
         'Every dispatch must declare an explicit output contract (a named ' +
         "JSON Schema); the subagent's final answer is validated against " +
         'it before being returned to you. The subagent does not see this ' +
@@ -259,4 +272,8 @@ export function buildNestedDispatchTool(
       schema: DISPATCH_TOOL_JSON_SCHEMA as any,
     },
   );
+}
+
+export interface NestedDispatchToolModelPolicy {
+  resolveEffectiveModelId(agentId: string, requestedModelId: string): string;
 }

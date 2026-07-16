@@ -24,6 +24,96 @@ import {
   type NativeChatDiscoveryRecord,
   type NativeChatStatus,
 } from './deus-native-chat.js';
+import {
+  formatNativeModelConfig,
+  loadNativeModelConfig,
+  setNativeModel,
+} from './deus-native-model-config.js';
+
+const MODEL_USAGE = [
+  'Usage:',
+  '  deus chat model set --provider <provider> --model <model>',
+  '  deus chat model set --role <role> --provider <provider> --model <model>',
+  '  deus chat model show',
+  '  deus chat model show --role <role>',
+].join('\n');
+
+export interface ModelCommandDeps {
+  output: NodeJS.WritableStream;
+  errorOutput: NodeJS.WritableStream;
+  configPath?: string;
+}
+
+function parseFlags(args: string[]): Record<string, string> | undefined {
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < args.length; i += 2) {
+    const flag = args[i];
+    const value = args[i + 1];
+    if (
+      !flag?.startsWith('--') ||
+      value === undefined ||
+      value.startsWith('--')
+    )
+      return undefined;
+    const name = flag.slice(2);
+    if (flags[name] !== undefined) return undefined;
+    flags[name] = value;
+  }
+  return flags;
+}
+
+export function runModelCommand(
+  args: string[],
+  deps: ModelCommandDeps,
+): number {
+  const operation = args[0];
+  const flags = parseFlags(args.slice(1));
+  if (!flags || (operation !== 'set' && operation !== 'show')) {
+    deps.errorOutput.write(`${MODEL_USAGE}\n`);
+    return 2;
+  }
+  const allowed =
+    operation === 'set'
+      ? new Set(['provider', 'model', 'role'])
+      : new Set(['role']);
+  if (Object.keys(flags).some((flag) => !allowed.has(flag))) {
+    deps.errorOutput.write(`${MODEL_USAGE}\n`);
+    return 2;
+  }
+  if (operation === 'set' && (!flags.provider || !flags.model)) {
+    deps.errorOutput.write(`${MODEL_USAGE}\n`);
+    return 2;
+  }
+  try {
+    if (operation === 'set') {
+      setNativeModel(
+        // Unvalidated CLI-flag cast: `flags.provider` is a plain string with
+        // no structural check at this call site. Safe only because
+        // `setNativeModel` immediately re-validates it via
+        // `validateNativeModelRef` (model-selection.ts) before anything is
+        // persisted — that downstream check, not this cast, is the actual
+        // guard against an unknown provider.
+        { provider: flags.provider as 'anthropic', model: flags.model },
+        flags.role,
+        deps.configPath,
+      );
+      const target = flags.role ? `role ${flags.role}` : 'main agent';
+      deps.output.write(
+        `Configured ${target}: ${flags.provider}/${flags.model}\n`,
+      );
+    } else {
+      deps.output.write(
+        `${formatNativeModelConfig(loadNativeModelConfig(deps.configPath), flags.role)}\n`,
+      );
+    }
+    return 0;
+  } catch (err) {
+    deps.errorOutput.write(
+      `${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return 1;
+  }
+}
 
 export const CHAT_UNAVAILABLE_MESSAGE =
   'Deus chat endpoint is unavailable: the Deus service is not running (or predates this CLI). ' +
@@ -297,10 +387,16 @@ export async function runChatCli(deps: ChatCliDeps): Promise<number> {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  if (args[0] === 'model') {
+    process.exit(
+      runModelCommand(args.slice(1), {
+        output: process.stdout,
+        errorOutput: process.stderr,
+      }),
+    );
+  }
   if (args.length > 0) {
-    // LIA-428 has no flags; reject rather than silently ignore (G2/G3 add
-    // their options through DeusNativeChatOptions later).
-    process.stderr.write('deus chat takes no arguments.\n');
+    process.stderr.write(`${MODEL_USAGE}\n`);
     process.exit(2);
   }
 

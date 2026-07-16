@@ -7,10 +7,13 @@
  * — the ONLY model-construction path in this package before B8, hardcoded to
  * `model: 'claude-opus-4-8'`. B8 adds a `modelId` parameter so the same
  * credential-proxy route can build an INDEPENDENTLY selected client per
- * nested-dispatch child (LIA-408 AC4), while the parent keeps calling this
- * with `PARENT_DEFAULT_MODEL` unchanged. `resolveModel` (the nested-dispatch
- * seam) calls this factory fresh on every dispatch — it never inherits or
- * caches the parent's client.
+ * nested-dispatch child (LIA-408 AC4). LIA-429 built on top of that seam:
+ * `model-selection.ts`'s `DEFAULT_NATIVE_MODEL`/`NATIVE_PROVIDER_REGISTRY`
+ * is now the single source of truth for the default model tier — this file
+ * has no default of its own, it just constructs whatever `modelId` its
+ * caller resolves. `resolveModel` (the nested-dispatch seam) calls this
+ * factory fresh on every dispatch — it never inherits or caches the
+ * parent's client.
  */
 
 import { ChatAnthropic } from '@langchain/anthropic';
@@ -21,14 +24,6 @@ import { PROXY_BIND_HOST } from '../container-runtime.js';
 import { CREDENTIAL_PROXY_PORT } from '../config.js';
 import { detectAuthMode } from '../credential-proxy.js';
 import { getOrCreateGroupToken } from '../group-tokens.js';
-
-/**
- * The parent's unchanged default model tier (was the hardcoded literal
- * inside the pre-B8 `buildProxyRoutedChatAnthropic`). Every parent call
- * still passes exactly this id — B8 introduces no parent-side model
- * selection, only child-side (AC4 is scoped to subagents).
- */
-export const PARENT_DEFAULT_MODEL = 'claude-opus-4-8';
 
 /**
  * Builds a ChatAnthropic client routed through the live credential proxy at
@@ -44,11 +39,12 @@ export const PARENT_DEFAULT_MODEL = 'claude-opus-4-8';
  * an isolated, throwaway proxy child; deus-native hits the real production
  * daemon at its real bind address with a real per-group token.
  *
- * `modelId` (B8): every caller — parent (`PARENT_DEFAULT_MODEL`) and every
- * nested-dispatch child (the dispatch's requested `model` id) — supplies its
- * own value through this same single construction path. There is still only
- * ONE provider (Anthropic) and ONE credential-proxy route; only the model id
- * varies per call.
+ * `modelId` (B8): every caller — the parent (`model-selection.ts`'s resolved
+ * main/role ref) and every nested-dispatch child (LIA-429: also resolved
+ * from the configured role/main, never the raw parent-requested id) —
+ * supplies its own value through this same single construction path. There
+ * is still only ONE provider (Anthropic) and ONE credential-proxy route;
+ * only the model id varies per call.
  */
 export function buildProxyRoutedChatAnthropic(
   runContext: RunContext,
@@ -59,11 +55,13 @@ export function buildProxyRoutedChatAnthropic(
   const authMode = detectAuthMode();
 
   return new ChatAnthropic({
-    // B1: fixed at the top model tier for the parent (ai-eng-warden review:
-    // runContext.effort, ContainerRuntime's per-turn tier signal, is not yet
-    // honored here). B8: nested-dispatch children now pass their own
-    // requested id through the same parameter instead of inheriting this
-    // constant — see nested-dispatch.ts's `resolveModel` seam.
+    // B1: fixed at the tier resolved by model-selection.ts (ai-eng-warden
+    // review: runContext.effort, ContainerRuntime's per-turn tier signal, is
+    // not yet honored here). LIA-429: nested-dispatch children resolve
+    // `modelId` from the configured role/main model, NOT from the raw id
+    // the parent's tool call requested — see deus-native-backend.ts's
+    // `resolveEffectiveModelId` policy and nested-dispatch.ts's
+    // `resolveModel` seam.
     model: modelId,
     createClient: (options) =>
       authMode === 'oauth'

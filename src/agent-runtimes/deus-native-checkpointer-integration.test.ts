@@ -123,12 +123,17 @@ const stubDeps: ContainerRuntimeDeps = {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function runCtx(groupFolder: string, prompt = 'hello there'): RunContext {
+function runCtx(
+  groupFolder: string,
+  prompt = 'hello there',
+  backendConfig?: RunContext['backendConfig'],
+): RunContext {
   return {
     prompt,
     groupFolder,
     chatJid: 'test@g.us',
     isControlGroup: false,
+    ...(backendConfig !== undefined ? { backendConfig } : {}),
   };
 }
 
@@ -681,7 +686,17 @@ describe('same-thread re-invoke (B5 AC4: exactly one session row, id stable, las
 // individual model generation.
 // ---------------------------------------------------------------------------
 describe('nested dispatch (B8 LIA-408): parent-to-child usage and session reconciliation', () => {
-  const CHILD_MODEL_ID = 'child-model-xyz';
+  // LIA-429: `resolveEffectiveModelId` (deus-native-backend.ts) deliberately
+  // discards whatever raw model id the parent's tool call supplies and
+  // resolves the dispatched child's model from the ACTIVE role/main
+  // configuration instead — the ADR's "no longer routes parent-supplied
+  // raw model IDs to the credential proxy" contract. PARENT_REQUESTED_MODEL_ID
+  // is that ignored, untrusted string (kept arbitrary/non-registry on
+  // purpose, proving it is never validated or dispatched on); the child
+  // actually runs on CONFIGURED_CHILD_MODEL_ID because runCtx() below
+  // configures backendConfig.modelSelection.roles.helper to it.
+  const PARENT_REQUESTED_MODEL_ID = 'child-model-xyz';
+  const CONFIGURED_CHILD_MODEL_ID = 'claude-sonnet-4-6';
   const CHILD_USAGE = { input_tokens: 7, output_tokens: 3, total_tokens: 10 };
 
   const DISPATCH_OUTPUT_CONTRACT = {
@@ -769,7 +784,7 @@ describe('nested dispatch (B8 LIA-408): parent-to-child usage and session reconc
             name: DISPATCH_NESTED_AGENT_TOOL_NAME,
             args: {
               agentId: 'helper',
-              model: CHILD_MODEL_ID,
+              model: PARENT_REQUESTED_MODEL_ID,
               prompt: 'help with the task',
               outputContract: DISPATCH_OUTPUT_CONTRACT,
             },
@@ -801,7 +816,17 @@ describe('nested dispatch (B8 LIA-408): parent-to-child usage and session reconc
 
     const events: RuntimeEvent[] = [];
     const result = await runtime.runTurn(
-      runCtx('dispatchgroup', 'please delegate this'),
+      runCtx('dispatchgroup', 'please delegate this', {
+        modelSelection: {
+          main: { provider: 'anthropic', model: 'claude-opus-4-8' },
+          roles: {
+            helper: {
+              provider: 'anthropic',
+              model: CONFIGURED_CHILD_MODEL_ID,
+            },
+          },
+        },
+      }),
       defaultSession('', 'deus-native'),
       (event) => {
         events.push(event);
@@ -812,14 +837,21 @@ describe('nested dispatch (B8 LIA-408): parent-to-child usage and session reconc
     const sessionId = result.sessionRef?.session_id as string;
     expect(sessionId).toMatch(UUID_PATTERN);
 
-    // AC1/AC4/AC5: the dispatch fired against an independently selected
-    // child model, and the child's usage event used the PARENT's session
-    // id — a dispatched child never gets a session/thread of its own.
+    // AC1/AC4/AC5: the dispatch fired against the CONFIGURED role model
+    // (never the parent-requested PARENT_REQUESTED_MODEL_ID — LIA-429's
+    // resolveEffectiveModelId ignores it by design), and the child's usage
+    // event used the PARENT's session id — a dispatched child never gets a
+    // session/thread of its own.
     const usageEvents = events.filter(
       (e): e is Extract<RuntimeEvent, { type: 'usage' }> => e.type === 'usage',
     );
-    const childUsageEvent = usageEvents.find((e) => e.model === CHILD_MODEL_ID);
+    const childUsageEvent = usageEvents.find(
+      (e) => e.model === CONFIGURED_CHILD_MODEL_ID,
+    );
     expect(childUsageEvent).toBeDefined();
+    expect(usageEvents.some((e) => e.model === PARENT_REQUESTED_MODEL_ID)).toBe(
+      false,
+    );
     expect(childUsageEvent?.sessionId).toBe(sessionId);
     expect(childUsageEvent?.provider).toBe('anthropic');
     expect(childUsageEvent).toMatchObject({
@@ -870,7 +902,7 @@ describe('nested dispatch (B8 LIA-408): parent-to-child usage and session reconc
       output: { answer: 'child says hi' },
       metadata: {
         agentId: 'helper',
-        model: CHILD_MODEL_ID,
+        model: CONFIGURED_CHILD_MODEL_ID,
         provider: 'anthropic',
         parentSessionId: sessionId,
       },

@@ -161,6 +161,17 @@ Some full-suite tests need privileges that the sandbox may not grant, such as
 binding localhost ports or writing the global `~/.local/bin/deus` symlink. When
 that happens, report the exact blocked tests and the permission reason.
 
+## Native Model Selection
+
+`deus chat model` writes the validated `native-models.json` file. The native
+chat server reloads it per turn, the controller whitelists it into
+`backendConfig.modelSelection`, and `model-selection.ts` resolves the
+effective main model. Nested dispatch (`deus-native-backend.ts`'s
+`resolveEffectiveModelId` policy) resolves each child's model the same
+way — configured role, else main, else the registry default — and always
+wins over whatever raw model id the parent's tool call requested; the B8
+core dispatcher seam (`nested-dispatch.ts`) itself remains unchanged.
+
 ## Final Rule
 
 Do not make the next agent rediscover this map. If you add a new backend,
