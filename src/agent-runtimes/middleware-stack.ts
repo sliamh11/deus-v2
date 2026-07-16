@@ -15,6 +15,15 @@
  * memory -> telemetry": permissions sees the request first and the response
  * last; telemetry sits closest to the real model call.
  *
+ * For `deus-native`, this ordered `wrapToolCall` chain is the sole
+ * authoritative pre-execution tool-enforcement boundary. Permissions and
+ * wardens are separate, ordered policy stages inside that one authority path,
+ * not competing dispatch systems: a protected request reaches each enabled
+ * stage at most once. A warden denial is the final error `ToolMessage` for the
+ * call and prevents delegation to the protected handler. The container
+ * runner's legacy pre-tool-use HTTP mechanism is outside this runtime and must
+ * never be introduced here as a second decision point.
+ *
  * The PERMISSIONS layer is real as of B7/LIA-407: a declarative first-match-
  * wins rule engine (permission-rules.ts) evaluated inside `wrapToolCall`,
  * with named profiles (`default` allow-all, `read-only` fail-closed) selected
@@ -752,6 +761,8 @@ export interface MiddlewareStackResult {
  * and only SKIPS disabled layers — relative order of the remaining layers
  * is preserved by construction (AC3), with no separate sort step to get
  * wrong. A layer is disabled only by an explicit `false` (absent = enabled).
+ * This composition is the sole pre-execution authority described in the file
+ * header above.
  */
 export function buildMiddlewareStack(
   config: MiddlewareStackConfig = {},

@@ -1,13 +1,16 @@
 # ADR-001: Hook Dispatch Service — Port :3002 + Observer Layer
 
-> **⚠️ SCOPE CLARIFICATION (2026-06-07).** This `:3002` service is real but
-> narrower than it reads: **container-only, `HOOK_DISPATCH_ENABLED` default-false,
-> still triggered by Claude Code's own hooks** — not the host-side model-agnostic
-> pipeline that `hook-dispatch-system.md` envisioned (that pipeline is unbuilt).
-> Contradiction to flag: `hook-dispatch-system.md` says the Observer Layer
-> `PreToolUse` cannot `deny`, but the shipped `pre-tool-use-hook.ts` (L54–63)
-> DOES forward `decision: "block"` — the implementation chose blocking. See
-> [hook-dispatch-facade-correction.md](hook-dispatch-facade-correction.md).
+> **⚠️ SCOPE CLARIFICATION (updated 2026-07-16).** This `:3002` service is real
+> but is **retired from active production enforcement and retained as dormant
+> manual container compatibility**. Conditional callers remain in the Claude
+> SDK adapter and the handwritten OpenAI and llama-cpp tool loops, but
+> `HOOK_DISPATCH_ENABLED` is default-off and no repository launcher or
+> production configuration enables it. It is not the `deus-native`
+> `wrapToolCall` authority and does not provide C1 warden parity. Contradiction
+> to flag: `hook-dispatch-system.md` says the Observer Layer `PreToolUse` cannot
+> `deny`, but the shipped `pre-tool-use-hook.ts` DOES forward `decision: "block"`
+> — the implementation chose blocking. See the
+> [F2/LIA-424 update](hook-dispatch-facade-correction.md#update-f2lia-424--2026-07-16).
 
 **Status:** Accepted
 **Date:** 2026-05-23
