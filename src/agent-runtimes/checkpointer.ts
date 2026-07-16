@@ -74,5 +74,12 @@ export function getCheckpointer(dbPathOverride?: string): BaseCheckpointSaver {
  * its own fresh temp file. Production code never calls this.
  */
 export function _resetCheckpointerForTests(): void {
+  // Close the underlying better-sqlite3 handle before dropping the
+  // reference. On POSIX a leaked handle is harmless (the OS reclaims it),
+  // but on Windows a still-open sqlite file blocks a subsequent
+  // fs.rmSync/unlink in test cleanup with EBUSY — closing it here avoids
+  // that cascade across checkpointer.test.ts,
+  // deus-native-checkpointer-integration.test.ts, and lifecycle-events.test.ts.
+  (cached as SqliteSaver | undefined)?.db.close();
   cached = undefined;
 }
