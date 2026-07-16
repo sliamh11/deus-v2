@@ -2,6 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-07-16  
+**Scope:** `src/agent-runtimes/model-selection.ts`, `src/agent-runtimes/deus-native-model.ts`, `src/agent-runtimes/deus-native-backend.ts`, `src/agent-runtimes/nested-dispatch-tool.ts`, `src/cli/deus-native-model-config.ts`, `src/cli/deus-native-chat.ts`, `src/cli/deus-native-chat-server.ts`, `src/cli/deus-native-chat-client.ts`  
 **Ticket:** LIA-429
 
 ## Decision
