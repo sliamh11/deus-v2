@@ -15,6 +15,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import {
   chmod,
   mkdir,
@@ -30,6 +31,8 @@ import { delimiter, dirname, join } from 'node:path';
 import { ToolMessage } from '@langchain/core/messages';
 import { createAgent, FakeToolCallingModel, tool } from 'langchain';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { IS_WINDOWS } from '../platform.js';
 
 import { buildMiddlewareStack } from './middleware-stack.js';
 
@@ -69,6 +72,176 @@ interface CapturedInvocation {
 let sandboxDir = '';
 let captureDir = '';
 
+// ── Windows fake-`python3` compilation (beforeEach mechanism only) ────────
+//
+// Production invokes `execFile('python3', [...])` with no `shell: true`
+// (middleware-stack.ts:443-446). Node's own child_process docs are explicit
+// that without `shell: true`, win32 CreateProcess cannot launch a `.bat`/
+// `.cmd` shim — only a genuine PE. The POSIX branch below (untouched) stays
+// a `#!/bin/sh` script; on Windows we instead compile a tiny C# console app
+// straight to `python3.exe` in the same `binDir`, replicating the POSIX
+// shim's argv/stdin capture and conditional block-echo byte-for-byte.
+//
+// `locateCscExe` is memoized at module scope (not per-test): it only
+// resolves *where* the Roslyn compiler lives, which cannot change between
+// tests in one process — the compile itself still runs fresh every
+// `beforeEach`, per test invocation, from the inline source below.
+let cachedCscExePath: string | null | undefined;
+
+function locateCscExe(): string | null {
+  if (cachedCscExePath !== undefined) return cachedCscExePath;
+  cachedCscExePath = null;
+
+  // Primary: ask vswhere.exe (present on every GitHub windows-2022 runner)
+  // where the latest Visual Studio 2022 install lives, then descend into
+  // its bundled Roslyn compiler — the same csc.exe MSBuild itself uses.
+  try {
+    const vswhere = join(
+      process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)',
+      'Microsoft Visual Studio',
+      'Installer',
+      'vswhere.exe',
+    );
+    if (existsSync(vswhere)) {
+      const installPath = execFileSync(
+        vswhere,
+        ['-latest', '-products', '*', '-property', 'installationPath'],
+        { encoding: 'utf8' },
+      ).trim();
+      if (installPath) {
+        const candidate = join(
+          installPath,
+          'MSBuild',
+          'Current',
+          'Bin',
+          'Roslyn',
+          'csc.exe',
+        );
+        if (existsSync(candidate)) {
+          cachedCscExePath = candidate;
+          return cachedCscExePath;
+        }
+      }
+    }
+  } catch {
+    // vswhere missing or failed — fall through to the standard-path probe.
+  }
+
+  // Fallback: the standard VS2022 install roots, for a runner where
+  // vswhere itself is absent or found no Roslyn compiler.
+  const programFiles = process.env['ProgramFiles'] ?? 'C:\\Program Files';
+  for (const edition of [
+    'Enterprise',
+    'Professional',
+    'Community',
+    'BuildTools',
+  ]) {
+    const candidate = join(
+      programFiles,
+      'Microsoft Visual Studio',
+      '2022',
+      edition,
+      'MSBuild',
+      'Current',
+      'Bin',
+      'Roslyn',
+      'csc.exe',
+    );
+    if (existsSync(candidate)) {
+      cachedCscExePath = candidate;
+      return cachedCscExePath;
+    }
+  }
+  return cachedCscExePath;
+}
+
+// C# mirror of the POSIX shim above: capture argv, capture stdin, echo
+// WARDEN_ORACLE_BLOCK_JSON to stdout only when the 3rd positional arg
+// (args[2] here — args excludes the program name, exactly like the POSIX
+// shim's $3 excludes $0) equals WARDEN_ORACLE_BLOCK_BEHAVIOR, always exit 0.
+const WINDOWS_STUB_CS_SOURCE = `using System;
+using System.IO;
+
+class Program
+{
+    static int Main(string[] args)
+    {
+        string captureDir = Environment.GetEnvironmentVariable("WARDEN_ORACLE_CAPTURE_DIR");
+        if (string.IsNullOrEmpty(captureDir))
+        {
+            Console.Error.WriteLine("WARDEN_ORACLE_CAPTURE_DIR: parameter null or not set");
+            return 1;
+        }
+        string behavior = args.Length >= 3 ? args[2] : "missing-behavior";
+        string prefix = Path.Combine(captureDir, behavior);
+
+        File.WriteAllText(prefix + ".argv", string.Join("\\n", args) + "\\n");
+
+        using (Stream stdin = Console.OpenStandardInput())
+        using (FileStream stdinCapture = File.Create(prefix + ".stdin"))
+        {
+            stdin.CopyTo(stdinCapture);
+        }
+
+        string blockBehavior = Environment.GetEnvironmentVariable("WARDEN_ORACLE_BLOCK_BEHAVIOR") ?? "";
+        if (behavior == blockBehavior)
+        {
+            string blockJson = Environment.GetEnvironmentVariable("WARDEN_ORACLE_BLOCK_JSON");
+            if (string.IsNullOrEmpty(blockJson))
+            {
+                Console.Error.WriteLine("WARDEN_ORACLE_BLOCK_JSON: parameter null or not set");
+                return 1;
+            }
+            Console.Out.Write(blockJson + "\\n");
+        }
+        return 0;
+    }
+}
+`;
+
+const DOTNET_STUB_CSPROJ = `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>python3</AssemblyName>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+</Project>
+`;
+
+/**
+ * Compile the C# stub straight to `destPath` (`<binDir>/python3.exe`).
+ * Prefers `csc.exe` (fast, no project restore); falls back to `dotnet
+ * build` of a minimal throwaway console project when csc.exe cannot be
+ * located, per its `<AssemblyName>python3</AssemblyName>` so the apphost
+ * lands directly at the expected name.
+ */
+async function compileWindowsPython3Stub(destPath: string): Promise<void> {
+  const binDir = dirname(destPath);
+  const csc = locateCscExe();
+  if (csc) {
+    const sourcePath = join(binDir, 'WardenOraclePython3Stub.cs');
+    await writeFile(sourcePath, WINDOWS_STUB_CS_SOURCE, 'utf8');
+    execFileSync(csc, ['/nologo', `/out:${destPath}`, sourcePath], {
+      stdio: 'pipe',
+    });
+    return;
+  }
+
+  const projectDir = join(binDir, 'warden-oracle-stub');
+  await mkdir(projectDir, { recursive: true });
+  await writeFile(join(projectDir, 'stub.csproj'), DOTNET_STUB_CSPROJ, 'utf8');
+  await writeFile(
+    join(projectDir, 'Program.cs'),
+    WINDOWS_STUB_CS_SOURCE,
+    'utf8',
+  );
+  execFileSync('dotnet', ['build', projectDir, '-c', 'Release', '-o', binDir], {
+    stdio: 'pipe',
+  });
+}
+
 beforeEach(async () => {
   sandboxDir = await mkdtemp(join(tmpdir(), 'deus-warden-oracle-'));
   const binDir = join(sandboxDir, 'bin');
@@ -76,10 +249,13 @@ beforeEach(async () => {
   await mkdir(binDir);
   await mkdir(captureDir);
 
-  const fakePython = join(binDir, 'python3');
-  await writeFile(
-    fakePython,
-    `#!/bin/sh
+  if (IS_WINDOWS) {
+    await compileWindowsPython3Stub(join(binDir, 'python3.exe'));
+  } else {
+    const fakePython = join(binDir, 'python3');
+    await writeFile(
+      fakePython,
+      `#!/bin/sh
 set -eu
 capture_dir="\${WARDEN_ORACLE_CAPTURE_DIR:?}"
 behavior="\${3:-missing-behavior}"
@@ -91,15 +267,16 @@ if [ "$behavior" = "\${WARDEN_ORACLE_BLOCK_BEHAVIOR:-}" ]; then
 fi
 exit 0
 `,
-    'utf8',
-  );
-  await chmod(fakePython, 0o755);
+      'utf8',
+    );
+    await chmod(fakePython, 0o755);
+  }
 
   vi.stubEnv('PATH', `${binDir}${delimiter}${process.env.PATH ?? ''}`);
   vi.stubEnv('WARDEN_ORACLE_CAPTURE_DIR', captureDir);
   vi.stubEnv('WARDEN_ORACLE_BLOCK_BEHAVIOR', '');
   vi.stubEnv('WARDEN_ORACLE_BLOCK_JSON', '');
-});
+}, 60_000);
 
 afterEach(async () => {
   vi.unstubAllEnvs();

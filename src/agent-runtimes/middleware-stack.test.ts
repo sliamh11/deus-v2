@@ -1477,7 +1477,9 @@ describe('wardens middleware — Git-common-dir repo-root resolution', () => {
     // being consumed) and independently of wardenCwd, not that it happens
     // to differ from a DIFFERENT computation's result.
     expect(call.argv[1]).not.toContain('/tmp/not-a-git-repo');
-    expect(call.argv[1].endsWith('scripts/codex_warden_hooks.py')).toBe(true);
+    expect(
+      call.argv[1].endsWith(join('scripts', 'codex_warden_hooks.py')),
+    ).toBe(true);
   });
 });
 
