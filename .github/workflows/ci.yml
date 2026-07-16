@@ -31,6 +31,12 @@ jobs:
         # so editing the gate doesn't trip it.
         env:
           PATTERN: ${{ secrets.PERSONAL_ID_PATTERN }}
+          # Explicit, auditable escape hatch (repo Variable, not a secret --
+          # visible in Settings > Actions > Variables) for the transitional
+          # period after migrating to this repo, before PERSONAL_ID_PATTERN
+          # is configured here. Tracked: LIA-439. Must be unset (or "false")
+          # once the secret is added -- this is not meant to be permanent.
+          ALLOW_MISSING_PERSONAL_ID_PATTERN: ${{ vars.ALLOW_MISSING_PERSONAL_ID_PATTERN }}
         run: |
           set -euo pipefail
           if [ -z "${PATTERN:-}" ]; then
@@ -38,7 +44,11 @@ jobs:
               echo "::warning::PERSONAL_ID_PATTERN unavailable in fork/dependabot PR; skipping"
               exit 0
             fi
-            echo "::error::PERSONAL_ID_PATTERN secret not set; required for non-fork PRs"
+            if [ "${ALLOW_MISSING_PERSONAL_ID_PATTERN:-}" = "true" ]; then
+              echo "::warning::PERSONAL_ID_PATTERN secret not yet configured on this repo; skipping personal-identifier scan because the explicit ALLOW_MISSING_PERSONAL_ID_PATTERN repo variable is set to true (tracked: LIA-439). Add the secret and unset this variable to close the gap."
+              exit 0
+            fi
+            echo "::error::PERSONAL_ID_PATTERN secret not set; required for non-fork PRs. Set the secret, or set the ALLOW_MISSING_PERSONAL_ID_PATTERN repo variable to 'true' as an explicit, auditable temporary bypass (tracked: LIA-439)."
             exit 1
           fi
           BASE_REF="${{ github.base_ref }}"
