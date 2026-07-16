@@ -44,6 +44,13 @@
  *      model-decision cycle, so a first-firing-only injection would silently
  *      drop the content on any follow-up/final model call after a tool use
  *      within the SAME turn.
+ *    - The same wrapper protects checkpointer continuity from a model response
+ *      ID that collides with an existing message. LangGraph's messages reducer
+ *      treats IDs as upsert keys, so accepting a reused ID would replace the
+ *      earlier AI message in place and can leave the new human message last,
+ *      preventing the tool node from seeing and executing the new tool call.
+ *      Provider IDs remain unchanged unless they actually collide; tool-call
+ *      IDs are never rewritten.
  *
  * No in-process session tracking of any kind lives in this module — the
  * new-vs-resumed decision is made ONCE per call by `runTurn` reading its own
@@ -55,6 +62,8 @@
  * success (shipped B1 behavior) — B3 adds a regression test for it, not new
  * production code.
  */
+
+import crypto from 'crypto';
 
 import {
   createMiddleware,
@@ -194,14 +203,31 @@ export function buildPromptLifecycleHook(
     // message at the start of every internal model-decision cycle, so
     // anything less than every-firing application silently drops the content
     // on the model's final answer after a tool call.
-    wrapModelCall: (request, handler) => {
-      if (sessionOpenMessage === undefined) {
-        return handler(request);
+    wrapModelCall: async (request, handler) => {
+      const response = await handler(
+        sessionOpenMessage === undefined
+          ? request
+          : {
+              ...request,
+              systemMessage: new SystemMessage(sessionOpenMessage),
+            },
+      );
+
+      // A fresh per-turn model instance is allowed to reuse its own response
+      // IDs. LangGraph, however, interprets a repeated message ID as an update
+      // to the old checkpoint entry rather than a new response. Keep genuine
+      // provider IDs whenever possible and repair only an actual collision
+      // with the request history. `_updateId` updates both the public field and
+      // LangChain's serialized kwargs; assigning `response.id` alone would
+      // leave checkpoint serialization with the stale colliding value.
+      if (
+        response.id !== undefined &&
+        request.messages.some((message) => message.id === response.id)
+      ) {
+        response._updateId(crypto.randomUUID());
       }
-      return handler({
-        ...request,
-        systemMessage: new SystemMessage(sessionOpenMessage),
-      });
+
+      return response;
     },
   });
 }

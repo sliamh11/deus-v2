@@ -1,5 +1,5 @@
 /**
- * LIA-428 / G1 end-to-end integration: real ephemeral chat server + real
+ * LIA-428 / G1 and LIA-430 / G3 end-to-end integration: real ephemeral chat server + real
  * DeusNativeRuntime + real LangGraph engine over a REAL SqliteSaver temp
  * file, with the scripted FakeToolCallingModel — the same hermetic harness
  * deus-native-checkpointer-integration.test.ts established (a mocked
@@ -15,6 +15,7 @@ import { PassThrough } from 'stream';
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { tool, FakeToolCallingModel } from 'langchain';
+import { ToolMessage } from '@langchain/core/messages';
 
 import { _initTestDatabase, getSession } from '../db.js';
 import { getCheckpointer } from '../agent-runtimes/checkpointer.js';
@@ -33,10 +34,18 @@ const harness = vi.hoisted(() => ({
   checkpointerDbPath: '',
   makeModel: null as null | (() => unknown),
   tools: [] as unknown[],
+  captured: [] as Array<{ messages: unknown[] }>,
 }));
 
 vi.mock('langchain', async (importOriginal) => {
   const actual = await importOriginal<typeof import('langchain')>();
+  const capture = actual.createMiddleware({
+    name: 'g3-test-capture',
+    wrapModelCall: (request, handler) => {
+      harness.captured.push({ messages: [...request.messages] });
+      return handler(request);
+    },
+  });
   return {
     ...actual,
     createAgent: (config: Parameters<typeof actual.createAgent>[0]) =>
@@ -45,6 +54,10 @@ vi.mock('langchain', async (importOriginal) => {
         model: harness.makeModel
           ? (harness.makeModel() as typeof config.model)
           : config.model,
+        middleware: [
+          ...(config.middleware ?? []),
+          capture,
+        ] as typeof config.middleware,
       }),
   };
 });
@@ -123,6 +136,41 @@ function toolCallThenAnswerModel(): FakeToolCallingModel {
   });
 }
 
+/**
+ * Give every response from LangChain's tool-calling fake explicit assistant
+ * text. Its default is to concatenate the complete input history, which makes
+ * a follow-up response echo ToolMessage content. createAgent binds tools by
+ * constructing a fresh fake, so carry the decoration across that boundary.
+ */
+function withExplicitContent(
+  model: FakeToolCallingModel,
+  content: string,
+): FakeToolCallingModel {
+  const originalGenerate = model._generate.bind(model);
+  model._generate = async (
+    ...args: Parameters<FakeToolCallingModel['_generate']>
+  ) => {
+    const result = await originalGenerate(...args);
+    const generation = result.generations[0];
+    if (generation !== undefined) {
+      generation.text = content;
+      generation.message.content = content;
+    }
+    return result;
+  };
+
+  const originalBindTools = model.bindTools.bind(model);
+  model.bindTools = (
+    ...args: Parameters<FakeToolCallingModel['bindTools']>
+  ) => {
+    const bound = originalBindTools(...args);
+    return bound instanceof FakeToolCallingModel
+      ? withExplicitContent(bound, content)
+      : bound;
+  };
+  return model;
+}
+
 let tmpDir: string;
 const openHandles: Array<{ close(): Promise<void> }> = [];
 
@@ -133,6 +181,7 @@ beforeEach(() => {
   harness.checkpointerDbPath = path.join(tmpDir, 'checkpoints.db');
   harness.makeModel = answerOnlyModel;
   harness.tools = [];
+  harness.captured = [];
   _resetCheckpointerForTests();
   _initTestDatabase();
 });
@@ -288,5 +337,124 @@ describe('deus chat end-to-end (hermetic)', () => {
     expect(
       getSession(CLI_CHAT_GROUP_FOLDER, 'deus-native')?.session_id,
     ).toMatch(UUID_PATTERN);
+  });
+
+  it('toggles plan mode through the real CLI, denies mutation with model-visible feedback, then restores default in the same thread', async () => {
+    const mutationHandler = vi.fn(
+      async (args: { path: string; content: string }) =>
+        `wrote:${args.path}:${args.content.length}`,
+    );
+    harness.tools = [
+      tool(mutationHandler, {
+        name: 'write_file',
+        description: 'Hermetic mutation double for plan-mode enforcement.',
+        schema: {
+          type: 'object',
+          properties: {
+            path: { type: 'string' },
+            content: { type: 'string' },
+          },
+          required: ['path', 'content'],
+          additionalProperties: false,
+        },
+      }),
+    ];
+    let modelNumber = 0;
+    harness.makeModel = () => {
+      modelNumber += 1;
+      return withExplicitContent(
+        new FakeToolCallingModel({
+          toolCalls: [
+            [
+              {
+                name: 'write_file',
+                args: {
+                  path: `/sentinel-${modelNumber}`,
+                  content: `secret-${modelNumber}`,
+                },
+                id: `write_call_${modelNumber}`,
+              },
+            ],
+            [],
+          ],
+        }),
+        `Scripted mutation response ${modelNumber}.`,
+      );
+    };
+
+    const server = await startServer();
+    const transport = transportFor(server);
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const errorOutput = new PassThrough();
+    let stdout = '';
+    let stderr = '';
+    output.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+    errorOutput.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+
+    const done = runChatCli({
+      input,
+      output,
+      errorOutput,
+      transport,
+      cwd: tmpDir,
+    });
+    input.write('/plan on\n');
+    input.write('attempt the first mutation\n');
+    input.write('/plan off\n');
+    input.write('attempt the second mutation\n');
+    input.write('/status\n');
+    input.write('/exit\n');
+    input.end();
+    expect(await done).toBe(0);
+
+    // Only the post-disable mutation reached the underlying handler.
+    expect(mutationHandler).toHaveBeenCalledTimes(1);
+    expect(mutationHandler.mock.calls[0]?.[0]).toEqual({
+      path: '/sentinel-2',
+      content: 'secret-2',
+    });
+
+    // The real agent performed a follow-up model call with the synthetic
+    // denial ToolMessage in context, so the model could continue normally.
+    const denial = harness.captured
+      .flatMap((capture) => capture.messages)
+      .find(
+        (message): message is ToolMessage =>
+          ToolMessage.isInstance(message as never) &&
+          (message as ToolMessage).tool_call_id === 'write_call_1',
+      );
+    expect(denial).toBeDefined();
+    expect(denial?.status).toBe('error');
+    const denialContent = String(denial?.content);
+    expect(denialContent).toContain('permission_denied');
+    expect(denialContent).toContain('write_file');
+    expect(denialContent).toContain('read-only');
+    expect(denialContent).toContain('call was not executed');
+    expect(denialContent).not.toContain('/sentinel-1');
+    expect(denialContent).not.toContain('secret-1');
+    expect(
+      harness.captured.some((capture) => capture.messages.includes(denial!)),
+    ).toBe(true);
+
+    // Both prompts persisted in one backend-scoped session/checkpointer.
+    const stored = getSession(CLI_CHAT_GROUP_FOLDER, 'deus-native');
+    expect(stored?.session_id).toMatch(UUID_PATTERN);
+    const texts = await checkpointedTexts(stored!.session_id);
+    expect(texts).toContain('attempt the first mutation');
+    expect(texts).toContain('attempt the second mutation');
+
+    expect(stdout).toContain('Mode:    plan (read-only)');
+    expect(stdout).toContain('Mode:    normal (default)');
+    for (const streamText of [stdout, stderr]) {
+      expect(streamText).not.toContain('{"kind":');
+      expect(streamText).not.toContain('permission_denied');
+      expect(streamText).not.toContain('sessionRef');
+      expect(streamText).not.toContain('"done"');
+    }
   });
 });

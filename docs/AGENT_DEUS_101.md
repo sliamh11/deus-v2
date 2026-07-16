@@ -78,7 +78,12 @@ Backend neutrality starts at the host runtime:
   `src/index.ts`) → `src/cli/deus-native-chat.ts` controller →
   `registry.get('deus-native')` runtime + backend-scoped `db` session store.
   The client never instantiates a runtime or reads provider credentials; see
-  `docs/decisions/deus-native-cli-chat.md`.
+  `docs/decisions/deus-native-cli-chat.md`. Inside the session, `/plan on|off`
+  is dispatched locally to the authenticated boolean-only plan endpoint. The
+  daemon controller owns the mode, overrides the next turn's
+  `RunContext.backendConfig.permissionProfile` with B7's `read-only` profile,
+  and restores the exact prior configured profile (including omission) when
+  plan mode is disabled; the runtime rebuilds permissions middleware per turn.
 
 Never resume a session across backend mismatch. Starting fresh is better than
 cross-contaminating vendor session state; re-load Deus memory/context instead.
@@ -112,8 +117,8 @@ CLI interface choices:
 - `deus openai` (alias for `deus codex`)
 - `DEUS_CLI_AGENT=claude|codex`
 - `DEUS_AGENT_BACKEND=claude|openai`
-- `deus chat` (deus-native terminal chat; `/status`, `/exit`, `/quit` inside
-  the session)
+- `deus chat` (deus-native terminal chat; `/plan on|off`, `/status`, `/exit`,
+  `/quit` inside the session)
 
 Chat/channel commands must not depend on backend:
 

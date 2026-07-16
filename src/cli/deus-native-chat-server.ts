@@ -1,5 +1,6 @@
 /**
- * Daemon-side loopback server for `deus chat` (LIA-428 / G1).
+ * Daemon-side loopback server for `deus chat` (LIA-428 / G1,
+ * LIA-430 / G3).
  *
  * Started by the daemon (`src/index.ts`) AFTER the runtime registry,
  * database, credential proxy, and shared group-token state are live. The
@@ -14,8 +15,8 @@
  * record under CONFIG_DIR.
  *
  * Non-goals (see deus-native-chat.ts's module doc for the full list — do
- * not add these here): no G2 model-selection UX, no G3 plan-mode toggle, no
- * multi-session picker, no reuse of the Odysseus /v1/chat/completions
+ * not add these here): no G2 model-selection UX, no multi-session picker,
+ * no reuse of the Odysseus /v1/chat/completions
  * semantics (that endpoint intentionally uses fresh non-persisted sessions
  * and a control group, which conflicts with this ticket's persisted
  * synthetic CLI session).
@@ -57,6 +58,7 @@ const MAX_BODY_BYTES = 256 * 1024;
 const TURN_PATH = '/v1/native-chat/turn';
 const STATUS_PATH = '/v1/native-chat/status';
 const CLOSE_PATH = '/v1/native-chat/close';
+const PLAN_PATH = '/v1/native-chat/plan';
 
 export interface NativeChatServerDeps {
   registry: { get(id: AgentRuntimeId): AgentRuntime | undefined };
@@ -68,6 +70,8 @@ export interface NativeChatServerDeps {
   /** Optional sink for operational messages. MUST never receive the token. */
   log?: (message: string) => void;
   readModelConfig?: () => EffectiveNativeModelConfig;
+  /** Server-owned normal-mode baseline; never accepted from request data. */
+  configuredPermissionProfile?: string;
 }
 
 export interface NativeChatServerHandle {
@@ -177,6 +181,7 @@ export async function startNativeChatServer(
   const controller = createDeusNativeChatController({
     runtime,
     sessions: deps.sessions,
+    configuredPermissionProfile: deps.configuredPermissionProfile,
   });
   await controller.start();
 
@@ -272,6 +277,45 @@ export async function startNativeChatServer(
     }
   }
 
+  async function handlePlan(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const read = await readBody(req);
+    if (!read.ok) {
+      writeJson(
+        res,
+        read.tooLarge ? 413 : 400,
+        read.tooLarge
+          ? { error: 'request body too large' }
+          : { error: 'request aborted' },
+      );
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(read.body);
+    } catch {
+      writeJson(res, 400, { error: 'malformed JSON body' });
+      return;
+    }
+    if (typeof parsed !== 'object' || parsed === null) {
+      writeJson(res, 400, { error: 'malformed request' });
+      return;
+    }
+    const body = parsed as Record<string, unknown>;
+    if (body.version !== NATIVE_CHAT_PROTOCOL_VERSION) {
+      writeJson(res, 400, { error: 'protocol version mismatch' });
+      return;
+    }
+    if (typeof body.enabled !== 'boolean') {
+      writeJson(res, 400, { error: 'enabled must be a boolean' });
+      return;
+    }
+    controller.setPlanMode(body.enabled);
+    writeJson(res, 200, controller.status());
+  }
+
   const server = http.createServer((req, res) => {
     // Socket-death guards (odysseus-server.ts precedent): unhandled 'error'
     // events on either stream would crash the daemon.
@@ -284,14 +328,15 @@ export async function startNativeChatServer(
     const isTurn = url === TURN_PATH;
     const isStatus = url === STATUS_PATH;
     const isClose = url === CLOSE_PATH;
+    const isPlan = url === PLAN_PATH;
 
     // Exact routes only; method gate BEFORE auth (presence-leak closure,
     // same ordering odysseus-server.ts uses).
-    if (!isTurn && !isStatus && !isClose) {
+    if (!isTurn && !isStatus && !isClose && !isPlan) {
       writeJson(res, 404, { error: 'not found' });
       return;
     }
-    if ((isTurn || isClose) && method !== 'POST') {
+    if ((isTurn || isClose || isPlan) && method !== 'POST') {
       writeJson(res, 405, { error: 'method not allowed' });
       return;
     }
@@ -309,6 +354,10 @@ export async function startNativeChatServer(
 
     if (isStatus) {
       writeJson(res, 200, controller.status());
+      return;
+    }
+    if (isPlan) {
+      void handlePlan(req, res);
       return;
     }
     if (isClose) {

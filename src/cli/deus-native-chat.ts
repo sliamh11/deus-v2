@@ -1,5 +1,6 @@
 /**
- * `deus chat` — deus-native CLI chat controller (LIA-428 / G1).
+ * `deus chat` — deus-native CLI chat controller (LIA-428 / G1,
+ * LIA-430 / G3).
  *
  * This module owns the terminal-chat seam over the registered `deus-native`
  * `AgentRuntime`: the fixed synthetic CLI identity, the injectable
@@ -16,8 +17,6 @@
  *   persistence, no provider switching. G2 extends `DeusNativeChatOptions`
  *   with a typed field and translates it into the runtime-supported model
  *   configuration; LIA-428 ships no placeholder `model` field.
- * - G3 plan-mode toggle: no `--plan`, `/plan`, mode prompt, or
- *   permission-profile change. Same options-object seam as G2.
  * - No client-controlled `backendConfig` passthrough: exposing arbitrary
  *   runtime configuration to the terminal client would widen a
  *   security-sensitive surface for no current caller.
@@ -42,6 +41,7 @@ import type {
   RuntimeEvent,
   RuntimeSession,
 } from '../agent-runtimes/types.js';
+import { resolvePermissionProfile } from '../agent-runtimes/permission-rules.js';
 import { CONFIG_DIR } from '../config.js';
 import type { EffectiveNativeModelConfig } from '../agent-runtimes/model-selection.js';
 
@@ -61,9 +61,9 @@ export const CLI_CHAT_JID = 'cli:deus-native';
 export const CLI_CHAT_BACKEND = 'deus-native' satisfies AgentRuntimeId;
 
 /** Protocol version shared by the discovery record and the turn request body. */
-export const NATIVE_CHAT_PROTOCOL_VERSION = 1;
+export const NATIVE_CHAT_PROTOCOL_VERSION = 2;
 
-/** Options seam for G2 (model selection) / G3 (plan mode) to extend later. */
+/** Per-turn terminal options; G2 model selection may extend this later. */
 export interface DeusNativeChatOptions {
   cwd: string;
   resume: true;
@@ -105,6 +105,9 @@ export interface NativeChatUsageSnapshot {
 
 export interface NativeChatStatus {
   backend: 'deus-native';
+  mode: 'normal' | 'plan';
+  /** Effective display name; omitted configuration is reported as default. */
+  permissionProfile: string;
   sessionId: string | undefined;
   /** 'resumed' = a backend-matching row existed at controller start. */
   state: 'new' | 'resumed';
@@ -135,6 +138,8 @@ export interface DeusNativeChatController {
     options: DeusNativeChatOptions,
     onEvent: ChatDisplayEventSink,
   ): Promise<{ ok: boolean }>;
+  /** Toggle the per-turn read-only profile without replacing the session. */
+  setPlanMode(enabled: boolean): void;
   status(): NativeChatStatus;
   /** Close the runtime session. Never clears the stored row (resume depends on it). */
   close(): Promise<void>;
@@ -192,8 +197,10 @@ export function formatToolUse(
 export function createDeusNativeChatController(deps: {
   runtime: AgentRuntime;
   sessions: NativeChatSessionStore;
+  /** Server-owned baseline. Never accepted from the terminal client. */
+  configuredPermissionProfile?: string;
 }): DeusNativeChatController {
-  const { runtime, sessions } = deps;
+  const { runtime, sessions, configuredPermissionProfile } = deps;
   if (runtime.name() !== CLI_CHAT_BACKEND) {
     // Fail closed: this controller is deus-native-only by ticket scope; a
     // mis-resolved runtime must never silently drive the CLI thread.
@@ -202,10 +209,19 @@ export function createDeusNativeChatController(deps: {
     );
   }
 
+  // Validate explicit configuration once, before any turn can run. Unknown
+  // names must fail visibly rather than falling back to a weaker profile.
+  if (configuredPermissionProfile !== undefined) {
+    resolvePermissionProfile(configuredPermissionProfile);
+  }
+
   let current: RuntimeSession | undefined;
   let startedState: 'new' | 'resumed' = 'new';
   let lastUsage: NativeChatUsageSnapshot | undefined;
   let inFlight = false;
+  let planMode = false;
+  let activePermissionProfile = configuredPermissionProfile;
+  let priorPermissionProfile: string | undefined;
 
   /**
    * Accept a runtime-reported session ref only when it is a plausible
@@ -299,7 +315,12 @@ export function createDeusNativeChatController(deps: {
           chatJid: CLI_CHAT_JID,
           isControlGroup: false,
           stream: true,
-          backendConfig: { modelSelection: options.models },
+          backendConfig: {
+            modelSelection: options.models,
+            ...(activePermissionProfile !== undefined
+              ? { permissionProfile: activePermissionProfile }
+              : {}),
+          },
         };
 
         // Backend-scoped read is load-bearing: sessions are per-backend and
@@ -340,10 +361,25 @@ export function createDeusNativeChatController(deps: {
       }
     },
 
+    setPlanMode(enabled: boolean): void {
+      if (enabled === planMode) return;
+      if (enabled) {
+        priorPermissionProfile = activePermissionProfile;
+        activePermissionProfile = 'read-only';
+        planMode = true;
+        return;
+      }
+      activePermissionProfile = priorPermissionProfile;
+      priorPermissionProfile = undefined;
+      planMode = false;
+    },
+
     status(): NativeChatStatus {
       const streaming = runtime.capabilities().tool_streaming === true;
       return {
         backend: CLI_CHAT_BACKEND,
+        mode: planMode ? 'plan' : 'normal',
+        permissionProfile: activePermissionProfile ?? 'default',
         sessionId:
           current && current.session_id !== '' ? current.session_id : undefined,
         state: startedState,

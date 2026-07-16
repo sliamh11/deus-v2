@@ -3,9 +3,9 @@
 - **Status:** accepted
 - **Date:** 2026-07-15
 - **Scope:** `src/cli/deus-native-chat.ts`, `src/cli/deus-native-chat-server.ts`, `src/cli/deus-native-chat-client.ts`, `src/index.ts` (server startup/shutdown wiring), `src/odysseus-server.ts` (exports two existing auth helpers for reuse), `deus-cmd.sh`, `deus-cmd.ps1`
-- **Ticket:** LIA-428 (G1)
+- **Ticket:** LIA-428 (G1), LIA-430 (G3)
 - **Related:** `deus-v2-langchain-runtime.md`, `deus-v2-replay-safety.md`,
-  `backend-neutral-agent-runtime.md`
+  `deus-v2-permission-rules.md`, `backend-neutral-agent-runtime.md`
 
 ## Decision
 
@@ -68,6 +68,26 @@ read/written **backend-scoped** (`db.getSession(folder, 'deus-native')`);
 This deliberately does **not** reuse the Odysseus `/v1/chat/completions`
 semantics: that endpoint uses fresh non-persisted sessions and a control
 group, which conflicts with the persisted synthetic CLI session.
+
+## Interactive plan mode (G3)
+
+`/plan on` and `/plan off` are local terminal commands sent to the daemon's
+authenticated `POST /v1/native-chat/plan` route. Protocol version 2 accepts
+only `{ version: 2, enabled: boolean }`; clients cannot provide profile names
+or arbitrary backend configuration. The daemon-owned controller keeps mode
+state for the existing CLI session. On the first off-to-on transition it
+snapshots the exact configured permission profile, including `undefined`, and
+selects B7's `read-only` profile for subsequent turns. Repeated enables are
+idempotent. Disabling restores the exact snapshot, so an omitted baseline
+again omits `backendConfig` while an explicit non-default baseline remains
+explicit. No toggle starts, closes, clears, or replaces the runtime session.
+
+Each turn rebuilds the `deus-native` middleware stack from
+`RunContext.backendConfig.permissionProfile`. Consequently plan mode reuses
+B7's existing denial path: mutation handlers are not invoked, and the model
+receives the stable error `ToolMessage` explaining the read-only denial. Mode
+and effective profile are returned in status and displayed at startup, by
+`/status`, and immediately after each successful toggle.
 
 ## Rollback
 
