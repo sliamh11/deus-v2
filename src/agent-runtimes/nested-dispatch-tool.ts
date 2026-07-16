@@ -208,6 +208,14 @@ export function buildNestedDispatchTool(
         );
       }
 
+      // No `modelPolicy` supplied: falls back to the raw parent-requested
+      // `model` string, unvalidated, same as before LIA-429. Production
+      // (deus-native-backend.ts) always supplies a policy, so this fallback
+      // only matters for a FUTURE caller of `buildNestedDispatchTool` that
+      // omits one — see docs/decisions/deus-v2-subagent-dispatch.md's Risks
+      // section, which covers the generic dispatcher's own raw-string
+      // `resolveModel` seam but not this tool-level fallback specifically;
+      // a caller opting out of a policy inherits that same open risk.
       const effectiveModel =
         modelPolicy?.resolveEffectiveModelId(agentId, model) ?? model;
 

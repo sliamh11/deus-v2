@@ -385,18 +385,21 @@ export class DeusNativeRuntime implements AgentRuntime {
       // outgoingSessionId and the child's own resolved model id.
       const dispatchTool = buildNestedDispatchTool(
         {
-          // KNOWN GAP (ai-eng-warden review; tracked in
+          // LIA-429 closed part of the KNOWN GAP originally noted here: the
+          // raw `modelId` string the parent's tool-call arguments supply is
+          // now discarded by `resolveEffectiveModelId` below (never reaches
+          // `resolveModel`/the credential proxy), and the value that DOES
+          // reach it is re-validated against `NATIVE_PROVIDER_REGISTRY`'s
+          // allowlist by `buildNativeModelClient` — so there is a real
+          // server-side allowlist now, not none.
+          //
+          // KNOWN GAP still open (ai-eng-warden review; tracked in
           // docs/decisions/deus-v2-subagent-dispatch.md's Risks section, NOT
-          // fixed by this ticket): `modelId` is a raw string the PARENT model
-          // supplies via its own tool-call arguments, routed straight into
-          // the real credential proxy with no server-side allowlist and no
-          // per-turn dispatch cap. This does not cross the credential-proxy
-          // boundary (single provider, same group token) but is a real,
-          // currently uncapped cost-escalation surface — a compromised or
-          // misdirected parent can select an expensive model on an unbounded
-          // number of dispatches within one turn. A model-id allowlist plus a
-          // per-turn dispatch budget is real future work, not silently
-          // deferred.
+          // fixed by this ticket): there is still no per-turn dispatch
+          // budget — a compromised or misdirected parent can still select
+          // the most expensive ALLOWED model tier on an unbounded number of
+          // dispatches within one turn. A per-turn dispatch cap is real
+          // future work, not silently deferred.
           resolveModel: (modelId) =>
             buildNativeModelClient(runContext, {
               provider: 'anthropic',
@@ -519,8 +522,10 @@ export class DeusNativeRuntime implements AgentRuntime {
       // was actually built.
       await usageCollector.record(messages, {
         provider: effectiveModels.main.provider,
-        // Read off the already-constructed ChatAnthropic instance — not
-        // re-hardcoded, so it can't drift if the model tier changes.
+        // Read off the SAME `effectiveModels.main` ref used to construct
+        // `model` above (line ~286) — not re-hardcoded, so it can't drift
+        // from whatever model tier was actually resolved/constructed for
+        // this turn.
         model: effectiveModels.main.model,
       });
       const turnUsage = usageCollector.aggregate();

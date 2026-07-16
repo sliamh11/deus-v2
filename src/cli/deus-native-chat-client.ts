@@ -87,6 +87,12 @@ export function runModelCommand(
   try {
     if (operation === 'set') {
       setNativeModel(
+        // Unvalidated CLI-flag cast: `flags.provider` is a plain string with
+        // no structural check at this call site. Safe only because
+        // `setNativeModel` immediately re-validates it via
+        // `validateNativeModelRef` (model-selection.ts) before anything is
+        // persisted — that downstream check, not this cast, is the actual
+        // guard against an unknown provider.
         { provider: flags.provider as 'anthropic', model: flags.model },
         flags.role,
         deps.configPath,
