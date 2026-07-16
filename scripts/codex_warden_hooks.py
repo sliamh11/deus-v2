@@ -3798,11 +3798,15 @@ def run(args: argparse.Namespace) -> int:
         Path(args.script_path).expanduser().resolve(strict=False)
     )
     event = _read_stdin_json()
-    # Resolve the store from the EVENT cwd, not the hook process's os.getcwd():
-    # the two can differ, so without this a worktree's verdict-tracker writes
-    # land in a different bucket than the gates read. worktree_override pins
-    # _claude_marker_dir to that worktree's bucket for every runner.
-    cwd = Path(str(event.get("cwd") or os.getcwd())).resolve(strict=False)
+    # Resolve the store from an explicit --workspace-root when the caller
+    # supplies one; otherwise fall back to the EVENT cwd (not the hook
+    # process's os.getcwd(), since the two can differ). Either way,
+    # worktree_override pins _claude_marker_dir to that worktree's bucket
+    # for every runner.
+    if args.workspace_root is not None:
+        cwd = Path(str(args.workspace_root)).resolve(strict=False)
+    else:
+        cwd = Path(str(event.get("cwd") or os.getcwd())).resolve(strict=False)
     wt = _worktree_for_cwd(cwd, repo_root)
     if wt is None:
         return RUNNERS[args.behavior](event, repo_root)
@@ -3818,6 +3822,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("behavior", choices=sorted(RUNNERS))
     run_parser.add_argument("--repo-root", default=Path(__file__).resolve().parents[1])
     run_parser.add_argument("--script-path", default=Path(__file__).resolve())
+    run_parser.add_argument(
+        "--workspace-root", default=None,
+        help="Explicit workspace root to derive the verdict bucket from, overriding "
+             "the hook-event cwd (LIA-410). Falls back to event.get('cwd') when omitted, "
+             "so existing callers are unaffected.",
+    )
 
     approve_parser = subparsers.add_parser("approve-admin-merge")
     approve_parser.add_argument("--repo-root", default=Path(__file__).resolve().parents[1])

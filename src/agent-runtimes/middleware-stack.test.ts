@@ -1583,6 +1583,135 @@ describe('wardens middleware — Git-common-dir repo-root resolution', () => {
   });
 });
 
+describe('wardens middleware — explicit --workspace-root (LIA-410)', () => {
+  it('threads an explicit workspaceRoot to the gate runner as a NEW --workspace-root flag, additive to --repo-root', async () => {
+    const workspaceRoot = join(WORKTREE_ROOT, 'some-workspace');
+    const { middleware } = buildWardensMiddleware(
+      WORKTREE_ROOT,
+      undefined,
+      workspaceRoot,
+    );
+    const handler = vi.fn(
+      async () =>
+        new ToolMessage({ content: 'ok', tool_call_id: 'call_wsroot_1' }),
+    );
+    await invokeWrapToolCall(
+      middleware,
+      makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_wsroot_1'),
+      handler,
+    );
+
+    expect(capturedWardenCalls).toHaveLength(1);
+    const call = capturedWardenCalls[0]!;
+    // --repo-root keeps its current meaning/value...
+    const repoRootFlag = call.argv.indexOf('--repo-root');
+    expect(call.argv[repoRootFlag + 1]).toBe(REPO_ROOT);
+    // ...and --workspace-root is a genuinely NEW, separate flag.
+    const workspaceRootFlag = call.argv.indexOf('--workspace-root');
+    expect(workspaceRootFlag).toBeGreaterThanOrEqual(0);
+    expect(call.argv[workspaceRootFlag + 1]).toBe(workspaceRoot);
+    expect(workspaceRootFlag).not.toBe(repoRootFlag);
+  });
+
+  it('distinguishes two workspaces with different explicit roots via two different --workspace-root values', async () => {
+    const workspaceA = join(WORKTREE_ROOT, 'workspace-a');
+    const workspaceB = join(WORKTREE_ROOT, 'workspace-b');
+
+    const { middleware: middlewareA } = buildWardensMiddleware(
+      WORKTREE_ROOT,
+      undefined,
+      workspaceA,
+    );
+    await invokeWrapToolCall(
+      middlewareA,
+      makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_ws_a'),
+      vi.fn(async () => new ToolMessage({ content: 'ok', tool_call_id: 'call_ws_a' })),
+    );
+
+    const { middleware: middlewareB } = buildWardensMiddleware(
+      WORKTREE_ROOT,
+      undefined,
+      workspaceB,
+    );
+    await invokeWrapToolCall(
+      middlewareB,
+      makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_ws_b'),
+      vi.fn(async () => new ToolMessage({ content: 'ok', tool_call_id: 'call_ws_b' })),
+    );
+
+    expect(capturedWardenCalls).toHaveLength(2);
+    const flagValue = (argv: string[]) =>
+      argv[argv.indexOf('--workspace-root') + 1];
+    expect(flagValue(capturedWardenCalls[0]!.argv)).toBe(workspaceA);
+    expect(flagValue(capturedWardenCalls[1]!.argv)).toBe(workspaceB);
+    expect(flagValue(capturedWardenCalls[0]!.argv)).not.toBe(
+      flagValue(capturedWardenCalls[1]!.argv),
+    );
+  });
+
+  it('omits --workspace-root entirely when no explicit workspaceRoot is supplied (back-compat: existing callers unaffected)', async () => {
+    await callWardens('apply_patch', { patch: 'x' });
+    const call = capturedWardenCalls[0]!;
+    expect(call.argv.indexOf('--workspace-root')).toBe(-1);
+  });
+
+  it('the hook-event cwd is NOT the deus-native bucket source once workspaceRoot is provided: event.cwd stays wardenCwd while --workspace-root carries a DIFFERENT value', async () => {
+    const differentWorkspaceRoot = join(WORKTREE_ROOT, 'a-different-worktree');
+    const { middleware } = buildWardensMiddleware(
+      WORKTREE_ROOT,
+      undefined,
+      differentWorkspaceRoot,
+    );
+    await invokeWrapToolCall(
+      middleware,
+      makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_cwd_not_source'),
+      vi.fn(
+        async () =>
+          new ToolMessage({ content: 'ok', tool_call_id: 'call_cwd_not_source' }),
+      ),
+    );
+
+    expect(capturedWardenCalls).toHaveLength(1);
+    const call = capturedWardenCalls[0]!;
+    const event = JSON.parse(call.stdin) as { cwd: string };
+    // The serialized event.cwd is unchanged (still wardenCwd) — proving the
+    // NEW --workspace-root flag is a genuinely separate channel, not a
+    // rewrite of the existing event.cwd field.
+    expect(event.cwd).toBe(WORKTREE_ROOT);
+    const workspaceRootFlag = call.argv.indexOf('--workspace-root');
+    expect(call.argv[workspaceRootFlag + 1]).toBe(differentWorkspaceRoot);
+    expect(call.argv[workspaceRootFlag + 1]).not.toBe(event.cwd);
+  });
+
+  it('buildMiddlewareStack threads deps.workspaceRoot down to the wardens gate-runner call', async () => {
+    const workspaceRoot = join(WORKTREE_ROOT, 'deps-threaded-workspace');
+    const { middleware } = buildMiddlewareStack(
+      { permissions: false, memory: false, telemetry: false },
+      { wardenCwd: WORKTREE_ROOT, workspaceRoot },
+    );
+    const handler = vi.fn(
+      async () =>
+        new ToolMessage({ content: 'ok', tool_call_id: 'call_deps_threaded' }),
+    );
+    // Only the wardens layer is enabled above, so the returned array holds
+    // exactly that one middleware — invokeWrapToolCall drives a single
+    // middleware's hook directly, matching every other direct-invocation
+    // helper in this file.
+    expect(middleware).toHaveLength(1);
+    await invokeWrapToolCall(
+      middleware[0]!,
+      makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_deps_threaded'),
+      handler,
+    );
+
+    expect(capturedWardenCalls).toHaveLength(1);
+    const call = capturedWardenCalls[0]!;
+    const workspaceRootFlag = call.argv.indexOf('--workspace-root');
+    expect(workspaceRootFlag).toBeGreaterThanOrEqual(0);
+    expect(call.argv[workspaceRootFlag + 1]).toBe(workspaceRoot);
+  });
+});
+
 describe('wardens middleware — Python commit prefilter matches the exact GIT_COMMIT_RE contract', () => {
   it.each([
     ['git commit -m x', true],
