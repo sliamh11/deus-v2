@@ -1120,11 +1120,9 @@ describe('deus-native tool enforcement — one authoritative permissions/wardens
       ],
     });
     const fetchSpy = vi.fn();
-    // Construct the legacy flag name so the architectural grep over this
-    // host-runtime directory remains a zero-match boundary check. The env var
-    // is still genuinely set to prove it cannot activate a container path.
-    const legacyDispatchFlag = ['HOOK', 'DISPATCH', 'ENABLED'].join('_');
-    vi.stubEnv(legacyDispatchFlag, 'true');
+    // Set the legacy container-only dispatch flag to prove it cannot
+    // activate a container path from deus-native's wrapToolCall chain.
+    vi.stubEnv('HOOK_DISPATCH_ENABLED', 'true');
     vi.stubGlobal('fetch', fetchSpy);
 
     try {

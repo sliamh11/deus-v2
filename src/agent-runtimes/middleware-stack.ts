@@ -761,10 +761,8 @@ export interface MiddlewareStackResult {
  * and only SKIPS disabled layers — relative order of the remaining layers
  * is preserved by construction (AC3), with no separate sort step to get
  * wrong. A layer is disabled only by an explicit `false` (absent = enabled).
- * This composition is the complete `deus-native` pre-execution authority:
- * permissions wrap wardens, each enabled stage evaluates a request once, and
- * a denial returns through the same chain without consulting a second
- * enforcement mechanism.
+ * This composition is the sole pre-execution authority described in the file
+ * header above.
  */
 export function buildMiddlewareStack(
   config: MiddlewareStackConfig = {},

@@ -12,6 +12,14 @@
  *   Each result is wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs.
  *   Multiple results may be emitted (one per agent teams result).
  *   Final marker after loop ends signals completion.
+ *
+ * HOOK_DISPATCH_ENABLED / `:3002` (below, gated at 3 call sites): legacy,
+ * default-off, fail-open container compatibility for this Claude SDK adapter
+ * and the handwritten OpenAI/llama-cpp loops only. Retired from active
+ * production enforcement — no repository launcher or production config
+ * enables it. `deus-native` is a host runtime with no caller into this HTTP
+ * path and never gains a second enforcement authority from it. See
+ * docs/decisions/hook-dispatch-facade-correction.md#update-f2lia-424--2026-07-16.
  */
 
 import fs from 'fs';
@@ -1000,10 +1008,7 @@ async function runQuery(
           : {}),
       },
       hooks: {
-        // Legacy container-only manual opt-in. This wires the Claude SDK
-        // adapter to the same default-off, fail-open compatibility path used
-        // by the handwritten OpenAI and llama-cpp loops. `deus-native` is a
-        // host runtime and never participates in this HTTP path.
+        // See file header: legacy :3002 manual opt-in, not deus-native.
         ...(process.env.HOOK_DISPATCH_ENABLED === 'true'
           ? {
               PreToolUse: [
@@ -1042,8 +1047,7 @@ async function runQuery(
             hooks.push(createToolCallLogHook());
           if (process.env.DEUS_TOOL_AUDIT_LOG !== '0')
             hooks.push(createToolAuditHook());
-          // PostToolUse observation belongs to the same legacy, manually
-          // enabled container path; it is not a `deus-native` hook.
+          // Same legacy :3002 opt-in as above (see file header).
           if (process.env.HOOK_DISPATCH_ENABLED === 'true')
             hooks.push(
               // host defaults to dispatchHost() (127.0.0.1) — see the WHY on the
@@ -1204,10 +1208,7 @@ async function main(): Promise<void> {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
-  // Retired from active production enforcement: no repository launcher or
-  // production configuration enables this service. Keep the exact manual
-  // opt-in for the three real container consumers; startup remains fail-open
-  // and never creates a second `deus-native` enforcement authority.
+  // Same legacy :3002 opt-in as above (see file header).
   if (process.env.HOOK_DISPATCH_ENABLED === 'true') {
     const dispatchPort = parseInt(process.env.HOOK_DISPATCH_PORT ?? '3002', 10);
     const dispatchSvc = new HookDispatchService();
