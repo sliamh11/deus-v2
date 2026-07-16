@@ -1,4 +1,4 @@
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import {
@@ -966,9 +966,9 @@ const execFileMock = vi.mocked(execFile);
 const execFileSyncMock = vi.mocked(execFileSync);
 
 // Computed via the REAL (unmocked) execFileSync, exactly like the frozen
-// oracle's own top-of-file setup — this worktree genuinely is a linked
-// worktree, so WORKTREE_ROOT and REPO_ROOT are genuinely different absolute
-// paths, no mocking required to exercise that distinction (case 18 below).
+// oracle's own top-of-file setup. These values intentionally describe the
+// ambient checkout and may be equal in a normal clone; the linked-worktree
+// distinction is exercised deterministically with a one-shot mock below.
 const WORKTREE_ROOT = process.cwd();
 const COMMON_GIT_DIR = execFileSync(
   'git',
@@ -1384,14 +1384,37 @@ describe('wardens middleware — fail-closed on every infrastructure/protocol fa
 });
 
 describe('wardens middleware — Git-common-dir repo-root resolution', () => {
-  it('derives repo_root from the git-common-dir parent, not the worktree/module path (this IS a linked worktree)', () => {
-    // No mocking needed: this test file already runs inside a linked
-    // worktree, so WORKTREE_ROOT (this file's process.cwd()) and REPO_ROOT
-    // (this suite's own real git-common-dir computation above) are
-    // genuinely different absolute paths — the same distinction
-    // `.claude/hooks/warden-shim.sh` documents and the frozen oracle
-    // hardcodes.
-    expect(REPO_ROOT).not.toBe(WORKTREE_ROOT);
+  it('derives repo_root from the git-common-dir parent when it differs from cwd (a linked-worktree scenario)', async () => {
+    const simulatedRepoRoot = join(
+      dirname(WORKTREE_ROOT),
+      `${basename(WORKTREE_ROOT)}-simulated-primary`,
+    );
+    const simulatedCommonGitDir = join(simulatedRepoRoot, '.git');
+    execFileSyncMock.mockReturnValueOnce(`${simulatedCommonGitDir}\n`);
+
+    const { middleware } = buildWardensMiddleware(WORKTREE_ROOT);
+    const handler = vi.fn(
+      async () =>
+        new ToolMessage({ content: 'ok', tool_call_id: 'call_linked_1' }),
+    );
+    await invokeWrapToolCall(
+      middleware,
+      makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_linked_1'),
+      handler,
+    );
+
+    expect(simulatedRepoRoot).not.toBe(WORKTREE_ROOT);
+    expect(capturedWardenCalls).toHaveLength(1);
+    const call = capturedWardenCalls[0]!;
+    expect(call.argv[1]).toBe(
+      join(simulatedRepoRoot, 'scripts', 'codex_warden_hooks.py'),
+    );
+    expect(call.argv[1]).not.toBe(
+      join(WORKTREE_ROOT, 'scripts', 'codex_warden_hooks.py'),
+    );
+    const flagIndex = call.argv.indexOf('--repo-root');
+    expect(call.argv[flagIndex + 1]).toBe(simulatedRepoRoot);
+    expect(JSON.parse(call.stdin)).toMatchObject({ cwd: WORKTREE_ROOT });
   });
 
   it('normalizes a relative wardenCwd to an absolute event.cwd (path.resolve is applied inside the factory itself, not only by callers)', async () => {
@@ -1415,11 +1438,10 @@ describe('wardens middleware — Git-common-dir repo-root resolution', () => {
     expect(event.cwd).not.toBe('.');
   });
 
-  it('a matched call sends --repo-root and the script path from the git-common-dir parent, never the worktree path', async () => {
+  it('a matched call sends --repo-root and the script path consistently from the real git-common-dir parent', async () => {
     await callWardens('apply_patch', { patch: 'x' });
     const call = capturedWardenCalls[0]!;
     expect(call.argv[1]).toBe(WARDEN_SCRIPT);
-    expect(call.argv[1]).not.toContain(WORKTREE_ROOT);
     const flagIndex = call.argv.indexOf('--repo-root');
     expect(call.argv[flagIndex + 1]).toBe(REPO_ROOT);
   });
@@ -1445,9 +1467,15 @@ describe('wardens middleware — Git-common-dir repo-root resolution', () => {
     expect(capturedWardenCalls).toHaveLength(1);
     const call = capturedWardenCalls[0]!;
     // The fallback script path is two directories above middleware-stack.ts
-    // (src/agent-runtimes/../.. = the checkout root) — NOT the git-derived
-    // REPO_ROOT above and NOT the bogus wardenCwd.
-    expect(call.argv[1]).not.toBe(WARDEN_SCRIPT);
+    // (src/agent-runtimes/../.. = the checkout root), computed WITHOUT any
+    // git query (the mocked git call above threw) and WITHOUT the bogus
+    // wardenCwd. It is NOT asserted to differ from WARDEN_SCRIPT (the
+    // git-derived REPO_ROOT computed elsewhere in this suite): in a plain,
+    // non-worktree checkout the two paths legitimately coincide, since both
+    // resolve to the same checkout root. What matters is that the fallback
+    // path was derived independently of git (proven by the mocked throw
+    // being consumed) and independently of wardenCwd, not that it happens
+    // to differ from a DIFFERENT computation's result.
     expect(call.argv[1]).not.toContain('/tmp/not-a-git-repo');
     expect(call.argv[1].endsWith('scripts/codex_warden_hooks.py')).toBe(true);
   });
