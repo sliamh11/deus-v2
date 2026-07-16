@@ -11,16 +11,16 @@
  *
  * Non-goals of this adapter, intentionally deferred to later roadmap items
  * (do not add these here):
- * - Loading AGENTS.md/AI_AGENT_GUIDELINES.md/persona context and the full
- *   context-registry.ts parity (claudeSystemAppend/skipForControlGroup/
- *   projectOnly flags, EXTRA RULES dirs, VAULT: entries) — B3/LIA-403 lands
- *   ONLY group-scoped CLAUDE.md session-open injection (see
- *   lifecycle-events.ts), deliberately minimal; broader context parity is
- *   out of that ticket's literal ACs and can be a follow-up.
+ * - Persona context and broader context-registry surfaces such as
+ *   `MEMORY_TREE.md` and solution atoms. D4/LIA-418 closes the three accepted
+ *   repository instruction-file gaps through lifecycle-events.ts; the
+ *   unrelated persona and memory surfaces remain on their existing paths or
+ *   deferred roadmap items.
  * - Real backend-scoped session persistence via the LangGraph checkpointer
  *   lands here (B4/LIA-404): the MESSAGE exchange itself genuinely persists
- *   and resumes across turns. Still deferred: session-open CLAUDE.md content
- *   injected via `wrapModelCall`'s `systemMessage` remains a per-call,
+ *   and resumes across turns. Still deferred: session-open repository
+ *   instruction content injected via `wrapModelCall`'s `systemMessage`
+ *   remains a per-call,
  *   EPHEMERAL override — it is never written into the checkpointed
  *   `messages` state (confirmed: `AgentNode`'s `baseHandler` passes it
  *   directly to the model call and only ever writes the model's OWN response
@@ -259,7 +259,8 @@ export class DeusNativeRuntime implements AgentRuntime {
       // were NEVER real checkpointer threads (B3's own marker was explicitly
       // "not a real resumable checkpoint ID"); under the old string signal,
       // the first post-B4 turn for such a row would misclassify as "resumed",
-      // skip session-open CLAUDE.md injection, AND hand the checkpointer a
+      // skip session-open repository-context injection, AND hand the
+      // checkpointer a
       // thread_id it has never seen — a fresh, memoryless context with no
       // group rules either. Under this checkpoint-existence signal the same
       // pre-existing id is still echoed back (preserving the DB row's
@@ -272,15 +273,15 @@ export class DeusNativeRuntime implements AgentRuntime {
       // Session-open injection fires only on a genuinely NEW session (once
       // per open lifecycle — a resumed turn never even calls
       // loadSessionOpenContext) AND only when session-open content actually
-      // exists (systemMessage stays undefined otherwise). Awaited (LIA-416/
-      // D2): the loader now composes vault context whose recent-sessions
-      // provider is an async subprocess — the await occurs ONLY on this
-      // new-session branch, bounded by the vault pipeline's 5s subprocess
-      // timeout, and never blocks the process-wide event loop. The returned
-      // SessionOpenRecord is an inspectable log consumed by tests, matching
-      // B2's own discarded-logs precedent here.
+      // exists (systemMessage stays undefined otherwise). Awaited because
+      // D2's vault aggregate has an async recent-sessions provider; D4's
+      // registry is composed after it synchronously. The await occurs ONLY
+      // on this new-session branch, bounded by the vault pipeline's 5s
+      // subprocess timeout, and never blocks the process-wide event loop.
+      // The returned SessionOpenRecord is an inspectable log consumed by
+      // tests, matching B2's own discarded-logs precedent here.
       const sessionOpenMessage = isNewSession
-        ? (await loadSessionOpenContext(runContext)).systemMessage
+        ? (await loadSessionOpenContext(runContext, group)).systemMessage
         : undefined;
 
       const model = buildNativeModelClient(runContext, effectiveModels.main);
@@ -465,7 +466,7 @@ export class DeusNativeRuntime implements AgentRuntime {
       });
 
       // Non-goal (see module doc comment): the prompt sent to createAgent is
-      // the bare runContext.prompt — session-open CLAUDE.md content reaches
+      // the bare runContext.prompt — session-open repository context reaches
       // the model via the prompt-lifecycle middleware's wrapModelCall
       // systemMessage injection, never by changing what invoke() receives.
       const result = await agent.invoke(

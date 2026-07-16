@@ -79,12 +79,13 @@ filesystem: false` accordingly. **`web_search` is NOT host-allowlisted**
    API-key mode) and a per-group `x-deus-proxy-token`, exactly as the container
    backends do — satisfying `backend-neutral-agent-runtime.md`'s "must not read
    raw host secrets" requirement.
-5. **Context parity is deliberately deferred.** B1's `runTurn` sends the bare
-   prompt only — it does not load `CLAUDE.md`/`AGENTS.md`/
-   `AI_AGENT_GUIDELINES.md`/persona context. That is a stated gap against
-   `backend-neutral-agent-runtime.md`'s parity requirement, owned by B2
-   (middleware stack) or B3 (lifecycle events); `deus-native` is not
-   production-ready for real user traffic until it lands.
+5. **Context parity is phased.** B1's `runTurn` originally sent the bare
+   prompt only. B3/D2 added the session-open lifecycle and personal-vault
+   aggregate; D4/LIA-418 now loads the applicable `CLAUDE.md`, `AGENTS.md`,
+   and `AI_AGENT_GUIDELINES.md` files through mount-equivalent group, global,
+   project, vault, and additional roots. This closes the three accepted
+   instruction-file gaps without claiming persona, `MEMORY_TREE.md`, solution
+   atom, or broader memory parity.
 6. **publicIngress (webhook-originated) groups are refused, fail-closed**
    (added per code-review). `container-runner.ts`'s `buildContainerArgs`
    already refuses to launch a publicIngress group on any backend but
@@ -156,9 +157,11 @@ runTurn` mirrors the same rule directly (returns a `status: 'error'`
 web_fetch}` and remains the operative boundary; B7 added an authorization
   layer behind that boundary, it did not widen it. Any future widening still
   requires its own separate review per this ADR's Decision 3.
-- Session persistence (`persistent_sessions: false`) and Deus context loading
-  are deferred to B4 and B2/B3 respectively — `deus-native` is a roadmap
-  vehicle, not yet a parity backend.
+- B4 has since landed real checkpoint-backed session persistence, and D2/D4
+  have landed the session-open vault aggregate and three-file repository
+  registry. Broader persona, memory, tool, and middleware parity remains
+  phased; these additions do not by themselves make `deus-native` a complete
+  parity backend.
 - **Update (D1/LIA-415):** the middleware stack's memory slot is now filled
   for CONTROL-GROUP turns: `buildMemoryMiddleware` performs one `beforeModel`
   retrieval per turn through a narrow subprocess adapter
@@ -195,6 +198,15 @@ web_fetch}` and remains the operative boundary; B7 added an authorization
   becomes live automatically; LIA-417 neither authorizes nor implements that
   widening. The `claude` backend is unchanged and continues to re-embed
   independently through its existing `Write|Edit|MultiEdit` PostToolUse hook.
+- **Update (D4/LIA-418):** session-open composition now appends a host-side
+  declarative context registry after D2's unchanged vault aggregate. The
+  registry mirrors the real container mount topology and fixed instruction
+  filename order for group/global/project/vault/additional scopes. In
+  particular, only the control group can resolve the literal personal-vault
+  root, project resolution is worktree then registered project then
+  control-only daemon-root fallback (with no cwd step), and additional mounts
+  pass through the existing allowlist validator. This closes only the three
+  instruction-file gaps; persona and broader memory surfaces remain separate.
 
 ## Rollback
 
