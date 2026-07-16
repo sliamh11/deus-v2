@@ -29,6 +29,7 @@ import type {
 } from './types.js';
 import type { ContainerRuntimeDeps } from './container-backend.js';
 import { RuntimeRegistry } from './registry.js';
+import type { ProjectConfig, RegisteredGroup } from '../types.js';
 
 // ---------------------------------------------------------------------------
 // Shared mutable harness (hoisted so the module mocks below can reach it).
@@ -55,6 +56,16 @@ const harness = vi.hoisted(() => ({
   // hermetic default — real config/vault/DB/subprocess must never be touched
   // from this file). Non-control calls always get the real skip shape.
   vaultContent: undefined as string | undefined,
+  vaultLoadedFiles: [] as string[],
+  vaultConfig: { vault_autoload: [] } as Record<string, unknown>,
+  vaultRoot: '',
+  validatedMounts: [] as Array<{
+    hostPath: string;
+    containerPath: string;
+    readonly: boolean;
+  }>,
+  projectById: {} as Record<string, ProjectConfig>,
+  groupOverrides: {} as Partial<RegisteredGroup>,
 }));
 
 // Real langchain everywhere (createMiddleware, FakeToolCallingModel, tool,
@@ -103,6 +114,36 @@ vi.mock('../group-folder.js', async (importOriginal) => {
   };
 });
 
+// D4/LIA-418: keep host-registry config, vault, project, and additional-mount
+// resolution inside this test's temporary roots while exercising the real
+// registry implementation.
+vi.mock('../checks.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../checks.js')>();
+  return { ...actual, readDeusConfig: () => harness.vaultConfig };
+});
+vi.mock('../container-mounter.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../container-mounter.js')>();
+  return {
+    ...actual,
+    resolveVaultPath: () => harness.vaultRoot || null,
+  };
+});
+vi.mock('../mount-security.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../mount-security.js')>();
+  return {
+    ...actual,
+    validateAdditionalMounts: () => harness.validatedMounts,
+  };
+});
+vi.mock('../db.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../db.js')>();
+  return {
+    ...actual,
+    getProjectById: (id: string) => harness.projectById[id],
+  };
+});
+
 // B4 (LIA-404): a STATEFUL checkpointer mock — a REAL SqliteSaver routed to
 // the per-test temp file — NOT the simple always-undefined stub
 // deus-native-backend.test.ts uses. This file's assertions specifically test
@@ -146,7 +187,7 @@ vi.mock('./vault-context.js', async (importOriginal) => {
             vaultAvailable: hasContent,
             contextLoaded: hasContent,
             loadedSections: hasContent ? (['vault-files'] as const) : [],
-            loadedVaultFiles: [],
+            loadedVaultFiles: harness.vaultLoadedFiles,
           },
         };
       },
@@ -175,8 +216,18 @@ const { createDeusNativeRuntime } = await import('./deus-native-backend.js');
 // actual module — this is the REAL reset function.
 const { _resetCheckpointerForTests } = await import('./checkpointer.js');
 
+function registeredGroup(folder: string): RegisteredGroup {
+  return {
+    name: `Group ${folder}`,
+    folder,
+    trigger: 'deus',
+    added_at: '2026-07-16T00:00:00.000Z',
+    ...harness.groupOverrides,
+  };
+}
+
 const stubDeps: ContainerRuntimeDeps = {
-  resolveGroup: () => undefined,
+  resolveGroup: (folder) => registeredGroup(folder),
   assistantName: 'Deus',
   registerProcess: () => {},
 };
@@ -194,9 +245,17 @@ function runCtx(groupFolder: string, isControlGroup = false): RunContext {
 }
 
 function writeGroupClaudeMd(folder: string, content: string): void {
+  writeGroupInstruction(folder, 'CLAUDE.md', content);
+}
+
+function writeGroupInstruction(
+  folder: string,
+  filename: string,
+  content: string,
+): void {
   const dir = path.join(harness.groupsDir, folder);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'CLAUDE.md'), content);
+  fs.writeFileSync(path.join(dir, filename), content);
 }
 
 function writeGlobalClaudeMd(content: string): void {
@@ -242,8 +301,8 @@ function toolCallThenAnswerModel(): FakeToolCallingModel {
 let checkpointerTempDir = '';
 
 beforeEach(() => {
-  harness.groupsDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), 'b3-lifecycle-groups-'),
+  harness.groupsDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'b3-lifecycle-groups-')),
   );
   // B4: fresh temp checkpointer DB per test. The REAL module's memoization
   // is still active underneath the mock wrapper — the reset must run BEFORE
@@ -258,6 +317,12 @@ beforeEach(() => {
   harness.tools = [];
   harness.captured.length = 0;
   harness.vaultContent = undefined;
+  harness.vaultLoadedFiles = [];
+  harness.vaultConfig = { vault_autoload: [] };
+  harness.vaultRoot = '';
+  harness.validatedMounts = [];
+  harness.projectById = {};
+  harness.groupOverrides = {};
   vi.mocked(loadVaultContext).mockClear();
 });
 
@@ -429,7 +494,13 @@ describe('runTurn session-open lifecycle (AC1/AC4)', () => {
 
   it('keeps the session-open content on EVERY model call within one turn, including after a tool call (AC4 within-turn persistence)', async () => {
     const runtime = createDeusNativeRuntime(stubDeps);
+    writeGroupInstruction('persistgroup', 'AGENTS.md', 'Agents-first rule.');
     writeGroupClaudeMd('persistgroup', 'Within-turn persistence rule.');
+    writeGroupInstruction(
+      'persistgroup',
+      'AI_AGENT_GUIDELINES.md',
+      'Guidelines-last rule.',
+    );
     harness.tools = [ECHO_TOOL];
     harness.makeModel = toolCallThenAnswerModel;
 
@@ -446,8 +517,13 @@ describe('runTurn session-open lifecycle (AC1/AC4)', () => {
     // a first-firing-only gate would leave the second one empty.
     expect(harness.captured).toHaveLength(2);
     for (const call of harness.captured) {
-      expect(msgText(call.systemMessage)).toContain(
-        'Within-turn persistence rule.',
+      const content = msgText(call.systemMessage);
+      expect(content).toContain('Within-turn persistence rule.');
+      expect(content.indexOf('Agents-first rule.')).toBeLessThan(
+        content.indexOf('Within-turn persistence rule.'),
+      );
+      expect(content.indexOf('Within-turn persistence rule.')).toBeLessThan(
+        content.indexOf('Guidelines-last rule.'),
       );
     }
   });
@@ -595,25 +671,154 @@ describe('turn-complete lifecycle event (AC3)', () => {
 // fixture groups/ dir.
 // ---------------------------------------------------------------------------
 describe('loadSessionOpenContext (AC5)', () => {
+  it('composes D2 first, then ordered group/project/vault/additional registry blocks without duplicating D2 vault files', async () => {
+    const group = registeredGroup('composition');
+    const groupDir = path.join(harness.groupsDir, 'composition');
+    const worktree = path.join(harness.groupsDir, 'composition-worktree');
+    const vault = path.join(harness.groupsDir, 'composition-vault');
+    const extra = path.join(harness.groupsDir, 'composition-extra');
+    for (const [dir, prefix] of [
+      [groupDir, 'group'],
+      [worktree, 'project'],
+      [vault, 'vault'],
+      [extra, 'extra'],
+    ] as const) {
+      fs.mkdirSync(dir, { recursive: true });
+      for (const filename of [
+        'AGENTS.md',
+        'CLAUDE.md',
+        'AI_AGENT_GUIDELINES.md',
+      ]) {
+        fs.writeFileSync(path.join(dir, filename), `${prefix}-${filename}`);
+      }
+    }
+    group.containerConfig = {
+      additionalMounts: [{ hostPath: extra, containerPath: 'alpha' }],
+    };
+    harness.validatedMounts = [
+      {
+        hostPath: extra,
+        containerPath: '/workspace/extra/alpha',
+        readonly: true,
+      },
+    ];
+    harness.vaultContent = '=== VAULT: CLAUDE.md ===\nd2-claude';
+    harness.vaultLoadedFiles = ['CLAUDE.md'];
+    harness.vaultConfig = {
+      vault_autoload: ['AGENTS.md', 'CLAUDE.md', 'AI_AGENT_GUIDELINES.md'],
+    };
+    harness.vaultRoot = vault;
+
+    const { systemMessage, record } = await loadSessionOpenContext(
+      {
+        ...runCtx('composition', true),
+        worktreePath: worktree,
+        cwd: path.join(harness.groupsDir, 'ignored-cwd'),
+      },
+      group,
+    );
+
+    const expectedBlocks = [
+      '=== VAULT: CLAUDE.md ===\nd2-claude',
+      '=== GROUP RULES: AGENTS.md ===\ngroup-AGENTS.md',
+      '=== GROUP RULES: CLAUDE.md ===\ngroup-CLAUDE.md',
+      '=== GROUP RULES: AI_AGENT_GUIDELINES.md ===\ngroup-AI_AGENT_GUIDELINES.md',
+      '=== PROJECT RULES: AGENTS.md ===\nproject-AGENTS.md',
+      '=== PROJECT RULES: CLAUDE.md ===\nproject-CLAUDE.md',
+      '=== PROJECT RULES: AI_AGENT_GUIDELINES.md ===\nproject-AI_AGENT_GUIDELINES.md',
+      '=== VAULT: AGENTS.md ===\nvault-AGENTS.md',
+      '=== VAULT: AI_AGENT_GUIDELINES.md ===\nvault-AI_AGENT_GUIDELINES.md',
+      '=== EXTRA RULES: alpha/AGENTS.md ===\nextra-AGENTS.md',
+      '=== EXTRA RULES: alpha/CLAUDE.md ===\nextra-CLAUDE.md',
+      '=== EXTRA RULES: alpha/AI_AGENT_GUIDELINES.md ===\nextra-AI_AGENT_GUIDELINES.md',
+    ];
+    expect(systemMessage).toBe(expectedBlocks.join('\n\n'));
+    expect(record.registeredContextLabels).toEqual([
+      'GROUP RULES: AGENTS.md',
+      'GROUP RULES: CLAUDE.md',
+      'GROUP RULES: AI_AGENT_GUIDELINES.md',
+      'PROJECT RULES: AGENTS.md',
+      'PROJECT RULES: CLAUDE.md',
+      'PROJECT RULES: AI_AGENT_GUIDELINES.md',
+      'VAULT: AGENTS.md',
+      'VAULT: AI_AGENT_GUIDELINES.md',
+      'EXTRA RULES: alpha/AGENTS.md',
+      'EXTRA RULES: alpha/CLAUDE.md',
+      'EXTRA RULES: alpha/AI_AGENT_GUIDELINES.md',
+    ]);
+    expect(record.groupClaudeMdLoaded).toBe(true);
+    expect(record.globalClaudeMdLoaded).toBe(false);
+    expect(systemMessage?.match(/=== VAULT: CLAUDE\.md ===/g)).toHaveLength(1);
+  });
+
+  it('uses worktree then registered-project precedence and never uses cwd', async () => {
+    const worktree = path.join(harness.groupsDir, 'precedence-worktree');
+    const project = path.join(harness.groupsDir, 'precedence-project');
+    const cwd = path.join(harness.groupsDir, 'precedence-cwd');
+    for (const [dir, content] of [
+      [worktree, 'worktree-rules'],
+      [project, 'registered-project-rules'],
+      [cwd, 'cwd-rules'],
+    ]) {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'CLAUDE.md'), content);
+    }
+    harness.projectById['project-1'] = {
+      id: 'project-1',
+      name: 'Project',
+      path: fs.realpathSync(project),
+      type: null,
+      readonly: true,
+      created_at: '2026-07-16T00:00:00.000Z',
+    };
+    const group = registeredGroup('precedence');
+    group.projectId = 'project-1';
+
+    const withWorktree = await loadSessionOpenContext(
+      {
+        ...runCtx('precedence'),
+        worktreePath: fs.realpathSync(worktree),
+        cwd,
+      },
+      group,
+    );
+    expect(withWorktree.systemMessage).toContain('worktree-rules');
+    expect(withWorktree.systemMessage).not.toContain(
+      'registered-project-rules',
+    );
+    expect(withWorktree.systemMessage).not.toContain('cwd-rules');
+
+    const withProject = await loadSessionOpenContext(
+      { ...runCtx('precedence'), cwd },
+      group,
+    );
+    expect(withProject.systemMessage).toContain('registered-project-rules');
+    expect(withProject.systemMessage).not.toContain('cwd-rules');
+  });
+
   it('loads a present group CLAUDE.md and records it', async () => {
     writeGroupClaudeMd('groupa', 'Rule A content.');
     const { systemMessage, record } = await loadSessionOpenContext(
       runCtx('groupa'),
+      registeredGroup('groupa'),
     );
     expect(systemMessage).toContain('Rule A content.');
     expect(record.sessionOpened).toBe(true);
     expect(record.groupClaudeMdLoaded).toBe(true);
     expect(record.globalClaudeMdLoaded).toBe(false);
+    expect(record.registeredContextLabels).toEqual(['GROUP RULES: CLAUDE.md']);
     expect(typeof record.timestamp).toBe('number');
   });
 
   it('returns undefined cleanly (no throw) when no CLAUDE.md exists', async () => {
     const { systemMessage, record } = await loadSessionOpenContext(
       runCtx('missinggroup'),
+      registeredGroup('missinggroup'),
     );
     expect(systemMessage).toBeUndefined();
     expect(record.groupClaudeMdLoaded).toBe(false);
     expect(record.globalClaudeMdLoaded).toBe(false);
+    expect(record.registeredContextLabels).toEqual([]);
   });
 
   it('includes global CLAUDE.md for a non-main group (matching the container path’s main-vs-other mounting distinction)', async () => {
@@ -621,6 +826,7 @@ describe('loadSessionOpenContext (AC5)', () => {
     writeGlobalClaudeMd('Global shared rules.');
     const { systemMessage, record } = await loadSessionOpenContext(
       runCtx('groupb'),
+      registeredGroup('groupb'),
     );
     expect(systemMessage).toContain('Global shared rules.');
     expect(systemMessage).toContain('Group B rules.');
@@ -633,6 +839,7 @@ describe('loadSessionOpenContext (AC5)', () => {
     writeGlobalClaudeMd('Global shared rules.');
     const { systemMessage, record } = await loadSessionOpenContext(
       runCtx('maingroup', true),
+      registeredGroup('maingroup'),
     );
     expect(systemMessage).toContain('Main group rules.');
     expect(systemMessage).not.toContain('Global shared rules.');
@@ -643,6 +850,7 @@ describe('loadSessionOpenContext (AC5)', () => {
     writeGlobalClaudeMd('Global-only rules.');
     const { systemMessage, record } = await loadSessionOpenContext(
       runCtx('groupc'),
+      registeredGroup('groupc'),
     );
     expect(systemMessage).toContain('Global-only rules.');
     expect(record.globalClaudeMdLoaded).toBe(true);

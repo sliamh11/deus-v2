@@ -345,9 +345,10 @@ describe('DeusNativeBackend', () => {
 
     expect(events.some((e) => e.type === 'turn_complete')).toBe(true);
 
-    // Bare prompt only — no CLAUDE.md/AGENTS.md/persona context, per the
-    // plan's explicit non-goal. B4 (LIA-404): invoke gains a second
-    // argument — the checkpointer thread_id, which must be the SAME id the
+    // The invoke input remains the bare prompt; session-open repository
+    // context is delivered separately through prompt-lifecycle's
+    // systemMessage boundary. B4 (LIA-404): invoke gains a second argument —
+    // the checkpointer thread_id, which must be the SAME id the
     // RunResult.sessionRef carries (the session row references exactly the
     // checkpointer state this turn wrote).
     expect(invokeMock).toHaveBeenCalledWith(
