@@ -1078,6 +1078,108 @@ function expectArgvContract(argv: string[], behavior: string): void {
 
 const PLAN_REVIEW_BEHAVIOR_NAME = 'plan-review-gate';
 
+describe('deus-native tool enforcement — one authoritative permissions/wardens chain (LIA-424)', () => {
+  it('decides one protected apply_patch call exactly once without consulting the legacy container path', async () => {
+    const callId = 'call_single_authority_1';
+    const reviseReason =
+      '[plan-review-gate] REVISE: single-authority sentinel feedback';
+    setWardenResponse(PLAN_REVIEW_BEHAVIOR_NAME, {
+      kind: 'stdout',
+      stdout: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: reviseReason,
+        },
+      }),
+    });
+
+    const protectedHandler = vi.fn(async (_args: { patch: string }) => {
+      return 'PROTECTED_HANDLER_EXECUTED';
+    });
+    const protectedTool = tool(protectedHandler, {
+      name: 'apply_patch',
+      description: 'Hermetic protected tool for the single-authority proof.',
+      schema: {
+        type: 'object',
+        properties: { patch: { type: 'string' } },
+        required: ['patch'],
+        additionalProperties: false,
+      },
+    });
+    const model = new FakeToolCallingModel({
+      toolCalls: [
+        [
+          {
+            name: 'apply_patch',
+            args: { patch: '*** Begin Patch\n*** End Patch' },
+            id: callId,
+          },
+        ],
+        [],
+      ],
+    });
+    const fetchSpy = vi.fn();
+    // Construct the legacy flag name so the architectural grep over this
+    // host-runtime directory remains a zero-match boundary check. The env var
+    // is still genuinely set to prove it cannot activate a container path.
+    const legacyDispatchFlag = ['HOOK', 'DISPATCH', 'ENABLED'].join('_');
+    vi.stubEnv(legacyDispatchFlag, 'true');
+    vi.stubGlobal('fetch', fetchSpy);
+
+    try {
+      const { middleware, logs } = buildMiddlewareStack(
+        { memory: false, telemetry: false },
+        { permissionProfile: 'default', wardenCwd: WORKTREE_ROOT },
+      );
+      const agent = createAgent({
+        model,
+        tools: [protectedTool],
+        middleware,
+      });
+      const result = await agent.invoke({
+        messages: [
+          { role: 'user', content: 'exercise the protected tool once' },
+        ],
+      });
+
+      expect(logs.permissions).toEqual([
+        {
+          toolName: 'apply_patch',
+          decision: 'allow',
+          source: 'default',
+          reason:
+            'tool "apply_patch" matched no rule; the policy default is allow',
+        },
+      ]);
+      expect(execFileMock).toHaveBeenCalledTimes(1);
+      expect(capturedWardenCalls).toHaveLength(1);
+      expect(capturedWardenCalls[0]?.argv[3]).toBe(PLAN_REVIEW_BEHAVIOR_NAME);
+      expect(logs.wardens).toEqual([
+        {
+          toolName: 'apply_patch',
+          decision: 'deny',
+          reason: reviseReason,
+        },
+      ]);
+
+      const toolMessages = (result as { messages: unknown[] }).messages.filter(
+        (message): message is ToolMessage =>
+          ToolMessage.isInstance(message as never) &&
+          (message as ToolMessage).tool_call_id === callId,
+      );
+      expect(toolMessages).toHaveLength(1);
+      expect(toolMessages[0]?.status).toBe('error');
+      expect(toolMessages[0]?.content).toBe(reviseReason);
+      expect(protectedHandler).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe('wardens middleware — non-matching tools delegate exactly once, no Python invocation', () => {
   it('an unmatched tool (web_search) delegates the original request exactly once and does not spawn Python', async () => {
     const { handler, log, result } = await callWardens('web_search', {

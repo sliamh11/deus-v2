@@ -1000,6 +1000,10 @@ async function runQuery(
           : {}),
       },
       hooks: {
+        // Legacy container-only manual opt-in. This wires the Claude SDK
+        // adapter to the same default-off, fail-open compatibility path used
+        // by the handwritten OpenAI and llama-cpp loops. `deus-native` is a
+        // host runtime and never participates in this HTTP path.
         ...(process.env.HOOK_DISPATCH_ENABLED === 'true'
           ? {
               PreToolUse: [
@@ -1038,6 +1042,8 @@ async function runQuery(
             hooks.push(createToolCallLogHook());
           if (process.env.DEUS_TOOL_AUDIT_LOG !== '0')
             hooks.push(createToolAuditHook());
+          // PostToolUse observation belongs to the same legacy, manually
+          // enabled container path; it is not a `deus-native` hook.
           if (process.env.HOOK_DISPATCH_ENABLED === 'true')
             hooks.push(
               // host defaults to dispatchHost() (127.0.0.1) — see the WHY on the
@@ -1198,6 +1204,10 @@ async function main(): Promise<void> {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
+  // Retired from active production enforcement: no repository launcher or
+  // production configuration enables this service. Keep the exact manual
+  // opt-in for the three real container consumers; startup remains fail-open
+  // and never creates a second `deus-native` enforcement authority.
   if (process.env.HOOK_DISPATCH_ENABLED === 'true') {
     const dispatchPort = parseInt(process.env.HOOK_DISPATCH_PORT ?? '3002', 10);
     const dispatchSvc = new HookDispatchService();

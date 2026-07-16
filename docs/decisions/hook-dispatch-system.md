@@ -1,12 +1,13 @@
 # ADR: Model-Agnostic Hook Dispatch System
 
-> **⚠️ CORRECTION (2026-06-07): Accepted but NOT IMPLEMENTED — facade.**
-> The host-side Enforcement Layer and `HookPipeline` interface described below
-> were never built — `grep` confirms zero `HookPipeline` / `enforce()` /
-> `observe()` refs in `src/`, and `message-orchestrator.ts` fires no hooks.
-> Hooks/wardens fire ONLY via the Claude Code CLI today; non-Claude backends run
-> unguarded. Retained as the **reference design**, not shipped architecture. See
-> [hook-dispatch-facade-correction.md](hook-dispatch-facade-correction.md).
+> **⚠️ CORRECTION (updated 2026-07-16): Accepted but NOT IMPLEMENTED as a
+> generic cross-backend facade.** The host-side `HookPipeline` interface
+> described below was never built. C1/LIA-409 has implemented the root-fix
+> outcome for `deus-native` specifically through its ordered LangChain
+> `wrapToolCall` middleware; that backend-specific authority does not implement
+> this ADR's generic `AgentRuntime` facade for container backends. Retained as
+> the **reference design**, not globally shipped architecture. See the
+> [F2/LIA-424 update](hook-dispatch-facade-correction.md#update-f2lia-424--2026-07-16).
 
 **Status:** Accepted but Not Implemented (facade) — see [hook-dispatch-facade-correction.md](hook-dispatch-facade-correction.md)
 **Date:** 2026-05-14

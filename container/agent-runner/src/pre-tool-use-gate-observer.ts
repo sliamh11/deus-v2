@@ -1,11 +1,16 @@
 /**
- * Blocking PreToolUse observer — the first observer that can DENY a tool call
- * via `HookDispatchService`. Returning `{ decision: 'block', reason }` is honored
- * by both consult consumers (`dispatchPreToolUseGate` for the openai/llama-cpp
- * loops, `createPreToolUseHook` for the Claude SDK), so one observer gates every
- * backend. Deny rule is minimal + conservative (fail-open): block a Bash
- * recursive-force `rm` whose absolute target escapes `/workspace`; anything not
- * positively classified as out-of-`/workspace` is allowed, malformed payload → {}.
+ * Legacy blocking PreToolUse observer shared by the three container
+ * implementations only: the Claude SDK adapter and the handwritten OpenAI and
+ * llama-cpp tool loops. It is not backend-neutral across Deus, and
+ * `deus-native` has no caller into this observer or its container-local HTTP
+ * service.
+ *
+ * The path is subordinate, default-off manual compatibility. When explicitly
+ * enabled it remains fail-open and can deny only a positively classified Bash
+ * recursive-force `rm` whose absolute target escapes `/workspace`; anything
+ * else, including malformed input, yields `{}`. It is not a second authority
+ * for `deus-native` and does not provide its warden policy to container
+ * backends.
  */
 
 import path from 'node:path';

@@ -164,3 +164,39 @@ an "implemented" note and restore `hook-dispatch-system.md` to plain
 - Tracking: a Linear issue in the **Deus** project should mirror this ADR's
   remediation options (creation was blocked by the session permission
   classifier; file it on approval).
+
+## Update (F2/LIA-424 — 2026-07-16)
+
+C1/LIA-409 has now built remediation Option 1's root-fix outcome for the
+`deus-native` backend specifically. Its host-side LangChain middleware invokes
+the unchanged `scripts/codex_warden_hooks.py` plan-review, code-review,
+AI-engineering, and verification gates from `wrapToolCall`, alongside the B7
+permission evaluator. For `deus-native`, that ordered `wrapToolCall` chain is
+the sole authoritative pre-execution enforcement path: the runtime has no
+container, no `:3002` client, and no caller into the container runner's
+PreToolUse hook. LIA-424 pins this boundary with a test in which one protected
+call produces one warden REVISE outcome, never invokes the tool handler, and
+never consults the legacy HTTP path.
+
+This closes the remediation gap for `deus-native`; it does not mean the generic
+`AgentRuntime` `HookPipeline` interface described by
+`hook-dispatch-system.md` was implemented for every backend. That broader ADR
+therefore remains “Accepted but Not Implemented” outside the backend-specific
+`deus-native` middleware implementation.
+
+The container-side `pre-tool-use-hook.ts` remains in source because it still
+has conditional callers in the Claude SDK adapter and the handwritten OpenAI
+and llama-cpp tool loops. It is explicitly subordinate legacy compatibility
+for those container backends only, not a second `deus-native` authority.
+`HookDispatchService` on `:3002` is retired from active production
+enforcement: it starts only when `HOOK_DISPATCH_ENABLED === "true"`, the
+consult path immediately allows without an HTTP request otherwise, and no
+repository launcher or production configuration sets that flag. The dormant
+manual opt-in remains available for compatibility and continues to fail open.
+
+Consequently, the non-`deus-native` guardrail story remains narrower. With the
+flag unset, `:3002` contributes no enforcement to the container Claude,
+OpenAI, or llama-cpp paths. If manually enabled, it supplies only the legacy
+recursive-force-`rm`-outside-`/workspace` guard; it does not provide C1 warden
+parity. Provider- or Claude-specific project hooks are separate mechanisms and
+are not evidence that the model-neutral `HookPipeline` exists.
