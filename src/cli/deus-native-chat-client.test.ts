@@ -11,9 +11,13 @@ import { describe, it, expect } from 'vitest';
 import type { ChatDisplayEvent, NativeChatStatus } from './deus-native-chat.js';
 import {
   runChatCli,
+  runModelCommand,
   CHAT_UNAVAILABLE_MESSAGE,
   type ChatTransport,
 } from './deus-native-chat-client.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const SESSION_ID = '44444444-4444-4444-8444-444444444444';
 
@@ -235,5 +239,61 @@ describe('runChatCli', () => {
   it('ignores empty input lines instead of sending empty prompts', async () => {
     const run = await runScripted(['', '   ', 'real prompt', '/exit']);
     expect(run.fake.turns).toEqual(['real prompt']);
+  });
+});
+
+describe('runModelCommand', () => {
+  it('sets and shows models locally with validation exit codes', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deus-model-command-'));
+    const configPath = path.join(dir, 'native-models.json');
+    const output = new PassThrough();
+    const errorOutput = new PassThrough();
+    let stdout = '';
+    let stderr = '';
+    output.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    errorOutput.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    const deps = { output, errorOutput, configPath };
+    expect(
+      runModelCommand(
+        ['set', '--provider', 'anthropic', '--model', 'claude-sonnet-4-6'],
+        deps,
+      ),
+    ).toBe(0);
+    expect(
+      runModelCommand(
+        [
+          'set',
+          '--role',
+          'researcher',
+          '--provider',
+          'anthropic',
+          '--model',
+          'claude-haiku-4-5-20251001',
+        ],
+        deps,
+      ),
+    ).toBe(0);
+    expect(runModelCommand(['show', '--role', 'writer'], deps)).toBe(0);
+    expect(stdout).toContain('inherits main');
+    expect(
+      runModelCommand(['set', '--provider', 'openai', '--model', 'x'], deps),
+    ).toBe(1);
+    expect(stderr).toContain('Supported providers: anthropic');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns usage exit 2 for duplicate, missing, and inappropriate flags', () => {
+    const output = new PassThrough();
+    const errorOutput = new PassThrough();
+    const deps = { output, errorOutput };
+    expect(runModelCommand(['set', '--provider', 'anthropic'], deps)).toBe(2);
+    expect(runModelCommand(['show', '--model', 'x'], deps)).toBe(2);
+    expect(runModelCommand(['show', '--role', 'a', '--role', 'b'], deps)).toBe(
+      2,
+    );
   });
 });

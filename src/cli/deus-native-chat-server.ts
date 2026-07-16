@@ -47,6 +47,8 @@ import {
   type NativeChatDiscoveryRecord,
   type NativeChatSessionStore,
 } from './deus-native-chat.js';
+import { loadEffectiveNativeModelConfig } from './deus-native-model-config.js';
+import type { EffectiveNativeModelConfig } from '../agent-runtimes/model-selection.js';
 
 const DEFAULT_HOST = '127.0.0.1';
 /** Request-body cap: a chat prompt, not a file upload. */
@@ -65,6 +67,7 @@ export interface NativeChatServerDeps {
   host?: string;
   /** Optional sink for operational messages. MUST never receive the token. */
   log?: (message: string) => void;
+  readModelConfig?: () => EffectiveNativeModelConfig;
 }
 
 export interface NativeChatServerHandle {
@@ -160,6 +163,8 @@ export async function startNativeChatServer(
 ): Promise<NativeChatServerHandle> {
   const host = deps.host ?? DEFAULT_HOST;
   const log = deps.log ?? (() => {});
+  const readModelConfig =
+    deps.readModelConfig ?? loadEffectiveNativeModelConfig;
 
   // Resolve the runtime EXPLICITLY: `deus chat` is this ticket's native
   // surface and must not follow the channel/global default backend.
@@ -230,9 +235,19 @@ export async function startNativeChatServer(
       const writeEvent = (event: ChatDisplayEvent) => {
         if (res.writable) res.write(`${JSON.stringify(event)}\n`);
       };
+      let models: EffectiveNativeModelConfig;
+      try {
+        models = readModelConfig();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        writeEvent({ kind: 'chat_error', message });
+        if (res.writable)
+          res.end(`${JSON.stringify({ done: true, ok: false })}\n`);
+        return;
+      }
       const outcome = await controller.runTurn(
         body.prompt,
-        { cwd: body.cwd, resume: true },
+        { cwd: body.cwd, resume: true, models },
         writeEvent,
       );
       if (res.writable)

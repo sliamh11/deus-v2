@@ -106,12 +106,13 @@ import {
   type PromptEventRecord,
 } from './lifecycle-events.js';
 import { getCheckpointer } from './checkpointer.js';
-import {
-  buildProxyRoutedChatAnthropic,
-  PARENT_DEFAULT_MODEL,
-} from './deus-native-model.js';
 import { createTurnUsageCollector } from './deus-native-usage.js';
 import { buildNestedDispatchTool } from './nested-dispatch-tool.js';
+import {
+  buildNativeModelClient,
+  parseEffectiveNativeModelConfig,
+  resolveEffectiveRoleModel,
+} from './model-selection.js';
 
 // capabilities() — each flag has an inline rationale, matching
 // llama-cpp-backend.ts's existing comment convention.
@@ -222,6 +223,11 @@ export class DeusNativeRuntime implements AgentRuntime {
         };
       }
 
+      // Validate before constructing any provider client or agent.
+      const effectiveModels = parseEffectiveNativeModelConfig(
+        runContext.backendConfig?.['modelSelection'],
+      );
+
       // B4 (LIA-404): the session_id doubles as the LangGraph checkpointer
       // thread_id, so it's computed FIRST — needed before invoke() runs, not
       // just as the RunResult.sessionRef output after. Same echo-if-present/
@@ -277,10 +283,7 @@ export class DeusNativeRuntime implements AgentRuntime {
         ? (await loadSessionOpenContext(runContext)).systemMessage
         : undefined;
 
-      const model = buildProxyRoutedChatAnthropic(
-        runContext,
-        PARENT_DEFAULT_MODEL,
-      );
+      const model = buildNativeModelClient(runContext, effectiveModels.main);
       const toolCtx = buildToolBrokerContext(runContext);
 
       // B2 (LIA-402): ordered, per-layer-toggleable middleware stack —
@@ -380,44 +383,53 @@ export class DeusNativeRuntime implements AgentRuntime {
       // alone). onUsage folds every child AIMessage into the SAME
       // usageCollector the parent uses below, using the parent's
       // outgoingSessionId and the child's own resolved model id.
-      const dispatchTool = buildNestedDispatchTool({
-        // KNOWN GAP (ai-eng-warden review; tracked in
-        // docs/decisions/deus-v2-subagent-dispatch.md's Risks section, NOT
-        // fixed by this ticket): `modelId` is a raw string the PARENT model
-        // supplies via its own tool-call arguments, routed straight into
-        // the real credential proxy with no server-side allowlist and no
-        // per-turn dispatch cap. This does not cross the credential-proxy
-        // boundary (single provider, same group token) but is a real,
-        // currently uncapped cost-escalation surface — a compromised or
-        // misdirected parent can select an expensive model on an unbounded
-        // number of dispatches within one turn. A model-id allowlist plus a
-        // per-turn dispatch budget is real future work, not silently
-        // deferred.
-        resolveModel: (modelId) =>
-          buildProxyRoutedChatAnthropic(runContext, modelId),
-        buildChildTools: () =>
-          buildSafeTools(toolCtx, resolveAllowedWebFetchHosts()),
-        // C1 (LIA-409): thread the SAME resolved `wardenCwd` into every
-        // nested-dispatch child's fresh middleware stack — a child's wardens
-        // layer must resolve the same worktree/repo-root as the parent's,
-        // never silently fall back to `process.cwd()` (this factory runs
-        // inside the same process, so an unset wardenCwd wouldn't throw or
-        // even look wrong in isolation — it would just gate the wrong
-        // worktree).
-        buildChildMiddleware: () =>
-          buildMiddlewareStack(resolveMiddlewareStackConfig(), {
-            permissionProfile: rawPermissionProfile,
-            wardenCwd,
-          }).middleware,
-        parentSessionId: outgoingSessionId,
-        provider: 'anthropic',
-        onUsage: async (observation) => {
-          await usageCollector.record([observation.message], {
-            provider: 'anthropic',
-            model: observation.model,
-          });
+      const dispatchTool = buildNestedDispatchTool(
+        {
+          // KNOWN GAP (ai-eng-warden review; tracked in
+          // docs/decisions/deus-v2-subagent-dispatch.md's Risks section, NOT
+          // fixed by this ticket): `modelId` is a raw string the PARENT model
+          // supplies via its own tool-call arguments, routed straight into
+          // the real credential proxy with no server-side allowlist and no
+          // per-turn dispatch cap. This does not cross the credential-proxy
+          // boundary (single provider, same group token) but is a real,
+          // currently uncapped cost-escalation surface — a compromised or
+          // misdirected parent can select an expensive model on an unbounded
+          // number of dispatches within one turn. A model-id allowlist plus a
+          // per-turn dispatch budget is real future work, not silently
+          // deferred.
+          resolveModel: (modelId) =>
+            buildNativeModelClient(runContext, {
+              provider: 'anthropic',
+              model: modelId,
+            }),
+          buildChildTools: () =>
+            buildSafeTools(toolCtx, resolveAllowedWebFetchHosts()),
+          // C1 (LIA-409): thread the SAME resolved `wardenCwd` into every
+          // nested-dispatch child's fresh middleware stack — a child's wardens
+          // layer must resolve the same worktree/repo-root as the parent's,
+          // never silently fall back to `process.cwd()` (this factory runs
+          // inside the same process, so an unset wardenCwd wouldn't throw or
+          // even look wrong in isolation — it would just gate the wrong
+          // worktree).
+          buildChildMiddleware: () =>
+            buildMiddlewareStack(resolveMiddlewareStackConfig(), {
+              permissionProfile: rawPermissionProfile,
+              wardenCwd,
+            }).middleware,
+          parentSessionId: outgoingSessionId,
+          provider: 'anthropic',
+          onUsage: async (observation) => {
+            await usageCollector.record([observation.message], {
+              provider: 'anthropic',
+              model: observation.model,
+            });
+          },
         },
-      });
+        {
+          resolveEffectiveModelId: (agentId, _requestedModelId) =>
+            resolveEffectiveRoleModel(effectiveModels, agentId).model,
+        },
+      );
 
       const tools = [
         ...(await buildSafeTools(toolCtx, resolveAllowedWebFetchHosts())),
@@ -506,10 +518,10 @@ export class DeusNativeRuntime implements AgentRuntime {
       // provider path is added, this must become a function of which client
       // was actually built.
       await usageCollector.record(messages, {
-        provider: 'anthropic',
+        provider: effectiveModels.main.provider,
         // Read off the already-constructed ChatAnthropic instance — not
         // re-hardcoded, so it can't drift if the model tier changes.
-        model: model.model,
+        model: effectiveModels.main.model,
       });
       const turnUsage = usageCollector.aggregate();
 

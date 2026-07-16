@@ -166,3 +166,6 @@ that happens, report the exact blocked tests and the permission reason.
 Do not make the next agent rediscover this map. If you add a new backend,
 channel, memory layer, command family, DB, MCP, or architectural entry point,
 update this file and the relevant ADR/pattern docs in the same change.
+# Native model selection
+
+`deus chat model` writes the validated `native-models.json` file. The native chat server reloads it per turn, the controller whitelists it into `backendConfig.modelSelection`, and the runtime resolves the main model. Nested dispatch enforces exact-role → main → default in `nested-dispatch-tool.ts`; the B8 core dispatcher seam remains unchanged.

@@ -372,6 +372,54 @@ describe('createNestedDispatcher — independent per-dispatch model resolution (
   });
 });
 
+describe('buildNestedDispatchTool model policy (LIA-429)', () => {
+  const input = {
+    agentId: 'researcher',
+    model: 'parent-requested-raw-model',
+    prompt: 'research this',
+    outputContract: {
+      name: 'answer',
+      schema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          confidence: { type: 'number' },
+        },
+        required: ['summary', 'confidence'],
+        additionalProperties: false,
+      },
+    },
+  };
+
+  it('preserves requested-model identity without a policy', async () => {
+    const resolveModel = vi.fn(() =>
+      modelReturning('{"summary":"ok","confidence":1}'),
+    );
+    const tool = buildNestedDispatchTool({ resolveModel });
+    await tool.invoke(input, { toolCallId: 'call-identity' } as never);
+    expect(resolveModel).toHaveBeenCalledWith('parent-requested-raw-model');
+  });
+
+  it('substitutes the policy model and reports effective metadata', async () => {
+    const resolveModel = vi.fn(() =>
+      modelReturning('{"summary":"ok","confidence":1}'),
+    );
+    const tool = buildNestedDispatchTool(
+      { resolveModel },
+      {
+        resolveEffectiveModelId: (agentId) =>
+          agentId === 'researcher' ? 'claude-sonnet-4-6' : 'claude-opus-4-8',
+      },
+    );
+    const result = await tool.invoke(input, {
+      toolCallId: 'call-policy',
+    } as never);
+    expect(resolveModel).toHaveBeenCalledWith('claude-sonnet-4-6');
+    expect(resolveModel).not.toHaveBeenCalledWith('parent-requested-raw-model');
+    expect(String(result)).toContain('claude-sonnet-4-6');
+  });
+});
+
 describe('createNestedDispatcher — fresh per-dispatch tool/middleware factories', () => {
   it('calls buildChildTools and buildChildMiddleware fresh on every dispatch, and the child receives no dispatch tool or checkpointer', async () => {
     const buildChildTools = vi.fn(() => []);

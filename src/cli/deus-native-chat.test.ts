@@ -27,7 +27,14 @@ import {
 } from './deus-native-chat.js';
 
 const MINTED_ID = '22222222-2222-4222-8222-222222222222';
-const OPTIONS: DeusNativeChatOptions = { cwd: '/tmp/somewhere', resume: true };
+const OPTIONS: DeusNativeChatOptions = {
+  cwd: '/tmp/somewhere',
+  resume: true,
+  models: {
+    main: { provider: 'anthropic', model: 'claude-opus-4-8' },
+    roles: {},
+  },
+};
 
 interface FakeRuntimeScript {
   /** Events pushed to the sink during runTurn, per call (index = call #). */
@@ -155,8 +162,7 @@ describe('controller session lifecycle', () => {
     expect(ctx.cwd).toBe(OPTIONS.cwd);
     expect(ctx.isControlGroup).toBe(false);
     expect(ctx.stream).toBe(true);
-    // No G2/G3 placeholder fields are supplied.
-    expect(ctx.backendConfig).toBeUndefined();
+    expect(ctx.backendConfig).toEqual({ modelSelection: OPTIONS.models });
   });
 
   it('a second runTurn on the same controller reuses the first minted id', async () => {
