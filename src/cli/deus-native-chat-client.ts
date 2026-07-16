@@ -1,5 +1,5 @@
 /**
- * `deus chat` terminal client (LIA-428 / G1) — the compiled executable the
+ * `deus chat` terminal client (LIA-428 / G1, LIA-430 / G3) — the compiled executable the
  * shell/PowerShell launchers invoke (`dist/cli/deus-native-chat-client.js`).
  *
  * Thin client: it reads the daemon's discovery record, sends authenticated
@@ -9,8 +9,8 @@
  * runtime event discriminants, session refs, or NDJSON framing.
  *
  * Non-goals (see deus-native-chat.ts's module doc): no G2 model-selection
- * flags, no G3 plan-mode toggle, no session picker. The only local commands
- * are /status, /exit, and /quit.
+ * flags and no session picker. Local commands are /plan on|off, /status,
+ * /exit, and /quit.
  */
 
 import fs from 'fs';
@@ -126,6 +126,7 @@ export interface ChatTransport {
     cwd: string,
     onEvent: (event: ChatDisplayEvent) => void | Promise<void>,
   ): Promise<void>;
+  setPlanMode(enabled: boolean): Promise<NativeChatStatus>;
   status(): Promise<NativeChatStatus>;
   close(): Promise<void>;
 }
@@ -154,6 +155,19 @@ export function createHttpChatTransport(
   const authHeaders = { authorization: `Bearer ${record.token}` };
 
   return {
+    async setPlanMode(enabled: boolean): Promise<NativeChatStatus> {
+      const res = await fetch(`${base}/v1/native-chat/plan`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          version: NATIVE_CHAT_PROTOCOL_VERSION,
+          enabled,
+        }),
+      });
+      if (!res.ok) throw new Error(`plan request failed (${res.status})`);
+      return (await res.json()) as NativeChatStatus;
+    },
+
     async status(): Promise<NativeChatStatus> {
       const res = await fetch(`${base}/v1/native-chat/status`, {
         headers: authHeaders,
@@ -226,9 +240,17 @@ function renderStatus(
   output: NodeJS.WritableStream,
 ): void {
   output.write(`Backend: ${status.backend}\n`);
+  renderMode(status, output);
   output.write(`Session: ${status.sessionId ?? 'not started'}\n`);
   output.write(`State:   ${status.state}\n`);
   output.write(`Output:  ${status.output}\n`);
+}
+
+function renderMode(
+  status: NativeChatStatus,
+  output: NodeJS.WritableStream,
+): void {
+  output.write(`Mode:    ${status.mode} (${status.permissionProfile})\n`);
 }
 
 /**
@@ -247,8 +269,9 @@ export async function runChatCli(deps: ChatCliDeps): Promise<number> {
   }
 
   output.write(
-    'Deus chat — type a message. /status shows diagnostics, /exit quits.\n',
+    'Deus chat — type a message. /plan on|off changes mode, /status shows diagnostics, /exit quits.\n',
   );
+  renderMode(startupStatus, output);
   if (startupStatus.state === 'resumed') {
     output.write(
       'Resumed your previous conversation (run /status for details).\n',
@@ -337,6 +360,19 @@ export async function runChatCli(deps: ChatCliDeps): Promise<number> {
         }
         return;
       }
+      if (line === '/plan on' || line === '/plan off') {
+        try {
+          const status = await transport.setPlanMode(line === '/plan on');
+          renderMode(status, output);
+        } catch {
+          errorOutput.write(`${CHAT_UNAVAILABLE_MESSAGE}\n`);
+        }
+        return;
+      }
+      if (/^\/plan(?:\s|$)/.test(line)) {
+        output.write('Usage: /plan on|off\n');
+        return;
+      }
       try {
         await transport.turn(line, cwd, render);
       } catch {
@@ -396,7 +432,11 @@ async function main(): Promise<void> {
     );
   }
   if (args.length > 0) {
-    process.stderr.write(`${MODEL_USAGE}\n`);
+    // Only `model` is a recognized subcommand (handled above); plan mode is
+    // an authenticated in-chat command (`/plan on|off`), not a process flag.
+    process.stderr.write(
+      `deus chat takes no arguments other than the 'model' subcommand.\n${MODEL_USAGE}\n`,
+    );
     process.exit(2);
   }
 

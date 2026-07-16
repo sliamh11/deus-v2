@@ -1,5 +1,6 @@
 /**
- * Unit tests for the deus-native CLI chat controller (LIA-428 / G1):
+ * Unit tests for the deus-native CLI chat controller (LIA-428 / G1,
+ * LIA-430 / G3):
  * session lifecycle (mint/persist/resume), event normalization, and the
  * foreign-ref/error guards — against an injected fake runtime and an
  * in-memory session store.
@@ -162,6 +163,8 @@ describe('controller session lifecycle', () => {
     expect(ctx.cwd).toBe(OPTIONS.cwd);
     expect(ctx.isControlGroup).toBe(false);
     expect(ctx.stream).toBe(true);
+    // No permission profile is configured for this controller, so
+    // backendConfig carries only the (mandatory since G2) model selection.
     expect(ctx.backendConfig).toEqual({ modelSelection: OPTIONS.models });
   });
 
@@ -337,6 +340,108 @@ describe('controller session lifecycle', () => {
         sessions: store,
       }),
     ).toThrow(/deus-native/);
+  });
+});
+
+describe('plan-mode permission profile state', () => {
+  it('starts in normal mode with an omitted profile displayed as default', async () => {
+    const controller = createDeusNativeChatController({
+      runtime: makeFakeRuntime().runtime,
+      sessions: store,
+    });
+    await controller.start();
+
+    expect(controller.status()).toMatchObject({
+      mode: 'normal',
+      permissionProfile: 'default',
+    });
+  });
+
+  it('enables read-only, then restores the exact omitted permissionProfile representation', async () => {
+    const fake = makeFakeRuntime();
+    const controller = createDeusNativeChatController({
+      runtime: fake.runtime,
+      sessions: store,
+    });
+    await controller.start();
+
+    controller.setPlanMode(true);
+    expect(controller.status()).toMatchObject({
+      mode: 'plan',
+      permissionProfile: 'read-only',
+    });
+    await controller.runTurn('plan', OPTIONS, collect);
+
+    controller.setPlanMode(false);
+    expect(controller.status()).toMatchObject({
+      mode: 'normal',
+      permissionProfile: 'default',
+    });
+    await controller.runTurn('normal', OPTIONS, collect);
+
+    expect(fake.calls[0]?.runContext.backendConfig).toEqual({
+      modelSelection: OPTIONS.models,
+      permissionProfile: 'read-only',
+    });
+    // modelSelection (mandatory since G2) still rides along; the omitted
+    // profile is represented by the absence of the permissionProfile key.
+    expect(fake.calls[1]?.runContext.backendConfig).toEqual({
+      modelSelection: OPTIONS.models,
+    });
+  });
+
+  it('restores an explicit profile and repeated enable does not overwrite the snapshot', async () => {
+    const fake = makeFakeRuntime();
+    const controller = createDeusNativeChatController({
+      runtime: fake.runtime,
+      sessions: store,
+      configuredPermissionProfile: 'default',
+    });
+    await controller.start();
+
+    controller.setPlanMode(true);
+    controller.setPlanMode(true);
+    await controller.runTurn('plan', OPTIONS, collect);
+    controller.setPlanMode(false);
+    controller.setPlanMode(false);
+    await controller.runTurn('normal', OPTIONS, collect);
+
+    expect(fake.calls.map((call) => call.runContext.backendConfig)).toEqual([
+      { modelSelection: OPTIONS.models, permissionProfile: 'read-only' },
+      { modelSelection: OPTIONS.models, permissionProfile: 'default' },
+    ]);
+  });
+
+  it('reuses the same session id across mode transitions', async () => {
+    const fake = makeFakeRuntime();
+    const controller = createDeusNativeChatController({
+      runtime: fake.runtime,
+      sessions: store,
+    });
+    await controller.start();
+
+    await controller.runTurn('normal before', OPTIONS, collect);
+    controller.setPlanMode(true);
+    await controller.runTurn('plan', OPTIONS, collect);
+    controller.setPlanMode(false);
+    await controller.runTurn('normal after', OPTIONS, collect);
+
+    expect(fake.calls.map((call) => call.sessionRef.session_id)).toEqual([
+      '',
+      MINTED_ID,
+      MINTED_ID,
+    ]);
+    expect(fake.startOrResumeCalls).toBe(1);
+  });
+
+  it('rejects an unknown explicitly configured profile at construction', () => {
+    expect(() =>
+      createDeusNativeChatController({
+        runtime: makeFakeRuntime().runtime,
+        sessions: store,
+        configuredPermissionProfile: 'not-a-profile',
+      }),
+    ).toThrow(/unknown permission profile/);
   });
 });
 

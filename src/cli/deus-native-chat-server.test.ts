@@ -1,5 +1,5 @@
 /**
- * Server tests for LIA-428 / G1 — request validation, turn serialization,
+ * Server tests for LIA-428 / G1 and LIA-430 / G3 — request validation, turn serialization,
  * NDJSON event delivery, status/close routes, and the db-backed session
  * store adapter. Real ephemeral HTTP server on 127.0.0.1, fake runtime,
  * temp discovery paths. (The auth/discovery security boundary itself is
@@ -43,7 +43,11 @@ function memoryStore(): NativeChatSessionStore {
 
 interface FakeRuntimeControls {
   runtime: AgentRuntime;
-  turnCalls: Array<{ prompt: string; cwd: string | undefined }>;
+  turnCalls: Array<{
+    prompt: string;
+    cwd: string | undefined;
+    backendConfig: RunContext['backendConfig'];
+  }>;
   /** When set, runTurn blocks until released (for the concurrency test). */
   block?: Promise<void>;
 }
@@ -74,6 +78,7 @@ function fakeRuntime(): FakeRuntimeControls {
         controls.turnCalls.push({
           prompt: runContext.prompt,
           cwd: runContext.cwd,
+          backendConfig: runContext.backendConfig,
         });
         if (controls.block) await controls.block;
         await eventSink({
@@ -117,6 +122,7 @@ afterEach(async () => {
 
 async function startServer(
   sessions: NativeChatSessionStore = memoryStore(),
+  configuredPermissionProfile?: string,
 ): Promise<NativeChatServerHandle> {
   handle = await startNativeChatServer({
     registry: {
@@ -124,6 +130,7 @@ async function startServer(
     },
     sessions,
     discoveryPath: path.join(tmpDir, 'native-chat.json'),
+    configuredPermissionProfile,
   });
   return handle;
 }
@@ -147,6 +154,17 @@ function validTurnBody(prompt = 'hello'): Record<string, unknown> {
   return { version: NATIVE_CHAT_PROTOCOL_VERSION, prompt, cwd: tmpDir };
 }
 
+function planRequest(
+  server: NativeChatServerHandle,
+  body: unknown,
+): Promise<Response> {
+  return fetch(`http://${server.host}:${server.port}/v1/native-chat/plan`, {
+    method: 'POST',
+    headers: { ...authHeaders(server), 'content-type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+
 describe('routing and validation', () => {
   it('404s unknown paths and 405s wrong methods on the exact routes', async () => {
     const server = await startServer();
@@ -167,6 +185,11 @@ describe('routing and validation', () => {
       headers: authHeaders(server),
     });
     expect(postStatus.status).toBe(405);
+
+    const getPlan = await fetch(`${base}/v1/native-chat/plan`, {
+      headers: authHeaders(server),
+    });
+    expect(getPlan.status).toBe(405);
   });
 
   it('rejects a protocol-version-mismatched turn body with 400', async () => {
@@ -241,6 +264,81 @@ describe('routing and validation', () => {
   });
 });
 
+describe('plan-mode route', () => {
+  it('toggles status and selects read-only for the next turn, then restores omission', async () => {
+    const server = await startServer();
+
+    const enabled = await planRequest(server, {
+      version: NATIVE_CHAT_PROTOCOL_VERSION,
+      enabled: true,
+    });
+    expect(enabled.status).toBe(200);
+    expect(await enabled.json()).toMatchObject({
+      mode: 'plan',
+      permissionProfile: 'read-only',
+    });
+    await turnRequest(server, validTurnBody('during plan'));
+
+    const disabled = await planRequest(server, {
+      version: NATIVE_CHAT_PROTOCOL_VERSION,
+      enabled: false,
+    });
+    expect(disabled.status).toBe(200);
+    expect(await disabled.json()).toMatchObject({
+      mode: 'normal',
+      permissionProfile: 'default',
+    });
+    await turnRequest(server, validTurnBody('after plan'));
+
+    // modelSelection (mandatory since G2) is resolved from the real default
+    // model-config path here (unstubbed in this test), so only the
+    // permissionProfile facet — what this test actually exercises — is
+    // asserted, rather than the whole backendConfig object.
+    expect(
+      controls.turnCalls.map((call) => call.backendConfig?.permissionProfile),
+    ).toEqual(['read-only', undefined]);
+  });
+
+  it('restores a server-owned explicit baseline profile', async () => {
+    const server = await startServer(memoryStore(), 'read-only');
+    await planRequest(server, {
+      version: NATIVE_CHAT_PROTOCOL_VERSION,
+      enabled: true,
+    });
+    const disabled = await planRequest(server, {
+      version: NATIVE_CHAT_PROTOCOL_VERSION,
+      enabled: false,
+    });
+    expect(await disabled.json()).toMatchObject({
+      mode: 'normal',
+      permissionProfile: 'read-only',
+    });
+    await turnRequest(
+      server,
+      validTurnBody('normal but explicitly restricted'),
+    );
+    expect(controls.turnCalls[0]?.backendConfig?.permissionProfile).toBe(
+      'read-only',
+    );
+  });
+
+  it('rejects malformed, incomplete, non-boolean, and version-mismatched bodies', async () => {
+    const server = await startServer();
+    const bodies: unknown[] = [
+      'not json',
+      null,
+      {},
+      { version: NATIVE_CHAT_PROTOCOL_VERSION },
+      { version: NATIVE_CHAT_PROTOCOL_VERSION, enabled: 'true' },
+      { version: NATIVE_CHAT_PROTOCOL_VERSION + 1, enabled: true },
+    ];
+    for (const body of bodies) {
+      expect((await planRequest(server, body)).status).toBe(400);
+    }
+    expect(controls.turnCalls).toHaveLength(0);
+  });
+});
+
 describe('turn NDJSON delivery', () => {
   it('streams normalized display events and a final done record; no RuntimeEvent discriminants', async () => {
     const server = await startServer();
@@ -285,6 +383,8 @@ describe('status and close routes', () => {
       })
     ).json()) as Record<string, unknown>;
     expect(before.backend).toBe('deus-native');
+    expect(before.mode).toBe('normal');
+    expect(before.permissionProfile).toBe('default');
     expect(before.sessionId).toBeUndefined();
     expect(before.state).toBe('new');
     expect(before.output).toBe('buffered');

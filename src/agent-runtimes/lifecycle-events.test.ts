@@ -9,6 +9,7 @@ import {
   FakeToolCallingModel,
   SystemMessage,
   HumanMessage,
+  AIMessage,
 } from 'langchain';
 import { ChatAnthropic } from '@langchain/anthropic';
 
@@ -635,6 +636,67 @@ describe('prompt lifecycle observation (AC2)', () => {
       expect(typeof record.timestamp).toBe('number');
       expect(record.promptLength).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it('preserves a resumed tool call when a fresh model reuses an existing AI message ID', async () => {
+    const mutationHandler = vi.fn(
+      async (_args: { path: string; content: string }) => 'wrote',
+    );
+    const mutationTool = tool(mutationHandler, {
+      name: 'write_file',
+      description: 'Mutation double for checkpoint message-ID reconciliation.',
+      schema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          content: { type: 'string' },
+        },
+        required: ['path', 'content'],
+        additionalProperties: false,
+      },
+    });
+    const model = new FakeToolCallingModel({
+      toolCalls: [
+        [
+          {
+            name: 'write_file',
+            args: { path: '/sentinel-2', content: 'secret-2' },
+            id: 'write_call_2',
+          },
+        ],
+        [],
+      ],
+    });
+    const hook = buildPromptLifecycleHook(undefined, []);
+
+    harness.makeModel = null;
+    const agent = createAgent({
+      model,
+      tools: [mutationTool],
+      middleware: [hook],
+    });
+    const result = await agent.invoke({
+      messages: [
+        new HumanMessage('prior turn'),
+        new AIMessage({ id: '0', content: 'prior answer' }),
+        new HumanMessage('attempt the second mutation'),
+      ],
+    });
+
+    expect(mutationHandler).toHaveBeenCalledTimes(1);
+    expect(mutationHandler.mock.calls[0]?.[0]).toEqual({
+      path: '/sentinel-2',
+      content: 'secret-2',
+    });
+    const aiMessages = result.messages.filter((message) =>
+      AIMessage.isInstance(message),
+    );
+    expect(aiMessages.filter((message) => message.id === '0')).toHaveLength(1);
+    const toolCallingMessage = aiMessages.find((message) =>
+      message.tool_calls?.some((call) => call.id === 'write_call_2'),
+    );
+    expect(toolCallingMessage?.id).toBeDefined();
+    expect(toolCallingMessage?.id).not.toBe('0');
   });
 });
 

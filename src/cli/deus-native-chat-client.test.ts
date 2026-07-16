@@ -1,5 +1,5 @@
 /**
- * Client-loop tests for LIA-428 / G1 — scripted input/output against a fake
+ * Client-loop tests for LIA-428 / G1 and LIA-430 / G3 — scripted input/output against a fake
  * transport: two sequential prompts, /status, /exit, EOF cleanup, and the
  * framing-free rendering guarantee (acceptance criterion 3).
  */
@@ -26,6 +26,8 @@ function makeStatus(
 ): NativeChatStatus {
   return {
     backend: 'deus-native',
+    mode: 'normal',
+    permissionProfile: 'default',
     sessionId: SESSION_ID,
     state: 'resumed',
     output: 'buffered',
@@ -43,13 +45,25 @@ interface FakeTransportOptions {
 
 function fakeTransport(options: FakeTransportOptions = {}) {
   const turns: string[] = [];
+  const planTransitions: boolean[] = [];
+  const baseline = options.status?.permissionProfile ?? 'default';
+  let currentStatus = options.status ?? makeStatus();
   let closes = 0;
   let inFlight = 0;
   let sawOverlap = false;
   const transport: ChatTransport = {
     async status() {
       if (options.failStatus) throw new Error('unavailable');
-      return options.status ?? makeStatus();
+      return currentStatus;
+    },
+    async setPlanMode(enabled) {
+      planTransitions.push(enabled);
+      currentStatus = {
+        ...currentStatus,
+        mode: enabled ? 'plan' : 'normal',
+        permissionProfile: enabled ? 'read-only' : baseline,
+      };
+      return currentStatus;
     },
     async turn(prompt, _cwd, onEvent) {
       if (inFlight > 0) sawOverlap = true;
@@ -77,6 +91,7 @@ function fakeTransport(options: FakeTransportOptions = {}) {
   return {
     transport,
     turns,
+    planTransitions,
     get closes() {
       return closes;
     },
@@ -152,12 +167,41 @@ describe('runChatCli', () => {
     expect(run.fake.closes).toBe(1);
   });
 
-  it('renders /status as the four diagnostic lines with full backend and session id', async () => {
+  it('renders /status with mode plus the existing diagnostics', async () => {
     const run = await runScripted(['/status', '/quit']);
     expect(run.stdout).toContain('Backend: deus-native');
+    expect(run.stdout).toContain('Mode:    normal (default)');
     expect(run.stdout).toContain(`Session: ${SESSION_ID}`);
     expect(run.stdout).toContain('State:   resumed');
     expect(run.stdout).toContain('Output:  buffered');
+  });
+
+  it('handles plan transitions locally, renders each mode, and never forwards commands as prompts', async () => {
+    const run = await runScripted([
+      '/plan on',
+      '/status',
+      'inspect this',
+      '/plan off',
+      '/exit',
+    ]);
+
+    expect(run.fake.planTransitions).toEqual([true, false]);
+    expect(run.fake.turns).toEqual(['inspect this']);
+    expect(run.stdout).toContain('Mode:    plan (read-only)');
+    expect(run.stdout).toContain('Mode:    normal (default)');
+  });
+
+  it('prints plan usage for invalid forms and keeps the loop usable', async () => {
+    const run = await runScripted([
+      '/plan',
+      '/plan maybe',
+      '/plan on now',
+      'still works',
+      '/exit',
+    ]);
+    expect(run.stdout.match(/Usage: \/plan on\|off/g)).toHaveLength(3);
+    expect(run.fake.planTransitions).toEqual([]);
+    expect(run.fake.turns).toEqual(['still works']);
   });
 
   it('shows "not started" before the first successful turn', async () => {
@@ -174,6 +218,16 @@ describe('runChatCli', () => {
     const run = await runScripted(['/exit']);
     expect(run.stdout).toContain('Resumed your previous conversation');
     expect(run.stdout).toContain('/status');
+  });
+
+  it('shows the current plan mode in the startup banner', async () => {
+    const run = await runScripted(['/exit'], {
+      status: makeStatus({
+        mode: 'plan',
+        permissionProfile: 'read-only',
+      }),
+    });
+    expect(run.stdout).toContain('Mode:    plan (read-only)');
   });
 
   it('exits cleanly on EOF (no /exit) with a best-effort close', async () => {
