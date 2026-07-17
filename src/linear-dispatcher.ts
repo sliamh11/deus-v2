@@ -6,8 +6,8 @@ import path from 'path';
 import { promisify } from 'util';
 import { LinearClient } from '@linear/sdk';
 import { DATA_DIR, HOME_DIR, GROUPS_DIR } from './config.js';
-import { parse as parseYaml } from 'yaml';
 import { logger } from './logger.js';
+import { extractFrontmatter } from './frontmatter.js';
 import { PROJECT_ROOT } from './config.js';
 import { getProjectByPath, registerProject } from './project-registry.js';
 import { FatalError, RetryableError } from './errors/index.js';
@@ -189,21 +189,12 @@ let _ctx: LinearContext | null = null;
 // Promise-chain serializer — same pattern as commentLocks in linear-notifications.ts
 let _patchMutex: Promise<void> = Promise.resolve();
 
-export function extractFrontmatter(content: string): {
-  data: Record<string, unknown>;
-  body: string;
-} {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { data: {}, body: content };
-  try {
-    return {
-      data: parseYaml(match[1]) as Record<string, unknown>,
-      body: match[2],
-    };
-  } catch {
-    return { data: {}, body: content };
-  }
-}
+// LIA-411: relocated to a dependency-free `./frontmatter.js` so non-Linear
+// consumers (warden role-model loading) can reuse it without pulling in
+// this file's Linear-pipeline-specific dependencies. Re-exported here so
+// existing consumers (loadRoleSpecs below, linear-gate-specs.ts,
+// linear-webhook.test.ts) keep working unchanged.
+export { extractFrontmatter };
 
 export function loadRoleSpecs(agentsDir: string): Map<string, RoleSpec> {
   const specs = new Map<string, RoleSpec>();

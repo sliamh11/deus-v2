@@ -12,7 +12,43 @@ const harness = vi.hoisted(() => ({
   groups: '',
   trace: [] as string[],
   parentSawNestedResult: false,
+  // The parent's own model id for this test run — the createAgent mock
+  // below uses this (not a hardcoded literal) to decide whether a given
+  // createAgent() call is building the parent or one of its dispatched
+  // children, so each test can freely choose a main model distinct from
+  // whatever role/frontmatter model(s) it expects a child to resolve to.
+  mainModel: 'claude-opus-4-8',
+  // LIA-411: the scripted parent's dispatch_nested_agent tool calls, one
+  // per sequential round (each round's tool result is fed back before the
+  // next round fires) — generalized from the original single hardcoded
+  // `agentId: 'researcher'` dispatch so a test can script the parent
+  // dispatching two DIFFERENT named agents.
+  dispatchPlan: [] as Array<{ agentId: string; model: string }>,
 }));
+
+function dispatchToolCall(
+  id: string,
+  plan: { agentId: string; model: string },
+) {
+  return {
+    name: 'dispatch_nested_agent',
+    id,
+    args: {
+      agentId: plan.agentId,
+      model: plan.model,
+      prompt: 'return a summary',
+      outputContract: {
+        name: 'summary',
+        schema: {
+          type: 'object',
+          properties: { summary: { type: 'string' } },
+          required: ['summary'],
+          additionalProperties: false,
+        },
+      },
+    },
+  };
+}
 
 function decorate(
   model: FakeToolCallingModel,
@@ -51,41 +87,26 @@ vi.mock('langchain', async (importOriginal) => {
     ...actual,
     createAgent: (config: Parameters<typeof actual.createAgent>[0]) => {
       const modelId = (config.model as { model?: string }).model ?? 'unknown';
-      const scripted =
-        modelId === 'claude-sonnet-4-6'
-          ? decorate(
-              new actual.FakeToolCallingModel({ toolCalls: [[]] }),
-              modelId,
-              '{"summary":"role model ran"}',
-            )
-          : decorate(
-              new actual.FakeToolCallingModel({
-                toolCalls: [
-                  [
-                    {
-                      name: 'dispatch_nested_agent',
-                      id: 'dispatch-1',
-                      args: {
-                        agentId: 'researcher',
-                        model: 'parent-raw-model-c',
-                        prompt: 'return a summary',
-                        outputContract: {
-                          name: 'summary',
-                          schema: {
-                            type: 'object',
-                            properties: { summary: { type: 'string' } },
-                            required: ['summary'],
-                            additionalProperties: false,
-                          },
-                        },
-                      },
-                    },
-                  ],
-                  [],
-                ],
-              }),
-              modelId,
-            );
+      const isParent = modelId === harness.mainModel;
+      const scripted = isParent
+        ? decorate(
+            new actual.FakeToolCallingModel({
+              // One dispatch round per scripted plan entry, then a final
+              // empty round with no tool calls so the parent finalizes.
+              toolCalls: [
+                ...harness.dispatchPlan.map((plan, i) => [
+                  dispatchToolCall(`dispatch-${i + 1}`, plan),
+                ]),
+                [],
+              ],
+            }),
+            modelId,
+          )
+        : decorate(
+            new actual.FakeToolCallingModel({ toolCalls: [[]] }),
+            modelId,
+            '{"summary":"role model ran"}',
+          );
       return actual.createAgent({ ...config, model: scripted });
     },
   };
@@ -115,9 +136,22 @@ vi.mock('../group-tokens.js', () => ({
 vi.mock('./tool-broker-langchain-adapter.js', () => ({
   buildSafeTools: async () => [],
 }));
+// LIA-411: wraps (never replaces) the real parser so the cache test below
+// can count invocations, while every other test in this file still gets
+// the real frontmatter/YAML parsing behavior against the repo's actual
+// `.claude/agents/*.md` files.
+vi.mock('../frontmatter.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../frontmatter.js')>();
+  return {
+    ...actual,
+    extractFrontmatter: vi.fn(actual.extractFrontmatter),
+  };
+});
 
 const { createDeusNativeRuntime } = await import('./deus-native-backend.js');
 const { _resetCheckpointerForTests } = await import('./checkpointer.js');
+const { loadWardenRoleModels } = await import('./warden-role-models.js');
+const { extractFrontmatter } = await import('../frontmatter.js');
 
 const deps: ContainerRuntimeDeps = {
   resolveGroup: () => undefined,
@@ -132,6 +166,8 @@ beforeEach(() => {
   fs.mkdirSync(harness.groups, { recursive: true });
   harness.trace = [];
   harness.parentSawNestedResult = false;
+  harness.mainModel = 'claude-opus-4-8';
+  harness.dispatchPlan = [];
   _resetCheckpointerForTests();
 });
 afterEach(() => {
@@ -141,6 +177,10 @@ afterEach(() => {
 
 describe('deus-native production model selection', () => {
   it('executes configured role model and never constructs the raw requested model', async () => {
+    harness.mainModel = 'claude-opus-4-8';
+    harness.dispatchPlan = [
+      { agentId: 'researcher', model: 'parent-raw-model-c' },
+    ];
     const events: RuntimeEvent[] = [];
     const result = await createDeusNativeRuntime(deps).runTurn(
       {
@@ -176,5 +216,113 @@ describe('deus-native production model selection', () => {
           event.type === 'tool_call' && event.name === 'dispatch_nested_agent',
       ),
     ).toBe(true);
+  });
+
+  it('resolves plan-reviewer and verification-gate through their own real frontmatter model, discarding the parent-guessed model', async () => {
+    // Distinct from BOTH plan-reviewer's (sonnet) and verification-gate's
+    // (opus) real `.claude/agents/*.md` frontmatter models, so any
+    // `claude-sonnet-4-6`/`claude-opus-4-8` entry in the trace is
+    // unambiguously attributable to a dispatched child, never the parent.
+    harness.mainModel = 'claude-haiku-4-5-20251001';
+    harness.dispatchPlan = [
+      { agentId: 'plan-reviewer', model: 'parent-guessed-model-a' },
+      { agentId: 'verification-gate', model: 'parent-guessed-model-b' },
+    ];
+    const events: RuntimeEvent[] = [];
+    const result = await createDeusNativeRuntime(deps).runTurn(
+      {
+        prompt: 'run wardens',
+        groupFolder: 'g',
+        chatJid: 'g@test',
+        isControlGroup: false,
+        backendConfig: {
+          modelSelection: {
+            main: {
+              provider: 'anthropic',
+              model: 'claude-haiku-4-5-20251001',
+            },
+            // Deliberately empty: neither name is user-configured here, so
+            // the frontmatter tier -- not user config -- is what's under
+            // test (the precedence test below covers the opposite case).
+            roles: {},
+          },
+        },
+      },
+      { backend: 'deus-native', session_id: '' },
+      (event) => {
+        events.push(event);
+      },
+    );
+    expect(result.status).toBe('success');
+    // plan-reviewer.md's real `model: sonnet` frontmatter.
+    expect(harness.trace).toContain('claude-sonnet-4-6');
+    // verification-gate.md's real `model: opus` frontmatter.
+    expect(harness.trace).toContain('claude-opus-4-8');
+    expect(harness.trace).not.toContain('parent-guessed-model-a');
+    expect(harness.trace).not.toContain('parent-guessed-model-b');
+  });
+
+  it('prefers an explicit effectiveModels.roles override over the plan-reviewer frontmatter default', async () => {
+    harness.mainModel = 'claude-haiku-4-5-20251001';
+    harness.dispatchPlan = [
+      { agentId: 'plan-reviewer', model: 'parent-guessed-model-c' },
+    ];
+    const result = await createDeusNativeRuntime(deps).runTurn(
+      {
+        prompt: 'run wardens',
+        groupFolder: 'g',
+        chatJid: 'g@test',
+        isControlGroup: false,
+        backendConfig: {
+          modelSelection: {
+            main: {
+              provider: 'anthropic',
+              model: 'claude-haiku-4-5-20251001',
+            },
+            roles: {
+              // Explicit user override. plan-reviewer.md's real frontmatter
+              // still says `model: sonnet` -- the override must win.
+              'plan-reviewer': {
+                provider: 'anthropic',
+                model: 'claude-opus-4-8',
+              },
+            },
+          },
+        },
+      },
+      { backend: 'deus-native', session_id: '' },
+      () => {},
+    );
+    expect(result.status).toBe('success');
+    expect(harness.trace).toContain('claude-opus-4-8');
+    expect(harness.trace).not.toContain('claude-sonnet-4-6');
+    expect(harness.trace).not.toContain('parent-guessed-model-c');
+  });
+});
+
+describe('loadWardenRoleModels mtime-guard cache', () => {
+  it('does not re-parse frontmatter on a second call when no agent file changed', () => {
+    const spy = vi.mocked(extractFrontmatter);
+    const cacheDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'warden-role-models-cache-'),
+    );
+    try {
+      fs.writeFileSync(
+        path.join(cacheDir, 'a.md'),
+        '---\nname: a\nmodel: sonnet\n---\nbody',
+      );
+      const callsBefore = spy.mock.calls.length;
+
+      const first = loadWardenRoleModels(cacheDir);
+      expect(first.get('a')).toBe('sonnet');
+      const callsAfterFirst = spy.mock.calls.length;
+      expect(callsAfterFirst - callsBefore).toBe(1);
+
+      const second = loadWardenRoleModels(cacheDir);
+      expect(second).toBe(first);
+      expect(spy.mock.calls.length).toBe(callsAfterFirst);
+    } finally {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
   });
 });

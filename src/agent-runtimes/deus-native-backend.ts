@@ -113,6 +113,10 @@ import {
   parseEffectiveNativeModelConfig,
   resolveEffectiveRoleModel,
 } from './model-selection.js';
+import {
+  loadWardenRoleModels,
+  resolveWardenModelAlias,
+} from './warden-role-models.js';
 
 // capabilities() — each flag has an inline rationale, matching
 // llama-cpp-backend.ts's existing comment convention.
@@ -173,7 +177,16 @@ function buildToolBrokerContext(runContext: RunContext): ToolBrokerContext {
 }
 
 export class DeusNativeRuntime implements AgentRuntime {
-  constructor(private deps: ContainerRuntimeDeps) {}
+  // LIA-411: loaded ONCE at construction (not per-turn) and stored as an
+  // instance field — `.claude/agents/<name>.md` files change rarely
+  // (checked-in, not per-request), so re-reading every turn would be pure
+  // waste. `runTurn` reads this via `this.wardenRoleModels`, never
+  // re-invoking `loadWardenRoleModels` itself.
+  private readonly wardenRoleModels: Map<string, string>;
+
+  constructor(private deps: ContainerRuntimeDeps) {
+    this.wardenRoleModels = loadWardenRoleModels();
+  }
 
   name(): 'deus-native' {
     return 'deus-native';
@@ -439,8 +452,31 @@ export class DeusNativeRuntime implements AgentRuntime {
           },
         },
         {
-          resolveEffectiveModelId: (agentId, _requestedModelId) =>
-            resolveEffectiveRoleModel(effectiveModels, agentId).model,
+          // LIA-411: explicit user role config (`effectiveModels.roles`,
+          // set via `deus chat model set --role`) always wins first — it
+          // is checked BEFORE the checked-in frontmatter tier, matching
+          // `resolveEffectiveRoleModel`'s own exact-role-first precedence.
+          // Only when the user has NOT configured this exact role is the
+          // dispatched agent's `.claude/agents/<name>.md` `model:`
+          // frontmatter (loaded once at construction, see
+          // `this.wardenRoleModels` above) consulted; a miss there (no
+          // frontmatter entry, or an alias `resolveWardenModelAlias` can't
+          // map) falls through to the same configured main/default the
+          // pre-LIA-411 behavior used. Never throws.
+          resolveEffectiveModelId: (agentId, _requestedModelId) => {
+            if (Object.hasOwn(effectiveModels.roles ?? {}, agentId)) {
+              return resolveEffectiveRoleModel(effectiveModels, agentId).model;
+            }
+            const wardenModel = this.wardenRoleModels.get(agentId);
+            const resolved =
+              wardenModel !== undefined
+                ? resolveWardenModelAlias(wardenModel)
+                : undefined;
+            return (
+              resolved ??
+              resolveEffectiveRoleModel(effectiveModels, agentId).model
+            );
+          },
         },
       );
 
