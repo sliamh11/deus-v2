@@ -276,7 +276,7 @@ BEHAVIORAL_TESTS: dict[str, list[tuple[str, str]]] = {
         ("Where is the user located?", "Israel"),
         # Architecture
         ("What is the basic system architecture?", "Single Node.js process with skill-based channel system, messages route to Claude Agent SDK in containers"),
-        ("What channels are supported?", "WhatsApp, Telegram, Slack, Discord, Gmail"),
+        ("What channels are supported?", "WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook"),
         # Eval / model
         ("What eval judge priority chain is used?", "Ollama(10) > Gemini(20) > Claude(30)"),
         ("What is the generative model fallback chain?", "gemini-3-flash -> gemini-2.5-flash -> gemini-2.5-flash-lite -> Ollama on 429"),

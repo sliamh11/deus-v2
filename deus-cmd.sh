@@ -1039,7 +1039,7 @@ $user_prompt"
 
 Key capabilities you have:
 - Memory: you remember context across conversations. If a vault is configured, you have access to session logs, preferences, and project history.
-- Channels: WhatsApp, Telegram, Slack, Discord, Gmail - the user may talk to you through any of these.
+- Channels: WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook - the user may talk to you through any of these (Teams/Outlook: wired and unit-tested, not yet proven end-to-end — see AGENTS.md, LIA-392).
 - Vision and voice: you can see images and transcribe voice messages.
 - Calendar: you can read and create Google Calendar events.
 - Self-improvement: you score your own responses and learn from both successes and failures over time.

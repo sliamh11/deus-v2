@@ -14,6 +14,8 @@ graph TB
         SL[Slack]
         DC[Discord]
         GM[Gmail]
+        TM[Teams]
+        OL[Outlook]
     end
 
     subgraph Host["Host Process · Node.js"]

@@ -14,7 +14,7 @@ Choose the right tool for what you care about.
 
 |  | **Deus** | **[OpenClaw](https://github.com/openclaw/openclaw)** | **[NemoClaw](https://github.com/NVIDIA/NemoClaw)** | **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** | **Plain Claude** |
 |---|---|---|---|---|---|
-| **Messaging channels** | 5 (WhatsApp, Telegram, Slack, Discord, Gmail) | 10+ (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams, IRC...) | Via OpenClaw | 15+ (WhatsApp, Telegram, Signal, Matrix...) | None |
+| **Messaging channels** | 7 (WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook) | 10+ (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams, IRC...) | Via OpenClaw | 15+ (WhatsApp, Telegram, Signal, Matrix...) | None |
 | **Agent isolation** | Each conversation runs in its own container | Opt-in Docker sandbox | Kernel-level sandboxing | Per-session | None |
 | **Memory** | Remembers past conversations and learns preferences over time | Markdown files on disk | Via OpenClaw | Full-text search + preference profiling | Current conversation only |
 | **Learning** | Scores itself, fixes mistakes, improves over time | No | No | Auto-creates & refines skills | No |

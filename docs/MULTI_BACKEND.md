@@ -59,7 +59,7 @@ Regardless of backend, Deus preserves:
 - Same chat commands (/compact, /settings, etc.)
 - Same session management and idle reset
 - Same scheduled task execution
-- Same channel support (WhatsApp, Telegram, Slack, Discord, Gmail)
+- Same channel support (WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook — Teams/Outlook wired and unit-tested, not yet E2E-proven; see AGENTS.md, LIA-392)
 - Same context loading (CLAUDE.md, group config, registered context files)
 
 ## What Differs
