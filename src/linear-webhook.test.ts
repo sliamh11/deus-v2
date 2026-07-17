@@ -591,6 +591,7 @@ bad: yaml: content: here
 
 Body.`);
     expect(result.data).toEqual({});
+    expect(result.parseError).toContain('Nested mappings are not allowed');
   });
 });
 
