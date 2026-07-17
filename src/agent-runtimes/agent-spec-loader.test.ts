@@ -36,6 +36,20 @@ describe('loadAgentSpecs — repository role specifications', () => {
     ).resolves.toMatchObject({ success: true });
   });
 
+  it('canonicalizes a checked-in warden model without an override', () => {
+    const planReviewer = specs.get('plan-reviewer');
+    expect(planReviewer).toBeDefined();
+    expect(planReviewer?.model).toBe('sonnet');
+
+    const request = buildAgentSpecDispatchRequest(
+      planReviewer!,
+      'Review the LIA-420 implementation plan.',
+    );
+
+    expect(request.model).toBe('claude-sonnet-4-6');
+    expect(request.model).not.toBe('sonnet');
+  });
+
   it('loads a non-warden role with its supported Claude fields', () => {
     const codeExplorer = specs.get('code-explorer');
     expect(codeExplorer).toBeDefined();
@@ -150,6 +164,31 @@ describe('loadAgentSpecs — validation', () => {
     expect(() =>
       buildAgentSpecDispatchRequest(researcher, 'Research this.'),
     ).toThrowError('no model was configured');
+  });
+
+  it('rejects an unresolvable checked-in model alias', () => {
+    fs.writeFileSync(
+      path.join(agentsDir, 'researcher.md'),
+      '---\ndescription: Researches a focused question.\nmodel: future-tier\n---\nRole body.',
+    );
+    const researcher = loadAgentSpecs(agentsDir).get('researcher')!;
+
+    try {
+      buildAgentSpecDispatchRequest(researcher, 'Research this.');
+      expect.fail('expected an unresolvable model alias to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(FatalError);
+      expect((err as Error).message).toContain(
+        'checked-in model alias "future-tier" could not be resolved',
+      );
+      expect((err as FatalError).context.issues).toEqual([
+        {
+          file: researcher.sourcePath,
+          path: 'model',
+          message: 'unresolvable checked-in model alias "future-tier"',
+        },
+      ]);
+    }
   });
 
   it('returns an empty map for a missing agents directory', () => {

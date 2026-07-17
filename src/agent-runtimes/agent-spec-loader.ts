@@ -23,6 +23,7 @@ import type {
   NestedDispatchRequest,
   OutputContract,
 } from './nested-dispatch.js';
+import { resolveWardenModelAlias } from './warden-role-models.js';
 
 const DEFAULT_AGENTS_DIR = path.join(PROJECT_ROOT, '.claude', 'agents');
 
@@ -48,7 +49,7 @@ export interface LoadedAgentSpec {
   /** Normalized dispatch id: frontmatter `name`, or the filename stem. */
   name: string;
   description: string;
-  /** Raw checked-in model id/alias. Resolution remains a caller policy. */
+  /** Raw checked-in model id/alias; dispatch adaptation canonicalizes it. */
   model?: string;
   /** Markdown body used as the portable role/system-prompt input. */
   systemPrompt: string;
@@ -192,8 +193,8 @@ export function loadAgentSpecs(
 /**
  * Adapts one loaded role plus a concrete task to B8's exact request shape.
  * A model override may carry the caller's already-resolved canonical model;
- * otherwise the raw checked-in model is retained for the caller's
- * `resolveModel` policy to interpret.
+ * otherwise the checked-in model is resolved from its supported alias to the
+ * canonical model id required by the production B8 resolver.
  */
 export function buildAgentSpecDispatchRequest(
   spec: LoadedAgentSpec,
@@ -217,8 +218,8 @@ export function buildAgentSpecDispatchRequest(
     );
   }
 
-  const model = modelOverride ?? spec.model;
-  if (model === undefined || model.trim().length === 0) {
+  const configuredModel = modelOverride ?? spec.model;
+  if (configuredModel === undefined || configuredModel.trim().length === 0) {
     throw new FatalError(
       `Invalid agent dispatch for "${spec.name}": no model was configured`,
       {
@@ -235,9 +236,31 @@ export function buildAgentSpecDispatchRequest(
     );
   }
 
+  const requestedModel = configuredModel.trim();
+  const model =
+    modelOverride !== undefined
+      ? requestedModel
+      : resolveWardenModelAlias(requestedModel);
+  if (model === undefined) {
+    throw new FatalError(
+      `Invalid agent dispatch for "${spec.name}": checked-in model alias "${requestedModel}" could not be resolved`,
+      {
+        context: {
+          issues: [
+            {
+              file: spec.sourcePath,
+              path: 'model',
+              message: `unresolvable checked-in model alias "${requestedModel}"`,
+            },
+          ],
+        },
+      },
+    );
+  }
+
   return {
     agentId: spec.name,
-    model: model.trim(),
+    model,
     prompt: [
       spec.systemPrompt,
       '',
