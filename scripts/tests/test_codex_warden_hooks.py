@@ -4551,6 +4551,115 @@ def test_mark_cli_worktree_root_writes_namespaced(tmp_path):
     assert hooks.main is not None  # sanity; override reset happens in finally
 
 
+# ── LIA-410: `run` subcommand's explicit --workspace-root override ─────────
+# The `run` subparser's bucket derivation reads `event.get("cwd")`
+# unconditionally UNLESS a caller supplies the new `--workspace-root` value,
+# in which case `run()` prefers it over the hook-event cwd when computing
+# `_worktree_for_cwd`/`worktree_override` (scripts/codex_warden_hooks.py's
+# `run()` / the `run` subparser's `--workspace-root` argument). These tests
+# exercise `run()` directly (bypassing argparse) with a spy RUNNERS entry that
+# reports the ACTIVE marker bucket via `_claude_marker_dir` from inside the
+# `worktree_override` context `run()` establishes — the same mechanism every
+# real gate runner observes.
+
+def _two_worktrees(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A git repo with two linked worktrees off the same commit."""
+    repo, wt_a = _repo_with_worktree(tmp_path, name="wt-a")
+    wt_b = repo / ".claude" / "worktrees" / "wt-b"
+    subprocess.run(
+        ["git", "worktree", "add", str(wt_b), "-b", "branch-wt-b"],
+        cwd=repo, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return repo, wt_a, wt_b.resolve()
+
+
+def _spy_runner(observed: list[Path], hooks) -> object:
+    def spy(event, repo_root):
+        observed.append(hooks._claude_marker_dir(repo_root))
+        return 0
+    return spy
+
+
+def test_run_workspace_root_distinguishes_two_buckets(tmp_path, monkeypatch):
+    """Two distinct explicit --workspace-root values resolve two distinct
+    verdict buckets (AC: tests distinguish two workspaces with different
+    explicit roots)."""
+    hooks = load_hooks()
+    repo, wt_a, wt_b = _two_worktrees(tmp_path)
+
+    observed: list[Path] = []
+    monkeypatch.setitem(hooks.RUNNERS, "spy-behavior", _spy_runner(observed, hooks))
+    # The event's own cwd is irrelevant here -- an explicit workspace_root is
+    # supplied on every call below, so it must win regardless of event cwd.
+    monkeypatch.setattr(hooks, "_read_stdin_json", lambda: {"cwd": str(repo)})
+
+    hooks.run(Namespace(
+        behavior="spy-behavior", repo_root=str(repo), script_path=str(SCRIPT),
+        workspace_root=str(wt_a),
+    ))
+    hooks.run(Namespace(
+        behavior="spy-behavior", repo_root=str(repo), script_path=str(SCRIPT),
+        workspace_root=str(wt_b),
+    ))
+
+    assert len(observed) == 2
+    assert observed[0] != observed[1]
+    assert observed[0] == _bucket_dir(repo, wt_a)
+    assert observed[1] == _bucket_dir(repo, wt_b)
+
+
+def test_run_workspace_root_overrides_event_cwd(tmp_path, monkeypatch):
+    """Hook-event cwd is provably NOT the bucket source once --workspace-root
+    is given: an event.cwd that would derive worktree B via the OLD cwd-based
+    path is present, but the explicit workspace_root (worktree A) wins."""
+    hooks = load_hooks()
+    repo, wt_a, wt_b = _two_worktrees(tmp_path)
+
+    observed: list[Path] = []
+    monkeypatch.setitem(hooks.RUNNERS, "spy-behavior-cwd", _spy_runner(observed, hooks))
+    # event cwd points at worktree B -- the pre-LIA-410 cwd-derived path would
+    # bucket into B's marker dir.
+    monkeypatch.setattr(hooks, "_read_stdin_json", lambda: {"cwd": str(wt_b)})
+
+    hooks.run(Namespace(
+        behavior="spy-behavior-cwd", repo_root=str(repo), script_path=str(SCRIPT),
+        workspace_root=str(wt_a),
+    ))
+
+    assert observed[0] == _bucket_dir(repo, wt_a)
+    assert observed[0] != _bucket_dir(repo, wt_b)
+
+
+def test_run_falls_back_to_event_cwd_when_workspace_root_absent(tmp_path, monkeypatch):
+    """Back-compat: an omitted --workspace-root (None, the argparse default)
+    leaves the prior event.cwd-derived behavior byte-unchanged."""
+    hooks = load_hooks()
+    repo, wt_a = _repo_with_worktree(tmp_path, name="wt-a")
+
+    observed: list[Path] = []
+    monkeypatch.setitem(hooks.RUNNERS, "spy-behavior-fallback", _spy_runner(observed, hooks))
+    monkeypatch.setattr(hooks, "_read_stdin_json", lambda: {"cwd": str(wt_a)})
+
+    hooks.run(Namespace(
+        behavior="spy-behavior-fallback", repo_root=str(repo), script_path=str(SCRIPT),
+        workspace_root=None,
+    ))
+
+    assert observed[0] == _bucket_dir(repo, wt_a)
+
+
+def test_run_parser_accepts_workspace_root_flag():
+    """The `run` subparser exposes --workspace-root, defaulting to None."""
+    hooks = load_hooks()
+    parser = hooks.build_parser()
+    args = parser.parse_args(["run", "session-init", "--repo-root", "/tmp/x"])
+    assert args.workspace_root is None
+    args = parser.parse_args([
+        "run", "session-init", "--repo-root", "/tmp/x", "--workspace-root", "/tmp/wt",
+    ])
+    assert args.workspace_root == "/tmp/wt"
+
+
 # ── Admin-merge standing autonomy grant (#9a) ───────────────────────────────
 
 import datetime as _dt  # noqa: E402  (section-local; mirrors hook's dt usage)

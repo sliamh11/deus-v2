@@ -428,6 +428,7 @@ function runWardenBehavior(
   behavior: string,
   event: { cwd: string; tool_name: string; tool_input: unknown },
   repoRoot: string,
+  workspaceRoot?: string,
 ): Promise<WardenGateOutcome> {
   return new Promise((settlePromise) => {
     // Named `settlePromise`, not `resolve`: this file also imports `resolve`
@@ -449,9 +450,19 @@ function runWardenBehavior(
     // every other failure mode in this function.
     try {
       const scriptPath = join(repoRoot, 'scripts', 'codex_warden_hooks.py');
+      const argv = [scriptPath, 'run', behavior, '--repo-root', repoRoot];
+      // LIA-410: an explicit workspace root, additive to the existing
+      // `--repo-root` (whose value/meaning is unchanged) — lets the gate
+      // runner key bucket resolution off this explicit value instead of the
+      // hook-event `cwd` field already serialized below. Omitted when the
+      // caller supplies no `workspaceRoot`, so the gate runner falls back to
+      // its prior event.cwd-derived behavior unaffected.
+      if (workspaceRoot !== undefined) {
+        argv.push('--workspace-root', workspaceRoot);
+      }
       const child = execFile(
         'python3',
-        [scriptPath, 'run', behavior, '--repo-root', repoRoot],
+        argv,
         { timeout: 5000, maxBuffer: 64 * 1024 },
         (err, stdout) => {
           if (err) {
@@ -527,10 +538,16 @@ function fallbackRevisedMessage(behavior: string): string {
  * - On complete allow (including the trivial zero-behavior case), one
  *   aggregate `{ toolName, decision: 'allow' }` record is logged and
  *   `handler(request)` is called exactly once with the original request.
+ * - LIA-410: the optional `workspaceRoot` param is forwarded to every gate
+ *   invocation as a NEW, additive `--workspace-root` CLI flag (the existing
+ *   `--repo-root` flag keeps its current meaning/value). Omitted => no flag
+ *   is passed and `codex_warden_hooks.py` falls back to its prior
+ *   event.cwd-derived bucket resolution unchanged.
  */
 export function buildWardensMiddleware(
   wardenCwd?: string,
   orderMarkers?: OrderMarker[],
+  workspaceRoot?: string,
 ): BuiltLayer<ToolCallDecisionRecord> {
   const log: ToolCallDecisionRecord[] = [];
   // Normalized here (not just at the deus-native-backend.ts call site):
@@ -541,6 +558,13 @@ export function buildWardensMiddleware(
   // today's one production caller already resolves it first.
   const resolvedCwd = resolve(wardenCwd ?? process.cwd());
   const repoRoot = resolveWardenRepoRoot(resolvedCwd);
+  // LIA-410: same absolute-path normalization as `resolvedCwd` above, applied
+  // to the new explicit workspace-root channel. `undefined` is preserved
+  // (never coerced to `process.cwd()`) so an omitted `workspaceRoot` leaves
+  // `runWardenBehavior` without a `--workspace-root` flag — the gate runner's
+  // documented fallback-to-event-cwd path, matching today's behavior exactly.
+  const resolvedWorkspaceRoot =
+    workspaceRoot !== undefined ? resolve(workspaceRoot) : undefined;
 
   const middleware = createMiddleware({
     name: 'wardens',
@@ -563,7 +587,12 @@ export function buildWardensMiddleware(
       };
 
       for (const behavior of behaviors) {
-        const outcome = await runWardenBehavior(behavior, event, repoRoot);
+        const outcome = await runWardenBehavior(
+          behavior,
+          event,
+          repoRoot,
+          resolvedWorkspaceRoot,
+        );
         if (outcome.kind === 'allow') continue;
 
         const reason =
@@ -747,6 +776,15 @@ export interface BuildMiddlewareStackDeps {
    *  Production wiring resolves this from `runContext.worktreePath ??
    *  runContext.cwd ?? process.cwd()` (see `deus-native-backend.ts`). */
   wardenCwd?: string;
+  /** LIA-410: explicit workspace root threaded to the wardens gate runner as
+   *  a NEW `--workspace-root` flag, additive to the existing `--repo-root`
+   *  (whose value/meaning is unchanged). Lets verdict-bucket resolution key
+   *  off this explicit value instead of the hook-event `cwd` field. Omitted
+   *  => the gate runner falls back to its prior event.cwd-derived behavior,
+   *  so existing callers that don't supply this are unaffected. Production
+   *  wiring sources this identically to `wardenCwd` (see
+   *  `deus-native-backend.ts`). */
+  workspaceRoot?: string;
 }
 
 export interface MiddlewareStackResult {
@@ -792,7 +830,11 @@ export function buildMiddlewareStack(
         break;
       }
       case 'wardens': {
-        const built = buildWardensMiddleware(deps.wardenCwd, deps.orderMarkers);
+        const built = buildWardensMiddleware(
+          deps.wardenCwd,
+          deps.orderMarkers,
+          deps.workspaceRoot,
+        );
         middleware.push(built.middleware);
         logs.wardens = built.log;
         break;

@@ -340,6 +340,11 @@ export class DeusNativeRuntime implements AgentRuntime {
         {
           permissionProfile: rawPermissionProfile,
           wardenCwd,
+          // LIA-410: explicit workspace root for the wardens gate runner,
+          // sourced identically to `wardenCwd` above (same already-resolved
+          // value — no separate recomputation) — see
+          // `BuildMiddlewareStackDeps.workspaceRoot` in middleware-stack.ts.
+          workspaceRoot: wardenCwd,
           // D1 (LIA-415): the memory layer's retrieval input — the submitted
           // prompt plus the backend-scoped session id (computed above; it
           // drives the hook's session-concept expansion and injection
@@ -419,6 +424,10 @@ export class DeusNativeRuntime implements AgentRuntime {
             buildMiddlewareStack(resolveMiddlewareStackConfig(), {
               permissionProfile: rawPermissionProfile,
               wardenCwd,
+              // LIA-410: same explicit workspace root as the parent's own
+              // middleware stack above — a nested-dispatch child's wardens
+              // gate must resolve the same bucket as the parent's.
+              workspaceRoot: wardenCwd,
             }).middleware,
           parentSessionId: outgoingSessionId,
           provider: 'anthropic',
