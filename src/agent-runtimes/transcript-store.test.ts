@@ -385,7 +385,8 @@ describe('append and queue behavior', () => {
       expect(assistant.type).toBe('assistant');
       expect(assistant.turnId).toBe(user.turnId);
       expect(assistant.parentUuid).toBe(user.uuid);
-      observed.add(user.uuid);
+      expect(typeof user.uuid).toBe('string');
+      observed.add(user.uuid as string);
     }
     expect(observed).toEqual(
       new Set(Array.from({ length: 12 }, (_, index) => `user-${index}`)),
