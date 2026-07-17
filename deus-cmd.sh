@@ -815,6 +815,7 @@ sys.exit(1)
     # Stale tui_default nudge: skip in print mode so a VS Code panel calling
     # --print-identity on every session open doesn't get noise on every call.
     if [ "$PRINT_IDENTITY" != "true" ] && [ "$(_read_config_key tui_default)" = "true" ]; then
+      # Stale tui_default nudge (LIA-389): TUI archived, terminal chat is the replacement.
       echo "$DEUS_TUI_ARCHIVED_MSG" >&2
     fi
     # Print mode must never exec an interactive UI — the query flag wins.
@@ -1510,6 +1511,7 @@ $STARTUP_INSTRUCTION"
     exec python3 "$SCRIPT_DIR/scripts/memory_tree.py" calibrate-sweep "$bench_file" --json
     ;;
   tui)
+    # `deus tui` archived (LIA-389): the Rust TUI is gone, `deus chat` replaces it.
     echo "$DEUS_TUI_ARCHIVED_MSG" >&2
     exit 1
     ;;
