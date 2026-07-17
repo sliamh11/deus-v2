@@ -64,7 +64,10 @@ Do not invent personal facts. Retrieve them or say what is missing.
 Single Node.js host process. No microservices.
 
 - Channels are skill-installed adapters such as WhatsApp, Telegram, Slack,
-  Discord, and Gmail.
+  Discord, Gmail, Teams, and Outlook. Teams and Outlook are wired and
+  unit-tested but not yet proven end-to-end against live Azure Bot Framework /
+  Microsoft Graph — planned, not ready for production traffic without that
+  verification (LIA-392).
 - Each conversation group runs in its own isolated container.
 - Deus owns the runtime/session/tool/context contract.
 - Claude is the default compatibility backend.
@@ -147,7 +150,7 @@ Commands that must remain stable across backends:
 - `/compact`
 
 Host skills are not chat commands. Never suggest them inside WhatsApp,
-Telegram, Slack, Discord, or Gmail.
+Telegram, Slack, Discord, Gmail, Teams, or Outlook.
 
 Repo-owned host skills live under `.claude/skills/`. Some runtimes consume the
 generated `.agents/skills/` compatibility tree. When adding, removing, or

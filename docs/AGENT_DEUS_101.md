@@ -105,7 +105,7 @@ boundaries.
 Repo-owned host skills live under `.claude/skills/`. Some agent runtimes may
 consume a generated `.agents/skills/` compatibility tree. Host skills are for
 host coding sessions, not commands to suggest inside WhatsApp, Telegram, Slack,
-Discord, or Gmail.
+Discord, Gmail, Teams, or Outlook.
 
 ## Commands To Preserve
 

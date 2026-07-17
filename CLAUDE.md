@@ -22,7 +22,9 @@ Single Node.js process with a skill-based channel system. Messages route to a
 backend-neutral agent runtime in isolated containers. Claude Code is the
 default compatibility backend; OpenAI/Codex is opt-in and must preserve the
 same Deus behavior. Supported channels include WhatsApp, Telegram, Slack,
-Discord, and Gmail. Each group has isolated filesystem and memory. Sessions are
+Discord, Gmail, Teams, and Outlook (Teams/Outlook: wired, unit-tested, not
+yet E2E-proven — LIA-392). Each group has isolated filesystem and memory.
+Sessions are
 backend-scoped. Real credentials never enter containers.
 
 ## Skills

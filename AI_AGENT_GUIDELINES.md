@@ -50,9 +50,9 @@ through the memory tree instead of guessing.
 - User-facing commands must stay stable across backends.
 - Chat-channel users should see Deus commands and capabilities, not host-only
   implementation details.
-- Host skills such as `/setup`, `/customize`, `/debug`,
-  `/qodo-pr-resolver`, and `/get-qodo-rules` are for host agent sessions, not
-  commands to suggest inside WhatsApp, Telegram, Slack, Discord, or Gmail.
+- Host skills such as `/setup`, `/customize`, and `/debug` are for host agent
+  sessions, not commands to suggest inside WhatsApp, Telegram, Slack, Discord,
+  Gmail, Teams, or Outlook.
 - Backend selection commands are interface choices: `deus`, `deus claude`,
   `deus codex`, `deus openai`, `DEUS_CLI_AGENT`, and `DEUS_AGENT_BACKEND`.
   They must not alter memory semantics, permissions, channel behavior, or task
