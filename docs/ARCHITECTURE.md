@@ -141,6 +141,8 @@ graph LR
         F_SL[mcp-slack.ts]
         F_DC[mcp-discord.ts]
         F_GM[mcp-gmail.ts]
+        F_TM[mcp-teams.ts]
+        F_OL[mcp-outlook.ts]
     end
 
     subgraph Servers["Channel MCP Servers · packages/"]
@@ -149,22 +151,28 @@ graph LR
         S_SL["@deus-ai/slack-mcp"]
         S_DC["@deus-ai/discord-mcp"]
         S_GM["@deus-ai/gmail-mcp"]
+        S_TM["@deus-ai/teams-mcp"]
+        S_OL["@deus-ai/outlook-mcp"]
     end
 
     CORE["@deus-ai/channel-core<br/>registerCommonTools"]
 
-    IDX -->|side-effect import| F_WA & F_TG & F_SL & F_DC & F_GM
+    IDX -->|side-effect import| F_WA & F_TG & F_SL & F_DC & F_GM & F_TM & F_OL
     F_WA -->|register| REG
     F_TG -->|register| REG
     F_SL -->|register| REG
     F_DC -->|register| REG
     F_GM -->|register| REG
+    F_TM -->|register| REG
+    F_OL -->|register| REG
     F_WA -->|spawn| S_WA
     F_TG -->|spawn| S_TG
     F_SL -->|spawn| S_SL
     F_DC -->|spawn| S_DC
     F_GM -->|spawn| S_GM
-    CORE -->|common tools| S_WA & S_TG & S_SL & S_DC & S_GM
+    F_TM -->|spawn| S_TM
+    F_OL -->|spawn| S_OL
+    CORE -->|common tools| S_WA & S_TG & S_SL & S_DC & S_GM & S_TM & S_OL
 ```
 
 All channels follow the **registry pattern**:

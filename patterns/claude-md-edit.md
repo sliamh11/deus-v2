@@ -3,7 +3,7 @@ governs:
   - CLAUDE.md
   - groups/global/CLAUDE.md.template
   - groups/main/CLAUDE.md.template
-last_verified: "2026-04-25"
+last_verified: "2026-07-17" # auto-bump @1784294024
 test_tasks:
   - "Compress the root CLAUDE.md to remove a redundant section"
   - "Add a new rule to groups/main/CLAUDE.md.template"
