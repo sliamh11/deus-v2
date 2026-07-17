@@ -1,6 +1,6 @@
 ---
 name: threat-modeler
-description: Architecture-level threat review before implementing any feature touching auth, data storage, external APIs, or trust boundaries. Reviews design against STRIDE/OWASP -- NOT code-level security (code-reviewer covers that). Use when the plan involves credentials, sessions, inter-service calls, sensitive data flows, or privilege boundaries. <example>Context: About to implement OAuth flow. user: "I'm adding Google OAuth -- review the design." assistant: "Running threat-modeler before touching auth code." <commentary>Auth = architecture threat surface, not just code security.</commentary></example>
+description: "Architecture-level threat review before implementing any feature touching auth, data storage, external APIs, or trust boundaries. Reviews design against STRIDE/OWASP -- NOT code-level security (code-reviewer covers that). Use when the plan involves credentials, sessions, inter-service calls, sensitive data flows, or privilege boundaries. <example>Context: About to implement OAuth flow. user: \"I'm adding Google OAuth -- review the design.\" assistant: \"Running threat-modeler before touching auth code.\" <commentary>Auth = architecture threat surface, not just code security.</commentary></example>"
 model: opus
 explores_code: true
 color: red

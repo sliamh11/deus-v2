@@ -1,6 +1,6 @@
 ---
 name: architecture-snapshot
-description: Generates a concise current-state architecture overview with Mermaid diagrams, entry points, key abstractions, data flow, and drift observations. Catches drift between the mental model and actual code. Use on-demand or at project milestones -- NOT a code review, this is a map. <example>Context: Just merged a large refactor. user: "snapshot the architecture." assistant: "Running architecture-snapshot to map the current state." <commentary>Post-milestone, on-demand = snapshot time.</commentary></example>
+description: "Generates a concise current-state architecture overview with Mermaid diagrams, entry points, key abstractions, data flow, and drift observations. Catches drift between the mental model and actual code. Use on-demand or at project milestones -- NOT a code review, this is a map. <example>Context: Just merged a large refactor. user: \"snapshot the architecture.\" assistant: \"Running architecture-snapshot to map the current state.\" <commentary>Post-milestone, on-demand = snapshot time.</commentary></example>"
 model: sonnet
 explores_code: true
 color: green
