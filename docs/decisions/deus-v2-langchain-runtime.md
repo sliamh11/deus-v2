@@ -101,6 +101,45 @@ runTurn` mirrors the same rule directly (returns a `status: 'error'`
    result before minting any token or constructing a model), matching the
    per-backend enforcement pattern `buildContainerArgs` already uses rather
    than introducing a new centralized mechanism.
+7. **Two-tier architecture, named (LIA-388 M0.1 record).** Per the
+   2026-07-13 base-harness-selection research
+   (`Research/2026-07-13-deus-v2-base-harness-selection.md`), deus-v2 is a
+   two-tier architecture: **Tier 1 — Deus Runtime**, the product harness
+   that replaces Claude Code for Deus's own product surfaces (channels,
+   containers, web UI, scheduled tasks) — the `deus-native` `AgentRuntime`
+   this ADR adds. **Tier 2 — Interactive clients**, the user's choice of
+   dev CLI (Claude Code, Codex, OpenCode) for developing this repository
+   and its gate logic — not `AgentRuntimeId` product-backend values. This
+   repository is itself developed via Tier-2 Claude Code sessions (see the
+   `.claude/` gate configuration here) while `deus-native` is the Tier-1
+   target for the shipped product; `claude`/`openai`/`llama-cpp` remaining
+   registered `AgentRuntimeId` product-backend values (Decision 1) is a
+   separate axis from Tier-2 dev-CLI choice — it does not contradict this
+   file's own "Related" note above that `backend-neutral-agent-runtime.md`
+   is Not superseded. This record names the two tiers; it does not resolve
+   the open question (flagged under "Backend, provider, and CLI selection"
+   above) of what `deus`/`deus claude`/`deus codex` mean after
+   `deus-native` becomes the default — that remains G1's (LIA-428) to
+   answer.
+8. **Repository and rollout strategy (LIA-388 M0.1 record).** The
+   2026-07-13 research report's migration-style note states explicitly:
+   **"No new repo needed for the runtime... V2 lands as a long-lived
+   feature branch/worktree with per-slice PRs to main behind flags."** At
+   that decision point the strategy was a dedicated git worktree/feature
+   branch inside the original `Deus` repository, per-slice PRs merging
+   independently to that repo's `main` behind
+   `DEUS_AGENT_BACKEND=deus-native`, explicitly rejecting a wholesale-merge
+   integration branch that would land every milestone as one giant diff.
+   **Correction:** that "no new repo" premise did not hold. GitHub records
+   `sliamh11/deus-v2` (this repository) as created 2026-07-16T10:14Z — all
+   V2 work has since migrated out of the original `Deus` repo
+   (`sliamh11/Deus`) into this dedicated sibling repository. The
+   per-slice-PR discipline and the rejection of a wholesale-merge
+   integration branch are unchanged by that correction: every milestone
+   referenced in Consequences below (B1, B4, B7, B8, C1, D1-D4, …) landed
+   as its own reviewed PR to this repo's `main`, never as a bulk merge.
+   `DEUS_AGENT_BACKEND=deus-native` remains the sole migration flag gating
+   cutover regardless of which repository hosts the code.
 
 ## Alternatives Considered
 
@@ -207,6 +246,42 @@ web_fetch}` and remains the operative boundary; B7 added an authorization
   control-only daemon-root fallback (with no cwd step), and additional mounts
   pass through the existing allowlist validator. This closes only the three
   instruction-file gaps; persona and broader memory surfaces remain separate.
+
+## References
+
+- Deep-research report (vault): `Research/2026-07-13-deus-v2-base-harness-selection.md`
+  — the 9-candidate evaluation against five hard requirements (blocking
+  tool-call interception, session-lifecycle events, subagent dispatch with
+  per-agent model selection, MCP consumption, TypeScript embeddability) that
+  selected LangChain JS 1.x for Decision 1, and the source of the Tier
+  1/Tier 2 naming and repo/rollout strategy in items 7-8 above.
+- This ADR is one link in a correction/supersession chain over the
+  pre-deus-v2 hook-dispatch design, recorded across sibling ADRs rather than
+  duplicated here (extending the single passing mention above, in the
+  D1/LIA-415 update, into a structured pointer):
+  - [hook-dispatch-system.md](hook-dispatch-system.md) — the original
+    "Model-Agnostic Hook Dispatch System" design (Accepted 2026-05-14). Its
+    banner states the explicit transition condition: Status flips to
+    Implemented-via-V2 only when the generic `AgentRuntime` `HookPipeline`
+    facade also ships for container backends (or is explicitly descoped) —
+    C1/LIA-409's `deus-native`-specific `wrapToolCall` chain closes only the
+    tool-call-interception half of that scope, not the whole.
+  - [hook-dispatch-facade-correction.md](hook-dispatch-facade-correction.md)
+    — recorded the 2026-06-07 discovery that the two ADRs above described an
+    unbuilt facade. Its Update (F2/LIA-424 — 2026-07-16) section records
+    that C1/LIA-409 has since closed the remediation gap for `deus-native`
+    specifically, and that `ADR-001-hook-dispatch-service.md`'s `:3002`
+    `HookDispatchService` is retired from active production enforcement
+    (default-off, no repository launcher or production configuration
+    enables it) — retained only as dormant, fail-open manual container
+    compatibility.
+  - [ADR-001-hook-dispatch-service.md](ADR-001-hook-dispatch-service.md) —
+    the `:3002` service ADR itself, banner-updated 2026-07-16 to record the
+    same F2 retirement from the service's own perspective.
+
+  None of the three files above are edited by this ADR; each already carries
+  its own correction banner reflecting the current, already-landed state (not
+  a future plan) as of F2/LIA-424 (2026-07-16).
 
 ## Rollback
 
