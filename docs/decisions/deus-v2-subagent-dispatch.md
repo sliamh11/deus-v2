@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-07-16
-**Scope:** `src/agent-runtimes/nested-dispatch.ts`, `src/agent-runtimes/nested-dispatch-tool.ts`, `src/agent-runtimes/deus-native-model.ts`, `src/agent-runtimes/deus-native-usage.ts`, `src/agent-runtimes/deus-native-backend.ts`
+**Scope:** `src/agent-runtimes/nested-dispatch.ts`, `src/agent-runtimes/nested-dispatch-tool.ts`, `src/agent-runtimes/agent-spec-loader.ts`, `src/agent-runtimes/deus-native-model.ts`, `src/agent-runtimes/deus-native-usage.ts`, `src/agent-runtimes/deus-native-backend.ts`
 **Related:**
 
 - `deus-v2-langchain-runtime.md` — establishes the `deus-native` `runTurn()`
@@ -213,6 +213,22 @@ callback, so the parent's own later message-scan cannot double-count them.
 `RunResult.usage` is therefore the exact sum of parent-plus-every-child usage,
 omitted entirely (never a fabricated zero) when nothing in the turn reported
 usage.
+
+### 9. Checked-in agent specifications adapt to typed dispatch requests (LIA-420/E1)
+
+`agent-spec-loader.ts` discovers the direct `.md` children of
+`.claude/agents/`, validates their known YAML-frontmatter fields with Zod, and
+retains unknown fields for forward compatibility. The Markdown body becomes a
+portable role prompt; `.claude/agents/wardens/` is deliberately excluded
+because those nested files configure the separate Linear gate pipeline.
+
+`buildAgentSpecDispatchRequest()` combines the role prompt with one concrete
+task and produces `NestedDispatchRequest<AgentSpecDispatchOutput>` for
+`createNestedDispatcher().dispatch()`. Every such request carries a strict,
+loader-owned `{ content: string }` Zod contract, preserving each role's
+existing Markdown output format inside the validated envelope. C3's cached,
+permissive `warden-role-models.ts` remains unchanged so malformed unrelated
+role files cannot regress the live warden model-alias fallback path.
 
 ## Alternatives Considered
 
