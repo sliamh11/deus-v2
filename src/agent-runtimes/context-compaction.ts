@@ -50,7 +50,7 @@ export const DEFAULT_COMPACTION_SUMMARY_INPUT_TOKENS = 150_000;
 
 /** Stable prefix used both for model context and failure-shape recognition. */
 export const COMPACTION_SUMMARY_PREFIX =
-  'Here is Deus\'s compacted conversation summary:';
+  "Here is Deus's compacted conversation summary:";
 
 /**
  * The categories are explicit so compaction preserves operational continuity,
