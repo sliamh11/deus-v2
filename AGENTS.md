@@ -124,7 +124,7 @@ Use these instead of rediscovering the system:
 | Pipeline CLI                | `src/linear-pipeline-cli.ts`                                      | `deus pipeline` -- event audit from the terminal                                                                                                                                                                  |
 | Native CLI chat             | `src/cli/deus-native-chat.ts`, `src/cli/deus-native-chat-server.ts`, `src/cli/deus-native-chat-client.ts` | `deus chat` -- thin terminal client → authenticated loopback endpoint in the daemon → `deus-native` controller/session store; controller-owned `/plan on\|off` selects B7 read-only per turn (LIA-428/LIA-430; see `docs/decisions/deus-native-cli-chat.md`) |
 | Native model selection      | `src/agent-runtimes/model-selection.ts`, `src/cli/deus-native-model-config.ts` | Validated main/per-role model registry, durable config, and nested-tool enforcement (LIA-429) |
-| Codex Warden hooks          | `scripts/codex_warden_hooks.py`                                   | Installs and runs Codex hook equivalents for Warden gates (plan-reviewer, code-reviewer, verification-gate, threat-modeler)                                                                                       |
+| Codex Warden hooks          | `.claude/hooks/warden-shim.sh`, `scripts/codex_warden_hooks.py`, `scripts/warden_hooks/double_enforcement.py` | Installs and runs Codex hook equivalents for Warden gates; the shim can temporarily shadow shared Claude/middleware triggers with correlated append-only telemetry under `DEUS_WARDEN_DOUBLE_ENFORCEMENT=1` (LIA-413) |
 | Development client tiers    | [`docs/DEVELOPMENT_CLIENT_TIERS.md`](docs/DEVELOPMENT_CLIENT_TIERS.md) | Distinguishes the Tier 1 product runtime from optional Tier 2 development CLIs and documents their guardrail guarantees                                                                                      |
 
 More detailed maps live in [docs/AGENT_DEUS_101.md](docs/AGENT_DEUS_101.md).
@@ -156,66 +156,68 @@ Repo-owned host skills live under `.claude/skills/`. Some runtimes consume the
 generated `.agents/skills/` compatibility tree. When adding, removing, or
 renaming a repo-owned skill, update this table in the same change.
 
-| Skill                         | When to Use                                                                                                                              |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `/add-asana`                  | Add Asana project management MCP integration (read/write tasks & projects)                                                               |
-| `/add-claude-context`         | Deprecated — replaced by `scripts/code_search.py`; do not use                                                                            |
-| `/add-codex`                  | Add OpenAI/Codex as a backend                                                                                                            |
-| `/add-compact`                | Add the backend-neutral `/compact` session command                                                                                       |
-| `/add-discord`                | Add Discord as a channel                                                                                                                 |
-| `/add-editor`                 | Wire Deus's memory + evolution into an external editor (Zed, ACP/MCP)                                                                    |
-| `/add-gcal`                   | Add Google Calendar integration (list, create, update events)                                                                            |
-| `/add-gmail`                  | Add Gmail as a tool or channel                                                                                                           |
-| `/add-image-vision`           | Add image attachment vision to Deus agents                                                                                               |
-| `/add-linear`                 | Add Linear project management MCP integration (read/write issues, projects, cycles)                                                      |
-| `/add-listen-hotkey`          | Add a global hotkey for `deus listen`                                                                                                    |
-| `/add-llama-cpp`              | Install and verify optional local `llama.cpp` generation                                                                                 |
-| `/add-msft-teams`             | Add Microsoft Teams as a channel (Azure Bot Service / Bot Framework)                                                                     |
-| `/add-ollama-tool`            | Add Ollama as an MCP tool for local model calls                                                                                          |
-| `/add-outlook`                | Add Outlook (Microsoft 365 email) as a tool or channel                                                                                   |
-| `/add-parallel`               | Add Parallel AI MCP research tools                                                                                                       |
-| `/add-pdf-reader`             | Add PDF text extraction                                                                                                                  |
-| `/add-reactions`              | Add WhatsApp emoji reaction support                                                                                                      |
-| `/add-slack`                  | Add Slack as a channel                                                                                                                   |
-| `/add-telegram`               | Add Telegram as a channel                                                                                                                |
-| `/add-telegram-swarm`         | Add Agent Swarm support to Telegram                                                                                                      |
-| `/add-understand-anything`    | Install the Understand-Anything plugin (codebase knowledge graphs, `/understand*`)                                                       |
-| `/add-voice-transcription`    | Add OpenAI Whisper voice transcription                                                                                                   |
-| `/add-whatsapp`               | Add WhatsApp as a channel                                                                                                                |
-| `/add-youtube-transcript`     | Add YouTube transcript extraction                                                                                                        |
-| `/checkpoint`                 | Save a mid-session continuity checkpoint                                                                                                 |
-| `/code-review`                | Run multi-agent code review                                                                                                              |
-| `/codebase-design`            | Shared vocabulary for designing deep modules — interface depth, seams, testability                                                       |
-| `/compress`                   | Save the session to the vault and update memory indexes                                                                                  |
-| `/convert-to-apple-container` | Switch from Docker to Apple Container                                                                                                    |
-| `/customize`                  | Add channels, integrations, or behavior changes                                                                                          |
-| `/debug`                      | Debug containers, logs, auth, and runtime issues                                                                                         |
-| `/deep-research`              | Multi-stage research pipeline — classifies intent (shallow/deep/creative), fans out lit-scout + brainstormer, synthesizes with citations |
-| `/design-to-dev`              | Orchestrate frontend implementation from design wireframes (Linear specs + parallel worktrees)                                           |
-| `/diagnosing-bugs`            | Structured diagnosis loop for hard bugs and performance regressions (feedback-loop first)                                                |
-| `/domain-modeling`            | Build and sharpen a project's domain model — glossary + ADRs                                                                             |
-| `/grill-me`                   | Relentless interview to stress-test a plan or design before building                                                                     |
-| `/grill-with-docs`            | Grill a plan and capture decisions as ADRs + glossary as you go                                                                          |
-| `/grilling`                   | The relentless plan/design interview engine (used by `/grill-me` and `/grill-with-docs`)                                                 |
-| `/handoff`                    | Write a structured handoff document so the next agent starts with context                                                                |
-| `/learn-this`                 | Teach a topic and persist it as queryable vault memory, grounded in NotebookLM (vault-native companion to `/teach`)                      |
-| `/linear-slice`               | Decompose a plan into dependency-ordered Linear issues (tracer-bullet slices) and release them into the dispatch pipeline                |
-| `/onboard`                    | Onboard the current project into Deus code intelligence (codegraph + code_search indexing)                                               |
-| `/preferences`                | View or modify Deus user preferences                                                                                                     |
-| `/preserve`                   | Save durable memories from the current conversation                                                                                      |
-| `/project-settings`           | View or modify external project memory settings                                                                                          |
-| `/prototype`                  | Build a throwaway prototype to validate a state model or UI direction                                                                    |
-| `/resolving-merge-conflicts`  | Disciplined resolution of an in-progress git merge/rebase conflict                                                                       |
-| `/resume`                     | Load recent work and memory context                                                                                                      |
-| `/review-logs`                | Review Deus system health logs                                                                                                           |
-| `/setup`                      | Run first-time installation and configuration                                                                                            |
-| `/tdd`                        | Test-driven development loop — red-green-refactor, behavior-first                                                                        |
-| `/teach`                      | Teach a skill or concept over multiple sessions (stateful teaching workspace)                                                            |
-| `/update-skills`              | Update installed skill branches from upstream                                                                                            |
-| `/use-local-whisper`          | Switch voice transcription to local whisper.cpp                                                                                          |
-| `/wardens`                    | View, toggle, and configure warden quality gates                                                                                         |
-| `/writing-great-skills`       | Reference for authoring predictable skills — leading words, progressive disclosure                                                       |
-| `/x-integration`              | Set up or use X/Twitter integration                                                                                                      |
+| Skill                            | When to Use                                                                                                                                        |
+|----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `/add-asana`                     | Add Asana project management MCP integration (read/write tasks & projects)                                                                         |
+| `/add-codex`                     | Add OpenAI/Codex as a backend                                                                                                                      |
+| `/add-compact`                   | Add the backend-neutral `/compact` session command                                                                                                 |
+| `/add-discord`                   | Add Discord as a channel                                                                                                                           |
+| `/add-editor`                    | Wire Deus's memory + evolution into an external editor (Zed, ACP/MCP)                                                                              |
+| `/add-gcal`                      | Add Google Calendar integration (list, create, update events)                                                                                      |
+| `/add-gmail`                     | Add Gmail as a tool or channel                                                                                                                     |
+| `/add-image-vision`              | Add image attachment vision to Deus agents                                                                                                         |
+| `/add-linear`                    | Add Linear project management MCP integration (read/write issues, projects, cycles)                                                                |
+| `/add-listen-hotkey`             | Add a global hotkey for `deus listen`                                                                                                              |
+| `/add-llama-cpp`                 | Install and verify optional local `llama.cpp` generation                                                                                           |
+| `/add-msft-teams`                | Add Microsoft Teams as a channel (Azure Bot Service / Bot Framework)                                                                               |
+| `/add-ollama-tool`               | Add Ollama as an MCP tool for local model calls                                                                                                    |
+| `/add-outlook`                   | Add Outlook (Microsoft 365 email) as a tool or channel                                                                                             |
+| `/add-parallel`                  | Add Parallel AI MCP research tools                                                                                                                 |
+| `/add-pdf-reader`                | Add PDF text extraction                                                                                                                            |
+| `/add-reactions`                 | Add WhatsApp emoji reaction support                                                                                                                |
+| `/add-slack`                     | Add Slack as a channel                                                                                                                             |
+| `/add-telegram`                  | Add Telegram as a channel                                                                                                                          |
+| `/add-telegram-swarm`            | Add Agent Swarm support to Telegram                                                                                                                |
+| `/add-understand-anything`       | Install the Understand-Anything plugin (codebase knowledge graphs, `/understand*`)                                                                 |
+| `/add-voice-transcription`       | Add OpenAI Whisper voice transcription                                                                                                             |
+| `/add-whatsapp`                  | Add WhatsApp as a channel                                                                                                                          |
+| `/add-youtube-transcript`        | Add YouTube transcript extraction                                                                                                                  |
+| `/checkpoint`                    | Save a mid-session continuity checkpoint                                                                                                           |
+| `/code-review`                   | Run multi-agent code review                                                                                                                        |
+| `/codebase-design`               | Shared vocabulary for designing deep modules — interface depth, seams, testability                                                                 |
+| `/compress`                      | Save the session to the vault and update memory indexes                                                                                            |
+| `/convert-to-apple-container`    | Switch from Docker to Apple Container                                                                                                              |
+| `/customize`                     | Add channels, integrations, or behavior changes                                                                                                    |
+| `/debug`                         | Debug containers, logs, auth, and runtime issues                                                                                                   |
+| `/deep-research`                 | Multi-stage research pipeline — classifies intent (shallow/deep/creative), fans out lit-scout + brainstormer, synthesizes with citations           |
+| `/design-to-dev`                 | Orchestrate frontend implementation from design wireframes (Linear specs + parallel worktrees)                                                     |
+| `/diagnosing-bugs`               | Structured diagnosis loop for hard bugs and performance regressions (feedback-loop first)                                                          |
+| `/domain-modeling`               | Build and sharpen a project's domain model — glossary + ADRs                                                                                       |
+| `/grill-me`                      | Relentless interview to stress-test a plan or design before building                                                                               |
+| `/grill-with-docs`               | Grill a plan and capture decisions as ADRs + glossary as you go                                                                                    |
+| `/grilling`                      | The relentless plan/design interview engine (used by `/grill-me` and `/grill-with-docs`)                                                           |
+| `/handoff`                       | Write a structured handoff document so the next agent starts with context                                                                          |
+| `/improve-codebase-architecture` | Scan a codebase for deepening opportunities, present them as a visual HTML report, then grill through whichever one you pick                       |
+| `/learn-procedure`               | Capture a repeatable task procedure from just-completed work as a durable, queryable memory node so the steps are recalled automatically next time |
+| `/learn-this`                    | Teach a topic and persist it as queryable vault memory, grounded in NotebookLM (vault-native companion to `/teach`)                                |
+| `/linear-slice`                  | Decompose a plan into dependency-ordered Linear issues (tracer-bullet slices) and release them into the dispatch pipeline                          |
+| `/onboard`                       | Onboard the current project into Deus code intelligence (codegraph + code_search indexing)                                                         |
+| `/preferences`                   | View or modify Deus user preferences                                                                                                               |
+| `/preserve`                      | Save durable memories from the current conversation                                                                                                |
+| `/project-settings`              | View or modify external project memory settings                                                                                                    |
+| `/prototype`                     | Build a throwaway prototype to validate a state model or UI direction                                                                              |
+| `/quiz-me`                       | Use right after writing or editing code to quiz the user on what was just built and confirm they understand it                                     |
+| `/resolving-merge-conflicts`     | Disciplined resolution of an in-progress git merge/rebase conflict                                                                                 |
+| `/resume`                        | Load recent work and memory context                                                                                                                |
+| `/review-logs`                   | Review Deus system health logs                                                                                                                     |
+| `/setup`                         | Run first-time installation and configuration                                                                                                      |
+| `/tdd`                           | Test-driven development loop — red-green-refactor, behavior-first                                                                                  |
+| `/teach`                         | Teach a skill or concept over multiple sessions (stateful teaching workspace)                                                                      |
+| `/update-skills`                 | Update installed skill branches from upstream                                                                                                      |
+| `/use-local-whisper`             | Switch voice transcription to local whisper.cpp                                                                                                    |
+| `/wardens`                       | View, toggle, and configure warden quality gates                                                                                                   |
+| `/writing-great-skills`          | Reference for authoring predictable skills — leading words, progressive disclosure                                                                 |
+| `/x-integration`                 | Set up or use X/Twitter integration                                                                                                                |
 
 ## Development Workflow
 
