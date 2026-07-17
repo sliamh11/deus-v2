@@ -187,6 +187,8 @@ def resolve_auto_transcript(
     if cwd is None:
         return None
 
+    # DEUS_NATIVE_SESSION_ID (LIA-427): set by the deus-native runtime to identify
+    # which owned transcript to resolve for this cwd.
     native_environment_id = os.environ.get("DEUS_NATIVE_SESSION_ID", "").strip()
     if native_environment_id:
         native = resolve_native_transcript(
@@ -320,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(
                 "--backend deus-native requires --session-id, --cwd, or --transcript"
             )
+        # DEUS_NATIVE_SESSION_ID (LIA-427): required to resolve the owned transcript by cwd.
         if args.cwd and not os.environ.get("DEUS_NATIVE_SESSION_ID", "").strip():
             parser.error(
                 "--backend deus-native with --cwd requires DEUS_NATIVE_SESSION_ID"
