@@ -1132,6 +1132,41 @@ describe('startMessageLoop', () => {
     expect(queue.enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
+  it('closes the active container when a batched host command changes the backend', async () => {
+    vi.useFakeTimers();
+    const state = makeState(MAIN_GROUP);
+    const channel = makeChannel();
+    mockFindChannel.mockReturnValue(channel as unknown as Channel);
+    mockGetNewMessages
+      .mockReturnValueOnce({
+        messages: [{ ...makeMsg(), chat_jid: 'group@g.us' }],
+        newTimestamp: 'ts-1',
+      })
+      .mockReturnValue({ messages: [], newTimestamp: '' });
+    mockDispatchHostCommand.mockReturnValue({
+      matched: true,
+      updatedGroup: {
+        ...MAIN_GROUP,
+        containerConfig: { agentBackend: 'deus-native' },
+      },
+      response: 'backend set to deus-native',
+      timestamp: '2024-01-01T00:00:01.000Z',
+    });
+
+    const queue = makeQueue();
+    const orchestrator = createMessageOrchestrator({
+      registry: makeRegistry(),
+      state: state as unknown as RouterState,
+      queue: queue as unknown as GroupQueue,
+      channels: [channel as unknown as Channel],
+    });
+
+    orchestrator.startMessageLoop();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(queue.closeStdin).toHaveBeenCalledWith('group@g.us');
+  });
+
   it('enqueues message check when no active container', async () => {
     vi.useFakeTimers();
     const state = makeState(MAIN_GROUP);

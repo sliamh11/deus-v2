@@ -29,6 +29,7 @@ import {
   type RunContext,
   type RuntimeEventSink,
 } from './agent-runtimes/types.js';
+import { resolveAgentRuntime } from './agent-runtimes/resolve.js';
 import type { RuntimeRegistry } from './agent-runtimes/registry.js';
 import {
   type ContainerOutput,
@@ -410,8 +411,8 @@ export function createMessageOrchestrator(deps: OrchestratorDeps) {
     );
     if (hostResult.matched) {
       if (hostResult.updatedGroup) {
-        const from = group.containerConfig?.agentBackend;
-        const to = hostResult.updatedGroup.containerConfig?.agentBackend;
+        const from = resolveAgentRuntime(group);
+        const to = resolveAgentRuntime(hostResult.updatedGroup);
         if (from !== to) {
           logger.debug(
             { group: group.name, from, to },
@@ -858,9 +859,8 @@ export function createMessageOrchestrator(deps: OrchestratorDeps) {
             );
             if (loopHostResult.matched) {
               if (loopHostResult.updatedGroup) {
-                const from = group.containerConfig?.agentBackend;
-                const to =
-                  loopHostResult.updatedGroup.containerConfig?.agentBackend;
+                const from = resolveAgentRuntime(group);
+                const to = resolveAgentRuntime(loopHostResult.updatedGroup);
                 if (from !== to) {
                   logger.debug(
                     { group: group.name, from, to },
