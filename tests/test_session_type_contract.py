@@ -244,14 +244,19 @@ class TestCLISession:
     def test_bypass_gated_by_prefs_bypass(self):
         assert "PREFS_BYPASS" in self.source
 
-    def test_tui_exports_deus_tui_bypass(self):
-        assert "export DEUS_TUI_BYPASS" in self.source
+    # test_tui_exports_deus_tui_{bypass,mode,backend} removed (LIA-389): the
+    # Rust TUI's `_launch_tui_with_context()` and its DEUS_TUI_* env var
+    # exports were removed from deus-cmd.sh along with tui/. See
+    # docs/decisions/tui-archival.md.
 
-    def test_tui_exports_deus_tui_mode(self):
-        assert "export DEUS_TUI_MODE" in self.source
+    def test_tui_archived_message_defined(self):
+        assert "DEUS_TUI_ARCHIVED_MSG" in self.source
 
-    def test_tui_exports_deus_tui_backend(self):
-        assert "export DEUS_TUI_BACKEND" in self.source
+    def test_deus_tui_subcommand_errors_not_launches(self):
+        # `deus tui` must print the archival message and exit non-zero, not
+        # attempt to build/exec a Rust binary that no longer exists.
+        assert "tui/target/release/deus-tui" not in self.source
+        assert "cargo build" not in self.source
 
 
 # ---------------------------------------------------------------------------

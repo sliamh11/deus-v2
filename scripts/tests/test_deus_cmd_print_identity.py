@@ -96,20 +96,35 @@ def test_print_identity_skips_portable_skills_setup():
     )
 
 
-def test_print_identity_prints_full_prompt_before_tui_at_both_sites():
-    script = _script()
+def test_print_identity_prints_full_prompt_before_launch_at_both_sites():
     # Both launch sites (external + home) print the exact payload to the
-    # saved stdout and exit BEFORE the TUI check — TUI is unreachable in
-    # print mode.
+    # saved stdout and exit BEFORE any interactive launch call
+    # (`launch_agent`) runs — print mode must never trigger an interactive
+    # session. Previously this also asserted ordering relative to the Rust
+    # TUI's `$TUI_DEFAULT` check; that check was removed with the TUI
+    # itself (LIA-389, docs/decisions/tui-archival.md) — see
+    # test_deus_tui_archived_no_launch_reachable below for its replacement.
+    script = _script()
     payload = "printf '%s' \"$FULL_PROMPT\" >&3"
-    tui = 'if [ "$TUI_DEFAULT" = "true" ]; then'
+    launch = "launch_agent"
     assert script.count(payload) == 2
     pos = 0
     for _ in range(2):
         p = script.index(payload, pos)
-        t = script.index(tui, p)
-        assert p < t
-        pos = t + 1
+        l = script.index(launch, p)
+        assert p < l
+        pos = l + 1
+
+
+def test_deus_tui_archived_no_launch_reachable():
+    # The Rust TUI launcher is fully gone: no build/exec path, no
+    # `$TUI_DEFAULT` gate before `launch_agent`. `deus tui` itself now
+    # errors via DEUS_TUI_ARCHIVED_MSG (see test_session_type_contract.py's
+    # TestCLISession for the exact-string/non-zero-exit assertions).
+    script = _script()
+    assert "_launch_tui_with_context" not in script
+    assert "TUI_DEFAULT" not in script
+    assert "tui/target/release/deus-tui" not in script
 
 
 def test_print_identity_covers_vault_less_fallback_on_both_branches():

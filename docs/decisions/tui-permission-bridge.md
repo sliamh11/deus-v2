@@ -1,9 +1,9 @@
 # TUI Permission Bridge
 
 **Date:** 2026-05-03
-**Status:** Implemented (Phase 1-3)
-**Scope:** tui/src/permission_bridge.rs, tui/hooks/, tui/src/backend/claude.rs
-**Related:** [parallel-agent-orchestration.md](parallel-agent-orchestration.md), [backend-strategy-trait.md](backend-strategy-trait.md)
+**Status:** Archived (2026-07-17) — implementation removed from main by [tui-archival.md](tui-archival.md) (LIA-389) and preserved on the `legacy/tui-phase1` branch. Interactive per-call permission approval (this document's subject) is explicitly NOT replaced by anything shipped as of the archival date — see tui-archival.md's residual-gaps list.
+**Scope:** tui/src/permission_bridge.rs, tui/hooks/, tui/src/backend/claude.rs (archived; historical record below)
+**Related:** [parallel-agent-orchestration.md](parallel-agent-orchestration.md), [backend-strategy-trait.md](backend-strategy-trait.md), [tui-archival.md](tui-archival.md)
 
 ## Problem
 

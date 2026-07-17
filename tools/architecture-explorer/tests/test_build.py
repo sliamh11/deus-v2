@@ -483,7 +483,7 @@ class TestLayerResolution:
 
     def test_fitting_repo_keeps_curated_config(self, tmp_path):
         # Deus-matching paths -> curated config kept even with fallback allowed
-        paths = _grp("src/channels", 5) + _grp("evolution", 5) + _grp("container", 5) + _grp("tui", 5)
+        paths = _grp("src/channels", 5) + _grp("evolution", 5) + _grp("container", 5) + _grp("scripts", 5)
         g = build.build(_make_simple_db(tmp_path, paths), LAYERS, include_tests=False,
                         allow_auto_fallback=True)
         assert g["meta"]["layer_mode"] == "config"
@@ -497,7 +497,7 @@ class TestLayerResolution:
 
     def test_invariant_same_files_and_edges_across_modes(self, tmp_path):
         # config vs auto must layer the SAME file set (none lost/duplicated) + same edges
-        paths = _grp("src/channels", 4) + _grp("evolution", 4) + _grp("tui", 4)
+        paths = _grp("src/channels", 4) + _grp("evolution", 4) + _grp("scripts", 4)
         db = _make_simple_db(tmp_path, paths)
         cfg = build.build(db, LAYERS, include_tests=False)
         aut = build.build(db, None, include_tests=False, auto=True)

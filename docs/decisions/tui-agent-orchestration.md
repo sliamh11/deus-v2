@@ -1,9 +1,9 @@
 # TUI Agent Orchestration Architecture
 
 **Date:** 2026-05-03
-**Status:** Implemented
-**Scope:** tui/src/app.rs, tui/src/backend/, tui/src/main.rs
-**Related:** [parallel-agent-orchestration.md](parallel-agent-orchestration.md), [backend-strategy-trait.md](backend-strategy-trait.md), [tui-permission-bridge.md](tui-permission-bridge.md)
+**Status:** Archived (2026-07-17) — implementation removed from main by [tui-archival.md](tui-archival.md) (LIA-389) and preserved on the `legacy/tui-phase1` branch. The core chat use case is superseded by `deus chat` (LIA-428/G1); the multi-session orchestration described below is NOT replaced — see tui-archival.md's residual-gaps list.
+**Scope:** tui/src/app.rs, tui/src/backend/, tui/src/main.rs (archived; historical record below)
+**Related:** [parallel-agent-orchestration.md](parallel-agent-orchestration.md), [backend-strategy-trait.md](backend-strategy-trait.md), [tui-permission-bridge.md](tui-permission-bridge.md), [tui-archival.md](tui-archival.md)
 
 ## Overview
 

@@ -8,7 +8,14 @@ permissions, and environment variables.
 
 ## Matrix Overview
 
-| Property | CLI | Agent View (TUI) | Worktree Subagent | Background | Container |
+`Agent View (TUI)` was a 5th session type, provided by the now-archived Rust
+TUI (`tui/`). LIA-389 removed it from main and preserved it on
+`legacy/tui-phase1` — see `docs/decisions/tui-archival.md`. Its row is kept
+below, marked ARCHIVED, as a historical record of what that session type
+guaranteed; it no longer applies to any session running against current
+main.
+
+| Property | CLI | Agent View (TUI) — ARCHIVED (LIA-389) | Worktree Subagent | Background | Container |
 |---|---|---|---|---|---|
 | Launch mechanism | `deus-cmd.sh` → `claude` | `tui/backend/claude.rs` → `claude -p` | Claude Code Agent tool | `claude --bg` / `run_in_background` | Agent SDK `query()` |
 | Permission mode | `bypassPermissions` via `--dangerously-skip-permissions` | `--permission-mode <mode>` from `tui-permissions.json` | Inherits parent session | Inherits parent session | `bypassPermissions` (hardcoded) |
@@ -67,7 +74,15 @@ None specific to CLI beyond `CLAUDE_PROJECT_DIR` (set automatically).
 - `CLAUDE_JOB_DIR` must NOT be set (would trigger compress gate).
 - `DEUS_TUI_*` vars must NOT be set (would confuse TUI detection).
 
-## Agent View (TUI)
+## Agent View (TUI) — ARCHIVED (LIA-389)
+
+**This session type no longer exists on main.** The Rust TUI was archived
+and removed (`docs/decisions/tui-archival.md`); the implementation is
+preserved on `legacy/tui-phase1`. The section below is kept verbatim as a
+historical record of what this session type guaranteed while it was live —
+none of it describes current main. `deus chat` (see the CLI section above)
+is the terminal-chat replacement, with a narrower feature set (see the ADR
+for the named residual gaps, including permission-bridge parity).
 
 ### Launch path
 
@@ -274,7 +289,8 @@ python3 -m pytest tests/test_session_type_contract.py -v
 - Container permission mode hardcode in TypeScript source
 - Container SDK hook function names in TypeScript source
 - Background detection mechanism (`CLAUDE_JOB_DIR`) in `stop_hook.py`
-- CLI permission flags and TUI env var exports in `deus-cmd.sh`
+- CLI permission flags in `deus-cmd.sh`, and that the archived TUI's env
+  var exports / binary launch are gone (LIA-389)
 - Worktree minimum-invariant hooks (when worktrees exist locally)
 
 ### What the tests do NOT verify (requires live testing)
@@ -284,4 +300,4 @@ python3 -m pytest tests/test_session_type_contract.py -v
 - Permission mode effective behavior (requires Claude Code binary)
 - Env var values at runtime (requires process inspection)
 - Container filesystem isolation (requires Docker runtime)
-- TUI permission bridge IPC (requires TUI binary)
+- ~~TUI permission bridge IPC (requires TUI binary)~~ — N/A, archived (LIA-389)
