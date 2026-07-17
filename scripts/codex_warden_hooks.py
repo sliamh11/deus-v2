@@ -8,6 +8,7 @@ import contextlib
 import dataclasses
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import platform
@@ -46,6 +47,7 @@ from warden_hooks.command_parse import (  # noqa: E402
     _shell_tokens,
 )
 from warden_hooks.globs import _glob_match, _glob_to_regex  # noqa: E402
+from warden_hooks import double_enforcement as _double_enforcement  # noqa: E402
 from warden_hooks import verdict_store as _verdict_store  # noqa: E402
 from warden_hooks.verdict_store import (  # noqa: E402
     _audit_log_path,
@@ -239,6 +241,9 @@ HOOK_SPECS: tuple[HookSpec, ...] = (
 
 PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
 GIT_COMMIT_RE = re.compile(r"(^|[;&|]\s*)git(?:\s+-C\s+\S+)?\s+commit(\s|$)")
+_DOUBLE_ENFORCEMENT_COMMIT_BEHAVIORS = frozenset(
+    {"code-review-gate", "ai-eng-gate", "verification-gate"}
+)
 SECURITY_PATH_RE = re.compile(
     r"(auth|session|credential|token|oauth|secret|proxy|security|trust|encrypt|decrypt|permission)",
     re.IGNORECASE,
@@ -3792,12 +3797,140 @@ def _finalize_paths(args: argparse.Namespace) -> None:
         args.hooks_json = codex_home / "hooks.json"
 
 
+def _double_enforcement_applicable(behavior: str, event: dict[str, Any]) -> bool:
+    """Match the exact live ``deus-native`` wardens trigger contract."""
+
+    tool_name = event.get("tool_name")
+    if tool_name == "apply_patch":
+        return behavior == "plan-review-gate"
+    if tool_name != "Bash" or behavior not in _DOUBLE_ENFORCEMENT_COMMIT_BEHAVIORS:
+        return False
+    tool_input = event.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    return isinstance(command, str) and GIT_COMMIT_RE.search(command) is not None
+
+
+def _correlation_paths_for_event(
+    repo_root: Path, event: dict[str, Any]
+) -> tuple[Path, Path]:
+    """Resolve correlation telemetry before any verdict-store override."""
+
+    try:
+        # LIA-413 invariant: this exact event-cwd path is independent of the
+        # middleware invocation's --workspace-root / _WORKTREE_OVERRIDE.
+        event_cwd = Path(event["cwd"]).resolve(strict=False)
+    except (KeyError, OSError, TypeError, ValueError):
+        event_cwd = repo_root
+    return _double_enforcement.correlation_store_paths(
+        repo_root,
+        event_cwd,
+        worktree_resolver=_worktree_for_cwd,
+        marker_dir_resolver=_marker_dir_for_worktree,
+    )
+
+
+def double_enforcement_applicable(args: argparse.Namespace) -> int:
+    event = _read_stdin_json()
+    return 0 if _double_enforcement_applicable(args.behavior, event) else 1
+
+
+def launch_double_enforcement(args: argparse.Namespace) -> int:
+    """Launch the real middleware-profile runner without waiting for it."""
+
+    raw_event = sys.stdin.read()
+    try:
+        parsed = json.loads(raw_event) if raw_event.strip() else {}
+    except json.JSONDecodeError:
+        parsed = {}
+    event = parsed if isinstance(parsed, dict) else {}
+    repo_root = Path(args.repo_root).resolve(strict=False)
+    outcome_path, divergence_path = _correlation_paths_for_event(repo_root, event)
+    launched = _double_enforcement.launch_secondary(
+        script_path=Path(args.script_path).expanduser().resolve(strict=False),
+        behavior=args.behavior,
+        event_json=raw_event,
+        correlation_id=args.correlation_id,
+        repo_root=repo_root,
+        workspace_root=Path(args.workspace_root).resolve(strict=False),
+        outcome_path=outcome_path,
+        divergence_path=divergence_path,
+    )
+    return 0 if launched else 1
+
+
+def _run_tagged(
+    args: argparse.Namespace,
+    invoke_runner,
+    outcome_path: Path,
+    divergence_path: Path,
+) -> int:
+    """Capture, classify, record, then re-emit one tagged gate invocation."""
+
+    captured = io.StringIO()
+    failure: Exception | None = None
+    traceback = None
+    returncode = 1
+    with contextlib.redirect_stdout(captured):
+        try:
+            returncode = invoke_runner()
+        except Exception as exc:  # preserve the original failure after telemetry
+            failure = exc
+            traceback = exc.__traceback__
+    stdout = captured.getvalue()
+    decision, reason = _double_enforcement.classify_outcome(
+        returncode,
+        stdout,
+        exception=failure,
+    )
+    record = _double_enforcement.make_outcome(
+        args.correlation_id,
+        args.behavior,
+        args.invocation,
+        decision,
+        reason,
+    )
+    try:
+        _double_enforcement.append_outcome(outcome_path, record)
+        if args.invocation == "middleware":
+            _double_enforcement.compare_middleware_outcome(
+                outcome_path, divergence_path, record
+            )
+    except (OSError, ValueError) as exc:
+        # Migration telemetry is observational. A local storage failure must
+        # never replace Claude Code's authoritative gate output or exit status.
+        _debug(f"double-enforcement telemetry failed: {type(exc).__name__}: {exc}")
+    if stdout:
+        sys.stdout.write(stdout)
+    if failure is not None:
+        raise failure.with_traceback(traceback)
+    return returncode
+
+
 def run(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve(strict=False)
     os.environ["DEUS_CODEX_HOOK_SCRIPT_PATH"] = str(
         Path(args.script_path).expanduser().resolve(strict=False)
     )
     event = _read_stdin_json()
+    correlation_id = getattr(args, "correlation_id", None)
+    invocation = getattr(args, "invocation", None)
+    if bool(correlation_id) != bool(invocation):
+        raise ValueError("--correlation-id and --invocation must be supplied together")
+
+    outcome_path: Path | None = None
+    divergence_path: Path | None = None
+    if correlation_id and invocation:
+        # Resolve + reconcile immediately after stdin parsing, before entering
+        # worktree_override(). This store must follow event['cwd'], never the
+        # middleware profile's explicit workspace root.
+        outcome_path, divergence_path = _correlation_paths_for_event(repo_root, event)
+        try:
+            _double_enforcement.reconcile_missing_middleware(
+                outcome_path, divergence_path
+            )
+        except (OSError, ValueError) as exc:
+            _debug(f"double-enforcement reconciliation failed: {type(exc).__name__}: {exc}")
+
     # Resolve the store from an explicit --workspace-root when the caller
     # supplies one; otherwise fall back to the EVENT cwd (not the hook
     # process's os.getcwd(), since the two can differ). Either way,
@@ -3809,10 +3942,15 @@ def run(args: argparse.Namespace) -> int:
     else:
         cwd = Path(str(event.get("cwd") or os.getcwd())).resolve(strict=False)
     wt = _worktree_for_cwd(cwd, repo_root)
-    if wt is None:
-        return RUNNERS[args.behavior](event, repo_root)
-    with worktree_override(wt):
-        return RUNNERS[args.behavior](event, repo_root)
+    def invoke_runner() -> int:
+        if wt is None:
+            return RUNNERS[args.behavior](event, repo_root)
+        with worktree_override(wt):
+            return RUNNERS[args.behavior](event, repo_root)
+
+    if outcome_path is None or divergence_path is None:
+        return invoke_runner()
+    return _run_tagged(args, invoke_runner, outcome_path, divergence_path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3829,6 +3967,20 @@ def build_parser() -> argparse.ArgumentParser:
              "the hook-event cwd (LIA-410). Falls back to event.get('cwd') when omitted, "
              "so existing callers are unaffected.",
     )
+    run_parser.add_argument("--correlation-id", default=None)
+    run_parser.add_argument(
+        "--invocation", choices=("cc-hook", "middleware"), default=None
+    )
+
+    applicable_parser = subparsers.add_parser("double-enforcement-applicable")
+    applicable_parser.add_argument("behavior", choices=sorted(RUNNERS))
+
+    launch_parser = subparsers.add_parser("launch-double-enforcement")
+    launch_parser.add_argument("behavior", choices=sorted(RUNNERS))
+    launch_parser.add_argument("--correlation-id", required=True)
+    launch_parser.add_argument("--repo-root", required=True)
+    launch_parser.add_argument("--workspace-root", required=True)
+    launch_parser.add_argument("--script-path", default=Path(__file__).resolve())
 
     approve_parser = subparsers.add_parser("approve-admin-merge")
     approve_parser.add_argument("--repo-root", default=Path(__file__).resolve().parents[1])
@@ -3950,6 +4102,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.action == "run":
         return run(args)
+    if args.action == "double-enforcement-applicable":
+        return double_enforcement_applicable(args)
+    if args.action == "launch-double-enforcement":
+        return launch_double_enforcement(args)
     if args.action == "mark":
         repo_root = Path(args.repo_root).resolve(strict=False)
         return _with_cli_worktree(
