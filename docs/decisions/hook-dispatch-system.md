@@ -8,6 +8,11 @@
 > this ADR's generic `AgentRuntime` facade for container backends. Retained as
 > the **reference design**, not globally shipped architecture. See the
 > [F2/LIA-424 update](hook-dispatch-facade-correction.md#update-f2lia-424--2026-07-16).
+>
+> **Transition condition:** Status flips to **Implemented-via-V2** only when the
+> generic `AgentRuntime` `HookPipeline` facade also ships for container backends
+> (or is explicitly descoped) — the `deus-native`-specific fix above closes only
+> the tool-call-interception half of this ADR's original scope, not the whole.
 
 **Status:** Accepted but Not Implemented (facade) — see [hook-dispatch-facade-correction.md](hook-dispatch-facade-correction.md)
 **Date:** 2026-05-14
