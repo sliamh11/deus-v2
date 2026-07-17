@@ -1,5 +1,5 @@
 import type { NewMessage, RegisteredGroup, AgentEffortLevel } from './types.js';
-import { VALID_EFFORT_LEVELS } from './types.js';
+import { AGENT_RUNTIME_IDS, VALID_EFFORT_LEVELS } from './types.js';
 import { logger } from './logger.js';
 
 // ── /settings command ─────────────────────────────────────────────────────────
@@ -33,6 +33,8 @@ const SETTINGS_HELP =
   '  requires_trigger=true/false  — whether @Name prefix is required\n' +
   '  memory_privacy=level1,level2  — privacy levels this channel can access\n' +
   '    levels: public, internal, private, sensitive (default: public,internal,private)\n' +
+  '  backend=<value>  — agent runtime backend (claude, openai, llama-cpp, deus-native)\n' +
+  '  backend=default  — inherit the global backend default\n' +
   '  effort=level  — agent reasoning effort (low, medium, high, max; default: low)';
 
 /**
@@ -50,6 +52,7 @@ export function handleSettingsCommand(
   if (!args) {
     const idleHours = group.containerConfig?.sessionIdleResetHours;
     const timeoutMs = group.containerConfig?.timeout;
+    const backend = group.containerConfig?.agentBackend;
     const effortLevel = group.containerConfig?.agentEffort;
     const lines = [
       `Settings — ${group.name}`,
@@ -63,6 +66,7 @@ export function handleSettingsCommand(
       `  timeout: ${timeoutMs !== undefined ? `${Math.round(timeoutMs / 1000)}s` : '300s (default)'}`,
       `  requires_trigger: ${group.requiresTrigger !== false}`,
       `  memory_privacy: ${group.containerConfig?.memoryPrivacy?.join(',') || 'public,internal,private (default)'}`,
+      `  backend: ${backend || '(using global default)'}`,
       `  effort: ${effortLevel || 'low (default)'}`,
       '',
       SETTINGS_HELP,
@@ -165,6 +169,29 @@ export function handleSettingsCommand(
       };
       return {
         response: `effort set to ${level}`,
+        updatedGroup,
+      };
+    }
+    case 'backend': {
+      const backend = value.toLowerCase();
+      if (backend === 'default') {
+        delete updatedGroup.containerConfig?.agentBackend;
+        return {
+          response: 'backend reset to global default',
+          updatedGroup,
+        };
+      }
+      if (!(AGENT_RUNTIME_IDS as readonly string[]).includes(backend)) {
+        return {
+          response: `Invalid backend: ${value}. Valid: ${AGENT_RUNTIME_IDS.join(', ')}`,
+        };
+      }
+      updatedGroup.containerConfig = {
+        ...updatedGroup.containerConfig,
+        agentBackend: backend as (typeof AGENT_RUNTIME_IDS)[number],
+      };
+      return {
+        response: `backend set to ${backend}`,
         updatedGroup,
       };
     }

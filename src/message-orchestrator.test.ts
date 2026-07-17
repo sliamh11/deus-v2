@@ -159,11 +159,13 @@ import {
   getMessagesSince,
   getNewMessages,
   clearSession,
+  setRegisteredGroup,
   setSession,
 } from './db.js';
 import { findChannel } from './router.js';
 import {
   handleSessionCommand,
+  dispatchHostCommand,
   extractSessionCommand,
 } from './session-commands.js';
 import { scanForInjection } from './guardrails/injection-scanner.js';
@@ -178,7 +180,9 @@ const mockGetMessagesSince = vi.mocked(getMessagesSince);
 const mockGetNewMessages = vi.mocked(getNewMessages);
 const mockFindChannel = vi.mocked(findChannel);
 const mockHandleSessionCommand = vi.mocked(handleSessionCommand);
+const mockDispatchHostCommand = vi.mocked(dispatchHostCommand);
 const mockExtractSessionCommand = vi.mocked(extractSessionCommand);
+const mockSetRegisteredGroup = vi.mocked(setRegisteredGroup);
 
 type RunTurnFn = (
   ctx: RunContext,
@@ -318,6 +322,7 @@ beforeEach(() => {
   mockGetMessagesSince.mockReturnValue([]);
   mockGetNewMessages.mockReturnValue({ messages: [], newTimestamp: '' });
   mockHandleSessionCommand.mockResolvedValue({ handled: false });
+  mockDispatchHostCommand.mockReturnValue({ matched: false });
   mockExtractSessionCommand.mockReturnValue(null);
   mockScanForInjection.mockReturnValue({
     blocked: false,
@@ -571,6 +576,42 @@ describe('processGroupMessages', () => {
     const result = await orchestrator.processGroupMessages('group@g.us');
     expect(result).toBe(true);
     expect(runTurnCalled).toBe(false);
+  });
+
+  it('persists a backend override returned by the host command dispatcher', async () => {
+    const state = makeState(MAIN_GROUP);
+    const channel = makeChannel();
+    mockFindChannel.mockReturnValue(channel as unknown as Channel);
+    mockGetMessagesSince.mockReturnValue([
+      makeMsg({ content: '/settings backend=deus-native' }),
+    ]);
+    mockDispatchHostCommand.mockReturnValue({
+      matched: true,
+      updatedGroup: {
+        ...MAIN_GROUP,
+        containerConfig: { agentBackend: 'deus-native' },
+      },
+      response: 'backend set to deus-native',
+      timestamp: '2024-01-01T00:00:01.000Z',
+    });
+
+    const orchestrator = createMessageOrchestrator({
+      registry: makeRegistry(),
+      state: state as unknown as RouterState,
+      queue: makeQueue() as unknown as GroupQueue,
+      channels: [channel as unknown as Channel],
+    });
+
+    await orchestrator.processGroupMessages('group@g.us');
+
+    expect(mockSetRegisteredGroup).toHaveBeenCalledWith(
+      'group@g.us',
+      expect.objectContaining({
+        containerConfig: expect.objectContaining({
+          agentBackend: 'deus-native',
+        }),
+      }),
+    );
   });
 
   it('sends agent output to the channel', async () => {

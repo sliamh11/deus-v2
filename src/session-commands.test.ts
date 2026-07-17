@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   extractSessionCommand,
+  dispatchHostCommand,
   handleSessionCommand,
   handleSettingsCommand,
   isSessionCommandAllowed,
@@ -385,5 +386,143 @@ describe('handleSettingsCommand — effort', () => {
     const group = makeGroup();
     const result = handleSettingsCommand('/settings', group, 24);
     expect(result.response).toContain('effort: low (default)');
+  });
+});
+
+describe('handleSettingsCommand — backend', () => {
+  it('sets deus-native when no container config exists', () => {
+    const result = handleSettingsCommand(
+      '/settings backend=deus-native',
+      makeGroup(),
+      24,
+    );
+
+    expect(result.response).toBe('backend set to deus-native');
+    expect(result.updatedGroup?.containerConfig?.agentBackend).toBe(
+      'deus-native',
+    );
+  });
+
+  it('accepts every supported backend', () => {
+    const supportedBackends = [
+      'claude',
+      'openai',
+      'llama-cpp',
+      'deus-native',
+    ] as const;
+
+    for (const backend of supportedBackends) {
+      const result = handleSettingsCommand(
+        `/settings backend=${backend}`,
+        makeGroup(),
+        24,
+      );
+      expect(result.updatedGroup?.containerConfig?.agentBackend).toBe(backend);
+    }
+  });
+
+  it('preserves other container config fields when setting a backend', () => {
+    const result = handleSettingsCommand(
+      '/settings backend=deus-native',
+      makeGroup({ containerConfig: { timeout: 60_000 } }),
+      24,
+    );
+
+    expect(result.updatedGroup?.containerConfig).toEqual({
+      timeout: 60_000,
+      agentBackend: 'deus-native',
+    });
+  });
+
+  it('rejects an invalid backend', () => {
+    const result = handleSettingsCommand(
+      '/settings backend=not-a-real-backend',
+      makeGroup(),
+      24,
+    );
+
+    expect(result.response).toBe(
+      'Invalid backend: not-a-real-backend. Valid: claude, openai, llama-cpp, deus-native',
+    );
+    expect(result.updatedGroup).toBeUndefined();
+  });
+
+  it('displays the configured backend override', () => {
+    const result = handleSettingsCommand(
+      '/settings',
+      makeGroup({ containerConfig: { agentBackend: 'deus-native' } }),
+      24,
+    );
+
+    expect(result.response).toContain('  backend: deus-native');
+  });
+
+  it('displays global-default inheritance without an override', () => {
+    const result = handleSettingsCommand('/settings', makeGroup(), 24);
+
+    expect(result.response).toContain('  backend: (using global default)');
+  });
+
+  it('documents setting and resetting the backend', () => {
+    const result = handleSettingsCommand(
+      '/settings unknown=value',
+      makeGroup(),
+      24,
+    );
+
+    expect(result.response).toContain('backend=<value>');
+    expect(result.response).toContain('backend=default');
+  });
+
+  it('clears the backend override while preserving other settings', () => {
+    const result = handleSettingsCommand(
+      '/settings backend=default',
+      makeGroup({
+        containerConfig: {
+          agentBackend: 'deus-native',
+          timeout: 60_000,
+        },
+      }),
+      24,
+    );
+
+    expect(result.updatedGroup?.containerConfig?.agentBackend).toBeUndefined();
+    expect(result.updatedGroup?.containerConfig?.timeout).toBe(60_000);
+  });
+
+  it('shows global-default inheritance after a backend reset', () => {
+    const reset = handleSettingsCommand(
+      '/settings backend=default',
+      makeGroup({ containerConfig: { agentBackend: 'deus-native' } }),
+      24,
+    );
+    const displayed = handleSettingsCommand(
+      '/settings',
+      reset.updatedGroup!,
+      24,
+    );
+
+    expect(displayed.response).toContain(
+      '  backend: (using global default)',
+    );
+  });
+
+  it('dispatches through the host command registry', () => {
+    const result = dispatchHostCommand(
+      [
+        makeMsg('/settings backend=deus-native', {
+          is_from_me: true,
+        }),
+      ],
+      trigger,
+      makeGroup(),
+      24,
+      false,
+    );
+
+    expect(result.matched).toBe(true);
+    expect(result.updatedGroup?.containerConfig?.agentBackend).toBe(
+      'deus-native',
+    );
   });
 });

@@ -118,6 +118,7 @@ export function createMessageOrchestrator(deps: OrchestratorDeps) {
     const isControlGroup = group.isControlGroup === true;
     const resolvedBackend = registry.resolve(group);
     const backend = resolvedBackend.name();
+    logger.debug({ group: group.name, backend }, 'Backend resolved for run');
     let sessionRef = state.getSession(group.folder, backend);
 
     // Idle session reset: per-group setting takes precedence over global default.
