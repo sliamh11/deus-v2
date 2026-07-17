@@ -102,7 +102,7 @@ Use these instead of rediscovering the system:
 | --------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Task routing                | [`.mex/ROUTER.md`](.mex/ROUTER.md)                                | Maps task type to the required pattern file                                                                                                                                                                       |
 | Host runtime                | `src/message-orchestrator.ts`, `src/container-runner.ts`          | Agent dispatch, sessions, streaming, container wiring                                                                                                                                                             |
-| Backend selection           | `src/agent-runtimes/resolve.ts`, `src/agent-runtimes/registry.ts` | Task > group > env > Claude fallback; three registered runtimes: claude, openai, llama-cpp                                                                                                                        |
+| Backend selection           | `src/agent-runtimes/resolve.ts`, `src/agent-runtimes/registry.ts` | Task > group > env > Claude fallback; four registered runtimes: claude, openai, llama-cpp, deus-native                                                                                                            |
 | `deus-native` authorization | `src/agent-runtimes/permission-rules.ts` (landing via LIA-407/B7) | Pure declarative allow/deny rule evaluator + named profile registry (`default`, `read-only`) for the `deus-native` middleware's outermost `wrapToolCall` layer — see `docs/decisions/deus-v2-permission-rules.md` |
 | `deus-native` nested dispatch | `src/agent-runtimes/nested-dispatch.ts`, `src/agent-runtimes/nested-dispatch-tool.ts` (landing via LIA-408/B8) | In-process, one-shot nested `createAgent` dispatch primitive + parent-facing `dispatch_nested_agent` tool: mandatory per-dispatch output contract, independent per-dispatch model selection, traceable agent/model metadata. Distinct from `src/multi-agent/orchestrator.ts`'s container-based `SubagentTask[]` scheduler — see `docs/decisions/deus-v2-subagent-dispatch.md` |
 | Session storage             | `src/db.ts`, `src/router-state.ts`                                | Backend-scoped session refs and resume state                                                                                                                                                                      |
@@ -138,7 +138,7 @@ Commands that must remain stable across backends:
 - `deus codex`
 - `deus openai`
 - `DEUS_CLI_AGENT=claude|codex`
-- `DEUS_AGENT_BACKEND=claude|openai`
+- `DEUS_AGENT_BACKEND=claude|openai|llama-cpp|deus-native`
 - `deus pipeline`
 - `deus chat`
 - `deus chat model set|show`
@@ -147,6 +147,7 @@ Commands that must remain stable across backends:
 - `/settings session_idle_hours=N`
 - `/settings timeout=N`
 - `/settings requires_trigger=true|false`
+- `/settings backend=claude|openai|llama-cpp|deus-native|default`
 - `/compact`
 
 Host skills are not chat commands. Never suggest them inside WhatsApp,

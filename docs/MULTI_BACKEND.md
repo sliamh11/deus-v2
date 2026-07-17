@@ -1,6 +1,6 @@
 # Using Different AI Backends
 
-Deus is backend-neutral: the same assistant experience runs on different LLMs. Claude is the default and most battle-tested backend. OpenAI (GPT-4o via Responses API) is opt-in and approaching parity.
+Deus is backend-neutral: the same assistant experience is the design goal across different LLMs, with parity landing incrementally per backend — see [What Stays the Same](#what-stays-the-same) and [Known Parity Gaps](#known-parity-gaps) below for the current, honest state. Claude is the default and most battle-tested backend. OpenAI (GPT-4o via Responses API) is opt-in and approaching parity.
 
 ## Quick Start
 
@@ -54,8 +54,8 @@ When Deus decides which backend to use for a message or task:
 
 Regardless of backend, Deus preserves:
 
-- Same persona, tone, and memory
-- Same tool access (shell, filesystem, web, browser, IPC)
+- Same tone across backends; broader persona and memory-recall parity for Deus-native is phased (`docs/decisions/deus-v2-langchain-runtime.md` explicitly declines full persona/memory parity for now) — Deus-native currently serves per-turn memory recall for control-group turns only (non-control-group recall is tracked as `AAG-014`) — see [agent-agnostic-debt.md](agent-agnostic-debt.md) and `docs/decisions/deus-v2-langchain-runtime.md`.
+- Same tool access (shell, filesystem, web, browser, IPC) for the containerized backends (Claude, OpenAI, llama.cpp); Deus-native (host-side) currently wires only web tools — see the [Deus-Native Opt-In Readiness Matrix](decisions/backend-neutral-agent-runtime.md#deus-native-opt-in-readiness-matrix) for the full per-surface status.
 - Same chat commands (/compact, /settings, etc.)
 - Same session management and idle reset
 - Same scheduled task execution
@@ -64,16 +64,16 @@ Regardless of backend, Deus preserves:
 
 ## What Differs
 
-| Feature | Claude | OpenAI | llama.cpp |
-|---------|--------|--------|-----------|
-| Tool streaming | Yes (live output) | No (batch response) | No (batch response) |
-| Session protocol | Claude Code SDK | OpenAI Responses API | OpenAI chat-completions (in-memory history) |
-| Model default | Claude (via SDK) | gpt-4o (configurable via `DEUS_OPENAI_MODEL`) | configured via `LLAMA_CPP_MODEL` (default Gemma-3-1B GGUF from the `/add-llama-cpp` skill) |
-| Handoffs | Not yet | Not yet | Not yet |
-| MCP tools | Native | Bridged via tool-broker | Bridged via tool-broker (same path as OpenAI) |
-| Multimodal | Yes | Yes (gpt-4o) | No (default GGUF is text-only) |
-| `/compact` | Native | LLM-summary via Responses | Truncation (system + last N turns); summary-based is a follow-up |
-| Credential routing | Through credential proxy | Through credential proxy (`/openai` route) | No proxy — direct call to local `llama-server` (no auth) |
+| Feature | Claude | OpenAI | llama.cpp | Deus-Native |
+|---------|--------|--------|-----------|-------------|
+| Tool streaming | Yes (live output) | No (batch response) | No (batch response) | No (batch response) |
+| Session protocol | Claude Code SDK | OpenAI Responses API | OpenAI chat-completions (in-memory history) | LangGraph `SqliteSaver` checkpointer (`session_id` = `thread_id`) |
+| Model default | Claude (via SDK) | gpt-4o (configurable via `DEUS_OPENAI_MODEL`) | configured via `LLAMA_CPP_MODEL` (default Gemma-3-1B GGUF) | `claude-opus-4-8` via Anthropic (configurable per `model-selection.ts`) |
+| Handoffs | Not yet | Not yet | Not yet | Not yet |
+| MCP tools | Native | Bridged via tool-broker | Bridged via tool-broker (same path as OpenAI) | Not bridged — only `web_search`/`web_fetch` wired directly (shell/filesystem tools intentionally unwired, see ADR readiness matrix) |
+| Multimodal | Yes | Yes (gpt-4o) | No (default GGUF is text-only) | No |
+| `/compact` | Native | LLM-summary via Responses | Truncation (system + last N turns) | Checkpoint-aware compaction middleware (LIA-419, token-threshold triggered) |
+| Credential routing | Through credential proxy | Through credential proxy (`/openai` route) | No proxy — direct call to local `llama-server` (no auth) | Through credential proxy |
 
 ## Known Parity Gaps
 
@@ -84,6 +84,8 @@ Key gaps as of this writing:
 - Dynamic skill parity depends on skills exposing MCP-style tools
 - Agents SDK handoffs/tracing not yet implemented for OpenAI
 - llama.cpp backend: no `deus llama` foreground CLI shorthand yet (use `deus backend set llama-cpp` and channel messages or scheduled tasks); `/compact` is history truncation only; multimodal default is off; tool-call reliability varies by GGUF model
+- Deus-native backend: shell and filesystem tools are intentionally unwired pending host-side isolation review (it runs in-process, not containerized) — see the [Deus-Native Opt-In Readiness Matrix](decisions/backend-neutral-agent-runtime.md#deus-native-opt-in-readiness-matrix) for the complete per-surface status.
+- Deus-native backend: broader persona/memory parity remains phased (per `docs/decisions/deus-v2-langchain-runtime.md`) — non-control-group memory recall is a tracked gap, `AAG-014` in [agent-agnostic-debt.md](agent-agnostic-debt.md).
 
 ## CLI Usage
 
@@ -243,7 +245,7 @@ Each surface POSTs with its own `model` field; llama-server auto-loads from the 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEUS_AGENT_BACKEND` | `claude` | Global default: `claude`, `openai`, or `llama-cpp` |
+| `DEUS_AGENT_BACKEND` | `claude` | Global default: `claude`, `openai`, `llama-cpp`, or `deus-native` (host-side) |
 | `DEUS_OPENAI_MODEL` | `gpt-4o` | Model for the OpenAI backend |
 | `OPENAI_API_KEY` | -- | Required unless Codex OAuth is available (`~/.codex/auth.json` from `codex login`) |
 | `DEUS_CODEX_MODEL` | `DEUS_OPENAI_MODEL` | Optional model override for `deus codex` |
@@ -253,7 +255,7 @@ Each surface POSTs with its own `model` field; llama-server auto-loads from the 
 
 ## Supported Backend Boundary
 
-Three implemented agent backends: Claude (default), OpenAI/Codex (opt-in via API key or Codex OAuth), and llama.cpp (opt-in via the `/add-llama-cpp` skill). The `ollama` entry in the `AgentRuntimeId`-style CLI display alias is a forward reservation with no runtime implementation — Ollama is used for eval judging and embeddings, not as a container agent backend.
+Four implemented agent backends: Claude (default, containerized), OpenAI/Codex (opt-in, containerized), llama.cpp (opt-in, containerized), and Deus-native (opt-in via `/settings backend=deus-native` or `DEUS_AGENT_BACKEND=deus-native`, host-side/in-process — see `docs/decisions/deus-v2-langchain-runtime.md`). The `ollama` entry in the `AgentRuntimeId`-style CLI display alias is a forward reservation with no runtime implementation — Ollama is used for eval judging and embeddings, not as a container agent backend.
 
 ## Adding a New Backend (for contributors)
 
