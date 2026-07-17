@@ -128,6 +128,39 @@ describe('@oracle transcript-store append-only bytes', () => {
     expect(combined.at(-1)).toBe('\n'.charCodeAt(0));
     expect(combined.toString('utf8').trimEnd().split('\n')).toHaveLength(4);
   });
+
+  it('preserves and isolates a malformed tail before appending a valid turn', async () => {
+    const rootDir = temporaryRoot();
+    const sessionId = 'malformed-tail-oracle';
+    const transcriptPath = resolveDeusNativeTranscriptPath(sessionId, {
+      rootDir,
+    });
+    const malformedLine =
+      '{"schemaVersion":1,"source":"deus-native","type":"assistant"';
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.writeFileSync(transcriptPath, malformedLine);
+
+    const result = await appendDeusNativeTranscriptTurn(turn({ sessionId }), {
+      rootDir,
+    });
+    expect(result).toEqual({ ok: true, path: transcriptPath });
+
+    const lines = fs.readFileSync(transcriptPath, 'utf8').split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toBe(malformedLine);
+    expect(() => JSON.parse(lines[0])).toThrow();
+    expect(JSON.parse(lines[1])).toMatchObject({
+      source: 'deus-native',
+      type: 'user',
+      sessionId,
+    });
+    expect(JSON.parse(lines[2])).toMatchObject({
+      source: 'deus-native',
+      type: 'assistant',
+      sessionId,
+    });
+    expect(lines[3]).toBe('');
+  });
 });
 
 describe('@oracle transcript-store real filesystem permissions', () => {

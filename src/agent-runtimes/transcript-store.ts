@@ -202,7 +202,27 @@ async function appendPayload(transcriptPath: string, payload: string) {
   const handle = await fs.open(transcriptPath, 'a', 0o600);
   try {
     if (!IS_WINDOWS) await handle.chmod(0o600);
-    await handle.appendFile(payload, 'utf8');
+    let needsLeadingNewline = false;
+    try {
+      const { size } = await handle.stat();
+      if (size > 0) {
+        const readHandle = await fs.open(transcriptPath, 'r');
+        try {
+          const lastByte = Buffer.allocUnsafe(1);
+          const { bytesRead } = await readHandle.read(lastByte, 0, 1, size - 1);
+          needsLeadingNewline = bytesRead === 1 && lastByte[0] !== 0x0a;
+        } finally {
+          await readHandle.close();
+        }
+      }
+    } catch {
+      // Tail repair is best-effort; preserve unconditional append on failure.
+      needsLeadingNewline = false;
+    }
+    await handle.appendFile(
+      needsLeadingNewline ? `\n${payload}` : payload,
+      'utf8',
+    );
   } finally {
     await handle.close();
   }

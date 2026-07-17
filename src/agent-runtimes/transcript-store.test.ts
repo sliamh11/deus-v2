@@ -358,6 +358,32 @@ describe('append and queue behavior', () => {
     expect(parseLines(second.path)).toHaveLength(4);
   });
 
+  it('isolates a malformed trailing line before appending the next valid pair', async () => {
+    const rootDir = temporaryRoot();
+    const transcriptPath = resolveDeusNativeTranscriptPath(
+      'native-session-001',
+      { rootDir },
+    );
+    const malformedLine =
+      '{"schemaVersion":1,"source":"deus-native","type":"user"';
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.writeFileSync(transcriptPath, malformedLine);
+
+    const result = await appendDeusNativeTranscriptTurn(turn(), { rootDir });
+    if (!result.ok) throw result.error;
+
+    const lines = fs.readFileSync(result.path, 'utf8').split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toBe(malformedLine);
+    expect(() => JSON.parse(lines[0])).toThrow();
+    const user = JSON.parse(lines[1]) as ParsedRecord;
+    const assistant = JSON.parse(lines[2]) as ParsedRecord;
+    expect(user.type).toBe('user');
+    expect(assistant.type).toBe('assistant');
+    expect(assistant.turnId).toBe(user.turnId);
+    expect(lines[3]).toBe('');
+  });
+
   it('keeps every concurrent same-session user/assistant pair contiguous', async () => {
     const rootDir = temporaryRoot();
     const results = await Promise.all(
