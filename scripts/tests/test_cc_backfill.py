@@ -8,6 +8,7 @@ Covers:
   - Project name inference
 """
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -16,6 +17,10 @@ import pytest
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+
+_NATIVE_FIXTURE = (
+    Path(_PROJECT_ROOT) / "scripts/tests/fixtures/deus_native_transcript_v1.jsonl"
+)
 
 from evolution.cc_backfill import (
     _deterministic_id,
@@ -261,3 +266,61 @@ class TestInferProjectName:
         fpath = tmp_path / "-Users-testuser-Dev-myapp" / "abc.jsonl"
         fpath.parent.mkdir(parents=True)
         assert _infer_project_name(fpath) == "myapp"
+
+
+class TestClaudeOnlyBoundary:
+    def test_sibling_native_store_is_not_collected(self, tmp_path):
+        from evolution.cc_backfill import collect_sessions
+
+        claude_root = tmp_path / "claude-projects"
+        project = claude_root / "-Users-test-deus"
+        project.mkdir(parents=True)
+        claude = project / "claude-session.jsonl"
+        claude.write_text("{}\n")
+
+        native_root = tmp_path / "store/transcripts/deus-native"
+        native_root.mkdir(parents=True)
+        shutil.copyfile(_NATIVE_FIXTURE, native_root / "native.jsonl")
+
+        assert collect_sessions(claude_root) == [claude]
+        assert native_root / "native.jsonl" not in collect_sessions(claude_root)
+
+    def test_ingestion_label_remains_claude_code(self, tmp_path, monkeypatch):
+        from evolution import cc_backfill
+
+        claude_root = tmp_path / "claude-projects"
+        project = claude_root / "-Users-test-deus"
+        project.mkdir(parents=True)
+        _write_jsonl(
+            project,
+            "claude-session.jsonl",
+            [
+                _make_user_entry(
+                    "Explain why this historical Claude conversation remains source-specific."
+                ),
+                _make_assistant_entry(
+                    [
+                        {
+                            "type": "text",
+                            "text": "It remains source-specific because the ingestion suite explicitly records Claude Code history.",
+                        }
+                    ]
+                ),
+            ],
+        )
+        logged = []
+        monkeypatch.setattr(cc_backfill, "_already_processed", lambda _iid: False)
+        monkeypatch.setattr(
+            cc_backfill,
+            "log_interaction",
+            lambda **kwargs: logged.append(kwargs),
+        )
+
+        stats = cc_backfill.run_cc_backfill(
+            sessions_dir=claude_root,
+            verbose=False,
+            no_judge=True,
+        )
+        assert stats["processed"] == 1
+        assert [entry["eval_suite"] for entry in logged] == ["claude_code"]
+        assert all(not hasattr(cc_backfill, name) for name in ("iter_native_records", "extract_completed_pairs"))

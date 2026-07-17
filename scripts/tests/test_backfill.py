@@ -2,14 +2,21 @@
 Tests for evolution/backfill.py — exchange-pair chunking, chunk_stats, context_window.
 """
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+
+_NATIVE_FIXTURE = (
+    Path(_PROJECT_ROOT) / "scripts/tests/fixtures/deus_native_transcript_v1.jsonl"
+)
 
 
 def _write_jsonl(path: Path, entries: list[dict]) -> None:
@@ -211,3 +218,181 @@ def test_collect_pairs_threads_context_window(tmp_path):
     assert "context" in second
     ctx_texts = [c["text"] for c in second["context"]]
     assert any("Python" in t for t in ctx_texts)
+
+
+def _native_dir(tmp_path: Path) -> Path:
+    root = tmp_path / "native"
+    root.mkdir()
+    shutil.copyfile(_NATIVE_FIXTURE, root / "native.jsonl")
+    return root
+
+
+def test_native_fixture_yields_expected_pairs_groups_and_stable_namespaced_ids(
+    tmp_path,
+):
+    from evolution.backfill import (
+        _deterministic_native_id,
+        collect_pairs,
+    )
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    native = _native_dir(tmp_path)
+    first = collect_pairs(sessions, native_transcripts_dir=native)
+    second = collect_pairs(sessions, native_transcripts_dir=native)
+
+    assert len(first) == 2
+    assert first == second
+    assert [pair["group_folder"] for pair in first] == [
+        "whatsapp_main",
+        "whatsapp_main",
+    ]
+    assert first[0]["prompt"].startswith("Find the relevant source material")
+    assert first[1]["response"].startswith("The conclusion is a complete")
+    assert first[0]["interaction_id"] == _deterministic_native_id(
+        "native-session-001", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", 0
+    )
+    assert first[0]["source"] == "deus-native"
+
+
+def _build_ordering_case(base: Path, creation_order: list[str]) -> tuple[Path, Path]:
+    sessions = base / "sessions"
+    directory = sessions / "group" / ".claude" / "projects" / "proj"
+    directory.mkdir(parents=True)
+    entries = {
+        "a-session": [
+            _make_entry("user", "Legacy alpha prompt that is long enough"),
+            _make_entry("assistant", "Legacy alpha response that is long enough."),
+        ],
+        "z-session": [
+            _make_entry("user", "Legacy omega prompt that is long enough"),
+            _make_entry("assistant", "Legacy omega response that is long enough."),
+        ],
+    }
+    for name in creation_order:
+        _write_jsonl(directory / f"{name}.jsonl", entries[name])
+    # Deliberately reverse mtimes relative to lexical path order.
+    os.utime(directory / "a-session.jsonl", (2_000_000_000, 2_000_000_000))
+    os.utime(directory / "z-session.jsonl", (1_000_000_000, 1_000_000_000))
+    native = _native_dir(base)
+    return sessions, native
+
+
+def test_combined_legacy_then_native_limit_is_path_deterministic_across_creation_order_and_mtime(
+    tmp_path,
+):
+    from evolution.backfill import _deterministic_id, collect_pairs
+
+    first_sessions, first_native = _build_ordering_case(
+        tmp_path / "first", ["z-session", "a-session"]
+    )
+    second_sessions, second_native = _build_ordering_case(
+        tmp_path / "second", ["a-session", "z-session"]
+    )
+
+    def projection(sessions, native):
+        return [
+            (pair["interaction_id"], pair["session_id"], pair["prompt"])
+            for pair in collect_pairs(
+                sessions, limit=3, native_transcripts_dir=native
+            )
+        ]
+
+    first = projection(first_sessions, first_native)
+    second = projection(second_sessions, second_native)
+    assert first == second
+    assert first[0][0] == _deterministic_id("a-session", 0)
+    assert first[1][0] == _deterministic_id("z-session", 0)
+    assert first[2][1] == "native-session-001"
+
+
+def test_native_and_legacy_ingestion_keep_backfill_eval_suite(
+    tmp_path, monkeypatch
+):
+    from evolution import backfill
+
+    sessions, native = _build_ordering_case(tmp_path, ["a-session", "z-session"])
+    logged = []
+    monkeypatch.setattr(backfill, "_already_processed", lambda _iid: False)
+    monkeypatch.setattr(
+        backfill,
+        "make_runtime_judge",
+        lambda: SimpleNamespace(
+            evaluate=lambda **_kwargs: SimpleNamespace(
+                score=1.0,
+                quality=1.0,
+                safety=1.0,
+                tool_use=1.0,
+                personalization=1.0,
+                rationale="ok",
+                schema_version=1,
+            )
+        ),
+    )
+    monkeypatch.setattr(backfill, "log_interaction", lambda **kwargs: logged.append(kwargs))
+    monkeypatch.setattr(backfill, "update_score", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(backfill.time, "sleep", lambda _seconds: None)
+
+    stats = backfill.run_backfill(
+        sessions_dir=sessions,
+        native_transcripts_dir=native,
+        verbose=False,
+    )
+    assert stats["processed"] == 4
+    assert {entry["eval_suite"] for entry in logged} == {"backfill"}
+    assert {entry["group_folder"] for entry in logged} == {
+        "group",
+        "whatsapp_main",
+    }
+
+
+def test_native_transcript_argument_threads_through_both_backfill_clis(
+    tmp_path, monkeypatch
+):
+    from evolution import backfill, cli
+
+    sessions = tmp_path / "sessions"
+    native = tmp_path / "native"
+    captured = []
+
+    def fake_run_backfill(**kwargs):
+        captured.append(kwargs)
+        return {
+            "total": 0,
+            "skipped_existing": 0,
+            "processed": 0,
+            "failed": 0,
+            "reflections_generated": 0,
+        }
+
+    monkeypatch.setattr(backfill, "run_backfill", fake_run_backfill)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "backfill",
+            "--sessions-dir",
+            str(sessions),
+            "--native-transcripts-dir",
+            str(native),
+            "--quiet",
+        ],
+    )
+    backfill.main()
+    assert captured[-1]["native_transcripts_dir"] == native
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evolution",
+            "backfill",
+            "--sessions-dir",
+            str(sessions),
+            "--native-transcripts-dir",
+            str(native),
+            "--quiet",
+        ],
+    )
+    cli.main()
+    assert captured[-1]["native_transcripts_dir"] == native
