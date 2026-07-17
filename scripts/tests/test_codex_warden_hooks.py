@@ -1852,6 +1852,172 @@ def test_mark_verified_creates_marker(tmp_path):
     assert verdicts["verification-gate"]["verdict"] == "SHIP"
 
 
+# ── ai-eng gate (LIA-412) ──────────────────────────────────────────────────────
+#
+# `run_ai_eng_gate` is the one confirmed zero-coverage gap among the four commit-path
+# gates: its OWN wrapper logic (config check, commit-command regex, `_diff_touches_llm_files`)
+# runs BEFORE it ever delegates to `run_warden_backends_gate` (already covered generically
+# by the code-reviewer/verification-gate fixtures above). Every fixture below calls
+# `run_ai_eng_gate(event, repo)` directly — the same public entry point the dispatcher table
+# maps "ai-eng-gate" to.
+#
+# `_diff_touches_llm_files` shells out to real `git diff --name-only HEAD` / `git diff
+# --cached --name-only`, so these fixtures need a real git repo with an initial commit
+# (else `git diff ... HEAD` fails with "unknown revision" and the fail-closed `except`
+# path fires for reasons unrelated to the fixture under test). The target file for every
+# fixture is STAGED (`git add`) and left UNCOMMITTED — a committed file is already part of
+# HEAD and disappears from both diffs, which would make the fixture vacuous.
+
+
+def _ai_eng_repo(tmp_path: Path) -> Path:
+    repo = git_repo(tmp_path)
+    (repo / ".claude" / "wardens").mkdir(parents=True, exist_ok=True)
+    (repo / "README.md").write_text("init\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return repo
+
+
+def _stage(repo: Path, relpath: str, content: str = "x = 1\n") -> None:
+    """Write + `git add` (never commit) — mirrors the pending-commit PreToolUse timing."""
+    path = repo / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", relpath], cwd=repo, check=True, stdout=subprocess.DEVNULL)
+
+
+def test_ai_eng_gate_allows_when_warden_disabled(tmp_path, capsys):
+    """Config `enabled: false` short-circuits before the diff is even inspected."""
+    hooks = load_hooks()
+    repo = _ai_eng_repo(tmp_path)
+    (repo / ".claude" / "wardens" / "config.json").write_text(
+        json.dumps({"ai-eng-warden": {"enabled": False}}), encoding="utf-8"
+    )
+    _stage(repo, "memory_indexer.py")
+
+    rc = hooks.run_ai_eng_gate(bash_event(repo, "git commit -m test"), repo)
+
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_ai_eng_gate_allows_non_commit_command(tmp_path, capsys):
+    """The commit-command regex doesn't match → gate returns 0 regardless of diff content."""
+    hooks = load_hooks()
+    repo = _ai_eng_repo(tmp_path)
+    _stage(repo, "memory_indexer.py")
+
+    rc = hooks.run_ai_eng_gate(bash_event(repo, "git status"), repo)
+
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_ai_eng_gate_allows_when_diff_excludes_llm_files(tmp_path, capsys):
+    """A commit whose staged diff never touches an LLM-related file needs no verdict."""
+    hooks = load_hooks()
+    repo = _ai_eng_repo(tmp_path)
+    _stage(repo, "README.md", content="init\nmore\n")
+
+    rc = hooks.run_ai_eng_gate(bash_event(repo, "git commit -m test"), repo)
+
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_ai_eng_gate_blocks_llm_basename_with_no_verdict(tmp_path, capsys):
+    """A staged (uncommitted) `_AI_ENG_BASENAMES` file with no ai-eng-warden verdict blocks."""
+    hooks = load_hooks()
+    repo = _ai_eng_repo(tmp_path)
+    _stage(repo, "memory_indexer.py")
+
+    rc = hooks.run_ai_eng_gate(bash_event(repo, "git commit -m test"), repo)
+
+    assert rc == 0  # the gate itself always returns 0 — denial is via permissionDecision
+    out = capsys.readouterr().out
+    assert "ai-eng-warden is not SHIP across all configured backends" in out
+    assert "no approval. Run the ai-eng-warden Warden" in out
+
+
+def test_ai_eng_gate_blocks_llm_dir_prefix_with_no_verdict(tmp_path, capsys):
+    """A staged file under an `_AI_ENG_DIR_PREFIXES` directory blocks the same way."""
+    hooks = load_hooks()
+    repo = _ai_eng_repo(tmp_path)
+    _stage(repo, "evolution/foo.ts")
+
+    rc = hooks.run_ai_eng_gate(bash_event(repo, "git commit -m test"), repo)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "ai-eng-warden is not SHIP across all configured backends" in out
+    assert "no approval. Run the ai-eng-warden Warden" in out
+
+
+def test_ai_eng_gate_allows_when_verdict_is_ship(tmp_path, capsys):
+    """Same LLM-file diff as the blocked fixtures, but a SHIP verdict clears the gate."""
+    hooks = load_hooks()
+    repo = _ai_eng_repo(tmp_path)
+    _stage(repo, "memory_indexer.py")
+    hooks._write_verdict(repo, "ai-eng-warden", "SHIP", "ok", "mark")
+
+    rc = hooks.run_ai_eng_gate(bash_event(repo, "git commit -m test"), repo)
+
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_ai_eng_gate_blocks_on_revise_verdict(tmp_path, capsys):
+    """A REVISE verdict blocks and shows the no-trivial-bypass re-run message.
+
+    Mirrors `test_code_review_gate_shows_revise_escalation` for the ai-eng wrapper
+    that pattern never reached (it calls `run_code_review_gate`, not `run_ai_eng_gate`).
+    """
+    hooks = load_hooks()
+    repo = _ai_eng_repo(tmp_path)
+    _stage(repo, "memory_indexer.py")
+    hooks._write_verdict(repo, "ai-eng-warden", "REVISE", "issues found", "agent")
+
+    rc = hooks.run_ai_eng_gate(bash_event(repo, "git commit -m test"), repo)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "REVISE" in out
+    assert "Re-run the ai-eng-warden after" in out
+    assert "Trivial-commit bypass" not in out
+
+
+def test_ai_eng_gate_mutation_config_flag_flips_verdict(tmp_path, capsys):
+    """AC5: flipping `_warden_enabled` for ai-eng-warden on an otherwise-identical
+    staged-LLM-file/no-verdict fixture flips the gate's decision from allow to block —
+    a real, deterministic lever proving the config check is load-bearing."""
+    hooks = load_hooks()
+    repo = _ai_eng_repo(tmp_path)
+    config_path = repo / ".claude" / "wardens" / "config.json"
+    _stage(repo, "memory_indexer.py")
+    event = bash_event(repo, "git commit -m test")
+
+    config_path.write_text(
+        json.dumps({"ai-eng-warden": {"enabled": False}}), encoding="utf-8"
+    )
+    rc_disabled = hooks.run_ai_eng_gate(event, repo)
+    assert rc_disabled == 0
+    assert capsys.readouterr().out == ""
+
+    config_path.write_text(
+        json.dumps({"ai-eng-warden": {"enabled": True}}), encoding="utf-8"
+    )
+    rc_enabled = hooks.run_ai_eng_gate(event, repo)
+    assert rc_enabled == 0
+    out = capsys.readouterr().out
+    assert "ai-eng-warden is not SHIP across all configured backends" in out
+
+
 # ── _sync_atom_kinds_on_init tests ────────────────────────────────────────────
 
 def test_sync_atom_kinds_on_init_skips_when_env_unset(tmp_path, monkeypatch):
