@@ -1625,7 +1625,10 @@ describe('wardens middleware — explicit --workspace-root (LIA-410)', () => {
     await invokeWrapToolCall(
       middlewareA,
       makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_ws_a'),
-      vi.fn(async () => new ToolMessage({ content: 'ok', tool_call_id: 'call_ws_a' })),
+      vi.fn(
+        async () =>
+          new ToolMessage({ content: 'ok', tool_call_id: 'call_ws_a' }),
+      ),
     );
 
     const { middleware: middlewareB } = buildWardensMiddleware(
@@ -1636,7 +1639,10 @@ describe('wardens middleware — explicit --workspace-root (LIA-410)', () => {
     await invokeWrapToolCall(
       middlewareB,
       makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_ws_b'),
-      vi.fn(async () => new ToolMessage({ content: 'ok', tool_call_id: 'call_ws_b' })),
+      vi.fn(
+        async () =>
+          new ToolMessage({ content: 'ok', tool_call_id: 'call_ws_b' }),
+      ),
     );
 
     expect(capturedWardenCalls).toHaveLength(2);
@@ -1667,7 +1673,10 @@ describe('wardens middleware — explicit --workspace-root (LIA-410)', () => {
       makeToolCallRequest('apply_patch', { patch: 'x' }, 'call_cwd_not_source'),
       vi.fn(
         async () =>
-          new ToolMessage({ content: 'ok', tool_call_id: 'call_cwd_not_source' }),
+          new ToolMessage({
+            content: 'ok',
+            tool_call_id: 'call_cwd_not_source',
+          }),
       ),
     );
 
