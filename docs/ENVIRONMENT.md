@@ -143,6 +143,7 @@ All variables are set in `.env` at the project root. Copy `.env.example` to get 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SESSION_IDLE_RESET_HOURS` | `8` | Reset a group's session after N idle hours (0 = never reset). Per-channel override via `/settings session_idle_hours=N`. |
+| `DEUS_NATIVE_COMPACTION_TOKEN_THRESHOLD` | `150000` | Approximate input-token threshold at which the `deus-native` runtime's checkpoint-aware compaction middleware (LIA-419, `src/agent-runtimes/context-compaction.ts`) summarizes older checkpointed history and keeps the last 8 messages verbatim. Must be a positive integer; invalid values fail visibly at startup rather than silently disabling compaction. |
 
 Group/task backend overrides:
 
