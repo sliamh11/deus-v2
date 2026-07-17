@@ -103,6 +103,15 @@ jobs:
       - name: Session type contract tests
         run: python3 -m pytest tests/test_session_type_contract.py -v
 
+      - name: Hook inventory completeness check (LIA-414)
+        # Fresh-extracts every hook dispatch from live .claude/settings.json and
+        # diffs it against docs/exec-plans/active/EP-001-hook-inventory-
+        # extraction.md's own mapping table, so that artifact can't silently
+        # drift from reality as hooks are added/removed/re-matched.
+        run: |
+          python3 scripts/hook_inventory_check.py
+          python3 -m pytest scripts/tests/test_hook_inventory_check.py -v
+
       - name: CLAUDE.md keyword coverage
         run: scripts/token_bench/ci_coverage_gate.sh origin/${{ github.base_ref }}
 
