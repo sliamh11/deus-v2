@@ -502,9 +502,7 @@ describe('handleSettingsCommand — backend', () => {
       24,
     );
 
-    expect(displayed.response).toContain(
-      '  backend: (using global default)',
-    );
+    expect(displayed.response).toContain('  backend: (using global default)');
   });
 
   it('dispatches through the host command registry', () => {
