@@ -614,6 +614,66 @@ describe('processGroupMessages', () => {
     );
   });
 
+  it('closes the active container when the persisted backend override changes', async () => {
+    const state = makeState(MAIN_GROUP);
+    const queue = makeQueue();
+    const channel = makeChannel();
+    mockFindChannel.mockReturnValue(channel as unknown as Channel);
+    mockGetMessagesSince.mockReturnValue([
+      makeMsg({ content: '/settings backend=deus-native' }),
+    ]);
+    mockDispatchHostCommand.mockReturnValue({
+      matched: true,
+      updatedGroup: {
+        ...MAIN_GROUP,
+        containerConfig: { agentBackend: 'deus-native' },
+      },
+      response: 'backend set to deus-native',
+      timestamp: '2024-01-01T00:00:01.000Z',
+    });
+
+    const orchestrator = createMessageOrchestrator({
+      registry: makeRegistry(),
+      state: state as unknown as RouterState,
+      queue: queue as unknown as GroupQueue,
+      channels: [channel as unknown as Channel],
+    });
+
+    await orchestrator.processGroupMessages('group@g.us');
+
+    expect(queue.closeStdin).toHaveBeenCalledWith('group@g.us');
+  });
+
+  it('does not close the active container for an unrelated setting change', async () => {
+    const state = makeState(MAIN_GROUP);
+    const queue = makeQueue();
+    const channel = makeChannel();
+    mockFindChannel.mockReturnValue(channel as unknown as Channel);
+    mockGetMessagesSince.mockReturnValue([
+      makeMsg({ content: '/settings effort=high' }),
+    ]);
+    mockDispatchHostCommand.mockReturnValue({
+      matched: true,
+      updatedGroup: {
+        ...MAIN_GROUP,
+        containerConfig: { agentEffort: 'high' },
+      },
+      response: 'effort set to high',
+      timestamp: '2024-01-01T00:00:01.000Z',
+    });
+
+    const orchestrator = createMessageOrchestrator({
+      registry: makeRegistry(),
+      state: state as unknown as RouterState,
+      queue: queue as unknown as GroupQueue,
+      channels: [channel as unknown as Channel],
+    });
+
+    await orchestrator.processGroupMessages('group@g.us');
+
+    expect(queue.closeStdin).not.toHaveBeenCalled();
+  });
+
   it('sends agent output to the channel', async () => {
     const state = makeState(MAIN_GROUP);
     const channel = makeChannel();

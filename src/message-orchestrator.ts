@@ -410,6 +410,15 @@ export function createMessageOrchestrator(deps: OrchestratorDeps) {
     );
     if (hostResult.matched) {
       if (hostResult.updatedGroup) {
+        const from = group.containerConfig?.agentBackend;
+        const to = hostResult.updatedGroup.containerConfig?.agentBackend;
+        if (from !== to) {
+          logger.debug(
+            { group: group.name, from, to },
+            'Backend override changed — closing active container to force cutover',
+          );
+          queue.closeStdin(chatJid);
+        }
         setRegisteredGroup(chatJid, hostResult.updatedGroup);
         state.registeredGroups[chatJid] = hostResult.updatedGroup;
         logger.info({ group: group.name }, 'Group setting updated');
@@ -849,6 +858,16 @@ export function createMessageOrchestrator(deps: OrchestratorDeps) {
             );
             if (loopHostResult.matched) {
               if (loopHostResult.updatedGroup) {
+                const from = group.containerConfig?.agentBackend;
+                const to =
+                  loopHostResult.updatedGroup.containerConfig?.agentBackend;
+                if (from !== to) {
+                  logger.debug(
+                    { group: group.name, from, to },
+                    'Backend override changed — closing active container to force cutover',
+                  );
+                  queue.closeStdin(chatJid);
+                }
                 setRegisteredGroup(chatJid, loopHostResult.updatedGroup);
                 state.registeredGroups[chatJid] = loopHostResult.updatedGroup;
                 logger.info({ group: group.name }, 'Group setting updated');
