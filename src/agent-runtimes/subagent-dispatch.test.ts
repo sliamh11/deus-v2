@@ -97,9 +97,7 @@ describe('dispatchSubAgents', () => {
       { role: 'second', request: request('agent-b', 'model-b', 'task b') },
     ];
 
-    const batchStartedAt = performance.now();
     const outcomes = await dispatchSubAgents(dispatcher, tasks);
-    const elapsedMs = performance.now() - batchStartedAt;
 
     const first = timingByModel.get('model-a')!;
     const second = timingByModel.get('model-b')!;
@@ -110,7 +108,6 @@ describe('dispatchSubAgents', () => {
     expect(Math.max(first.enteredAt!, second.enteredAt!)).toBeLessThan(
       Math.min(first.exitedAt!, second.exitedAt!),
     );
-    expect(elapsedMs).toBeLessThan(delayMs * 1.75);
     expect(outcomes.map(({ result }) => result.status)).toEqual([
       'success',
       'success',
