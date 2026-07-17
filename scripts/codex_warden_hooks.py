@@ -3803,8 +3803,9 @@ def run(args: argparse.Namespace) -> int:
     # process's os.getcwd(), since the two can differ). Either way,
     # worktree_override pins _claude_marker_dir to that worktree's bucket
     # for every runner.
-    if args.workspace_root is not None:
-        cwd = Path(str(args.workspace_root)).resolve(strict=False)
+    workspace_root = getattr(args, "workspace_root", None)
+    if workspace_root is not None:
+        cwd = Path(str(workspace_root)).resolve(strict=False)
     else:
         cwd = Path(str(event.get("cwd") or os.getcwd())).resolve(strict=False)
     wt = _worktree_for_cwd(cwd, repo_root)
