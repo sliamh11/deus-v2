@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from argparse import Namespace
@@ -21,6 +22,25 @@ def load_hooks():
     sys.modules["codex_warden_hooks"] = module
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(autouse=True)
+def restore_shared_warden_module_binding():
+    """Keep this file's fresh-module tests from contaminating sibling suites.
+
+    ``verdict_store`` is a shared capsule whose injected entry-module reference
+    follows the most recently loaded ``codex_warden_hooks`` module. Restore the
+    collection-time module after every test so running this file alongside
+    ``test_warden_review.py`` preserves that suite's module identity.
+    """
+
+    previous = sys.modules.get("codex_warden_hooks")
+    yield
+    if previous is None:
+        sys.modules.pop("codex_warden_hooks", None)
+        return
+    sys.modules["codex_warden_hooks"] = previous
+    previous._verdict_store.bind_entry(previous)
 
 
 def git_repo(tmp_path: Path) -> Path:
@@ -5137,3 +5157,384 @@ def test_buckets_with_ship_excludes_current_bucket(tmp_path):
     )
 
     assert hooks._buckets_with_ship("code-reviewer", "gpt", repo, current) == []
+
+
+# ---------------------------------------------------------------------------
+# LIA-413: Claude hook + middleware-profile shadow enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_double_enforcement_run_parser_accepts_correlation_flags():
+    hooks = load_hooks()
+
+    args = hooks.build_parser().parse_args(
+        [
+            "run",
+            "plan-review-gate",
+            "--correlation-id",
+            "cid-1",
+            "--invocation",
+            "middleware",
+            "--workspace-root",
+            "/tmp/worktree",
+        ]
+    )
+
+    assert args.correlation_id == "cid-1"
+    assert args.invocation == "middleware"
+    assert args.workspace_root == "/tmp/worktree"
+
+
+@pytest.mark.parametrize(
+    ("behavior", "event", "expected"),
+    [
+        ("plan-review-gate", {"tool_name": "apply_patch"}, True),
+        ("placement-guard", {"tool_name": "apply_patch"}, False),
+        ("plan-review-gate", {"tool_name": "Write"}, False),
+        (
+            "code-review-gate",
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}},
+            True,
+        ),
+        (
+            "ai-eng-gate",
+            {"tool_name": "Bash", "tool_input": {"command": "x; git -C . commit -m y"}},
+            True,
+        ),
+        (
+            "verification-gate",
+            {"tool_name": "Bash", "tool_input": {"command": "git status"}},
+            False,
+        ),
+        (
+            "admin-merge-gate",
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}},
+            False,
+        ),
+        (
+            "code-review-gate",
+            {"tool_name": "bash", "tool_input": {"command": "git commit -m x"}},
+            False,
+        ),
+    ],
+)
+def test_double_enforcement_applicability_is_exact(behavior, event, expected):
+    hooks = load_hooks()
+
+    assert hooks._double_enforcement_applicable(behavior, event) is expected
+
+
+def test_double_enforcement_outcome_classification_covers_all_decisions():
+    hooks = load_hooks()
+    shadow = hooks._double_enforcement
+    reason = "review required\nwith exact feedback"
+    deny = json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        },
+        separators=(",", ":"),
+    ) + "\n"
+
+    assert shadow.classify_outcome(0, "") == ("allow", None)
+    assert shadow.classify_outcome(0, deny) == ("deny", reason)
+    assert shadow.classify_outcome(0, deny.rstrip("\n")) == (
+        "error",
+        "malformed tagged runner output",
+    )
+    assert shadow.classify_outcome(7, "") == (
+        "error",
+        "runner exited with status 7",
+    )
+    decision, error_reason = shadow.classify_outcome(
+        1, "", exception=RuntimeError("worker\nfailed")
+    )
+    assert decision == "error"
+    assert error_reason == "RuntimeError: worker failed"
+
+
+def test_correlation_bucket_ignores_worktree_override(tmp_path):
+    hooks = load_hooks()
+    repo = git_repo(tmp_path)
+    _commit_repo(repo)
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(linked), "HEAD"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    expected_dir = hooks._marker_dir_for_worktree(repo, linked.resolve())
+
+    # Deliberately pin the verdict store to the OTHER (main) worktree. The
+    # correlation store must still follow event['cwd'] into the linked bucket.
+    with hooks.worktree_override(repo):
+        outcome, divergence = hooks._correlation_paths_for_event(
+            repo, {"cwd": str(linked)}
+        )
+
+    assert outcome == expected_dir / ".warden-double-enforce.jsonl"
+    assert divergence == expected_dir / ".warden-double-enforce-divergences.jsonl"
+    assert expected_dir != repo / ".claude"
+
+
+def test_correlation_bucket_falls_back_to_main_for_outside_repo(tmp_path):
+    hooks = load_hooks()
+    repo = git_repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    outcome, divergence = hooks._correlation_paths_for_event(
+        repo, {"cwd": str(outside)}
+    )
+
+    assert outcome == repo / ".claude" / ".warden-double-enforce.jsonl"
+    assert divergence == repo / ".claude" / ".warden-double-enforce-divergences.jsonl"
+
+
+def test_double_enforcement_append_is_one_atomic_os_write(tmp_path, monkeypatch):
+    hooks = load_hooks()
+    shadow = hooks._double_enforcement
+    path = tmp_path / "telemetry" / "outcomes.jsonl"
+    record = shadow.make_outcome(
+        "cid", "plan-review-gate", "cc-hook", "allow", None, now=1
+    )
+    real_open = os.open
+    real_write = os.write
+    real_close = os.close
+    opened = []
+    writes = []
+
+    def tracking_open(target, flags, mode=0o777):
+        opened.append((Path(target), flags, mode))
+        return real_open(target, flags, mode)
+
+    def tracking_write(fd, payload):
+        writes.append(payload)
+        return real_write(fd, payload)
+
+    monkeypatch.setattr(shadow.os, "open", tracking_open)
+    monkeypatch.setattr(shadow.os, "write", tracking_write)
+    monkeypatch.setattr(shadow.os, "close", real_close)
+
+    shadow.append_outcome(path, record)
+
+    assert len(writes) == 1
+    assert writes[0].endswith(b"\n")
+    assert opened[0][0] == path
+    assert opened[0][1] & os.O_APPEND
+    assert opened[0][1] & os.O_CREAT
+    assert opened[0][1] & os.O_WRONLY
+    assert opened[0][2] == 0o600
+
+
+def test_reconciliation_detects_spawn_then_die_once_at_exact_timeout(tmp_path):
+    hooks = load_hooks()
+    shadow = hooks._double_enforcement
+    outcome_path = tmp_path / "outcomes.jsonl"
+    divergence_path = tmp_path / "divergences.jsonl"
+    stale = shadow.make_outcome(
+        "orphan", "plan-review-gate", "cc-hook", "allow", None, now=70
+    )
+    fresh = shadow.make_outcome(
+        "fresh", "plan-review-gate", "cc-hook", "allow", None, now=70.01
+    )
+    shadow.append_outcome(outcome_path, stale)
+    shadow.append_outcome(outcome_path, fresh)
+
+    first = shadow.reconcile_missing_middleware(
+        outcome_path, divergence_path, now=100
+    )
+    second = shadow.reconcile_missing_middleware(
+        outcome_path, divergence_path, now=100
+    )
+
+    assert [record["correlation_id"] for record in first] == ["orphan"]
+    assert second == []
+    stored = shadow.read_divergences(divergence_path)
+    assert len(stored) == 1
+    assert stored[0]["mismatches"] == ["missing_middleware"]
+
+    # A late observer is historical evidence, not grounds to retract the signal.
+    shadow.append_outcome(
+        outcome_path,
+        shadow.make_outcome(
+            "orphan", "plan-review-gate", "middleware", "allow", None, now=102
+        ),
+    )
+    shadow.append_outcome(
+        outcome_path,
+        shadow.make_outcome(
+            "fresh", "plan-review-gate", "middleware", "allow", None, now=102
+        ),
+    )
+    assert shadow.reconcile_missing_middleware(
+        outcome_path, divergence_path, now=140
+    ) == []
+    assert len(shadow.read_divergences(divergence_path)) == 1
+
+
+def test_feedback_only_divergence_is_recorded(tmp_path):
+    hooks = load_hooks()
+    shadow = hooks._double_enforcement
+    outcome_path = tmp_path / "outcomes.jsonl"
+    divergence_path = tmp_path / "divergences.jsonl"
+    primary = shadow.make_outcome(
+        "cid", "plan-review-gate", "cc-hook", "deny", "primary feedback", now=1
+    )
+    middleware = shadow.make_outcome(
+        "cid", "plan-review-gate", "middleware", "deny", "shadow feedback", now=2
+    )
+    shadow.append_outcome(outcome_path, primary)
+    shadow.append_outcome(outcome_path, middleware)
+
+    divergence = shadow.compare_middleware_outcome(
+        outcome_path, divergence_path, middleware, now=3
+    )
+
+    assert divergence is not None
+    assert divergence["mismatches"] == ["feedback"]
+    assert divergence["cc_hook"] == primary
+    assert divergence["middleware"] == middleware
+
+
+def test_error_outcomes_agree_without_reason_comparison(tmp_path):
+    hooks = load_hooks()
+    shadow = hooks._double_enforcement
+    outcome_path = tmp_path / "outcomes.jsonl"
+    divergence_path = tmp_path / "divergences.jsonl"
+    primary = shadow.make_outcome(
+        "cid", "verification-gate", "cc-hook", "error", "stdin failed", now=1
+    )
+    middleware = shadow.make_outcome(
+        "cid", "verification-gate", "middleware", "error", "timeout failed", now=2
+    )
+    shadow.append_outcome(outcome_path, primary)
+    shadow.append_outcome(outcome_path, middleware)
+
+    assert shadow.compare_middleware_outcome(
+        outcome_path, divergence_path, middleware
+    ) is None
+    assert shadow.read_divergences(divergence_path) == []
+
+
+def test_secondary_launch_failure_records_synthetic_error_and_divergence(tmp_path):
+    hooks = load_hooks()
+    shadow = hooks._double_enforcement
+    outcome_path = tmp_path / "outcomes.jsonl"
+    divergence_path = tmp_path / "divergences.jsonl"
+    shadow.append_outcome(
+        outcome_path,
+        shadow.make_outcome(
+            "cid", "plan-review-gate", "cc-hook", "allow", None, now=1
+        ),
+    )
+
+    def fail_spawn(*args, **kwargs):
+        raise OSError("spawn unavailable")
+
+    launched = shadow.launch_secondary(
+        script_path=Path("runner.py"),
+        behavior="plan-review-gate",
+        event_json="{}",
+        correlation_id="cid",
+        repo_root=tmp_path,
+        workspace_root=tmp_path,
+        outcome_path=outcome_path,
+        divergence_path=divergence_path,
+        popen=fail_spawn,
+    )
+
+    assert launched is False
+    outcomes = shadow.read_outcomes(outcome_path)
+    assert outcomes[-1]["invocation"] == "middleware"
+    assert outcomes[-1]["decision"] == "error"
+    assert "spawn unavailable" in outcomes[-1]["reason"]
+    divergences = shadow.read_divergences(divergence_path)
+    assert divergences[-1]["mismatches"] == ["secondary_launch"]
+
+
+def test_secondary_launcher_detaches_and_supplies_identical_stdin(tmp_path):
+    hooks = load_hooks()
+    shadow = hooks._double_enforcement
+    captured = {}
+
+    class Sink:
+        def __init__(self):
+            self.value = ""
+            self.closed = False
+
+        def write(self, value):
+            self.value += value
+            return len(value)
+
+        def close(self):
+            self.closed = True
+
+    sink = Sink()
+
+    class Process:
+        stdin = sink
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Process()
+
+    event_json = '{"cwd":"/exact","tool_name":"apply_patch"}'
+    launched = shadow.launch_secondary(
+        script_path=Path("/repo/scripts/codex_warden_hooks.py"),
+        behavior="plan-review-gate",
+        event_json=event_json,
+        correlation_id="cid",
+        repo_root=Path("/repo"),
+        workspace_root=Path("/worktree"),
+        outcome_path=tmp_path / "outcomes.jsonl",
+        divergence_path=tmp_path / "divergences.jsonl",
+        python_command="python-test",
+        popen=fake_popen,
+    )
+
+    assert launched is True
+    assert sink.value == event_json
+    assert sink.closed is True
+    assert captured["kwargs"]["start_new_session"] is True
+    assert captured["kwargs"]["stdin"] is subprocess.PIPE
+    assert captured["kwargs"]["stdout"] is subprocess.DEVNULL
+    assert captured["kwargs"]["stderr"] is subprocess.DEVNULL
+    assert captured["command"] == [
+        "python-test",
+        "/repo/scripts/codex_warden_hooks.py",
+        "run",
+        "plan-review-gate",
+        "--correlation-id",
+        "cid",
+        "--invocation",
+        "middleware",
+        "--repo-root",
+        "/repo",
+        "--workspace-root",
+        "/worktree",
+    ]
+
+
+def test_double_enforcement_reader_ignores_malformed_historical_lines(tmp_path):
+    hooks = load_hooks()
+    shadow = hooks._double_enforcement
+    path = tmp_path / "outcomes.jsonl"
+    valid = shadow.make_outcome(
+        "cid", "plan-review-gate", "cc-hook", "allow", None, now=1
+    )
+    path.write_text(
+        "torn-json\n"
+        + json.dumps({"correlation_id": "incomplete"})
+        + "\n"
+        + json.dumps(valid)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert shadow.read_outcomes(path) == [valid]

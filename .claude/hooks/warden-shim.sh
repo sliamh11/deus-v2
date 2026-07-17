@@ -27,5 +27,38 @@ REPO_ROOT=$(git -C "$WORKTREE_ROOT" rev-parse --path-format=absolute --git-commo
 # Fall back to WORKTREE_ROOT if the git command failed (non-git dirs, etc.).
 REPO_ROOT="${REPO_ROOT:-$WORKTREE_ROOT}"
 
+if [ "${DEUS_WARDEN_DOUBLE_ENFORCEMENT:-}" != "1" ]; then # LIA-413
 exec python3 "$REPO_ROOT/scripts/codex_warden_hooks.py" run "$@" \
   --repo-root "$REPO_ROOT"
+fi
+
+EVENT_JSON=$(cat)
+
+# Ask the Python runner to apply the exact shared trigger contract (including
+# its existing GIT_COMMIT_RE); do not duplicate that policy in shell.
+if ! printf '%s' "$EVENT_JSON" | python3 "$REPO_ROOT/scripts/codex_warden_hooks.py" \
+  double-enforcement-applicable "$@"; then
+  printf '%s' "$EVENT_JSON" | python3 "$REPO_ROOT/scripts/codex_warden_hooks.py" \
+    run "$@" --repo-root "$REPO_ROOT"
+  exit $?
+fi
+
+CID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+PRIMARY_RC=
+PRIMARY_OUT=$(printf '%s' "$EVENT_JSON" | \
+  python3 "$REPO_ROOT/scripts/codex_warden_hooks.py" run "$@" \
+    --correlation-id "$CID" --invocation cc-hook --repo-root "$REPO_ROOT") \
+  || PRIMARY_RC=$?
+PRIMARY_RC="${PRIMARY_RC:-0}"
+
+# The launcher creates a new process session and converts spawn failures into
+# telemetry. Its status is observational and never changes the primary result.
+printf '%s' "$EVENT_JSON" | \
+  python3 "$REPO_ROOT/scripts/codex_warden_hooks.py" launch-double-enforcement "$@" \
+    --correlation-id "$CID" --repo-root "$REPO_ROOT" \
+    --workspace-root "$WORKTREE_ROOT" >/dev/null 2>&1 || :
+
+if [ -n "$PRIMARY_OUT" ]; then
+  printf '%s\n' "$PRIMARY_OUT"
+fi
+exit "$PRIMARY_RC"
