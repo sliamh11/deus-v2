@@ -152,6 +152,23 @@ const stubDeps: ContainerRuntimeDeps = {
   registerProcess: () => {},
 };
 
+// D5 (LIA-419): production now invokes the agent with a single HumanMessage
+// carrying a per-turn stable `id` (`currentTurnMessageId` in
+// deus-native-backend.ts) and locates that SAME id in the returned final
+// state to scope this turn's messages (`currentTurnStart`) — required once
+// compaction can make the final state SHORTER than the pre-turn state, so a
+// prior-message-count slice is no longer valid. Real LangGraph echoes the
+// input message back in the final checkpoint state; every invokeMock fixture
+// in this file must do the same, or the runTurn under test throws
+// FatalError('current turn input was missing from final agent state').
+function invokeMockEcho(...trailingMessages: unknown[]) {
+  invokeMock.mockImplementation(
+    async (input: { messages: Array<{ id?: string }> }) => ({
+      messages: [input.messages[0], ...trailingMessages],
+    }),
+  );
+}
+
 describe('DeusNativeBackend', () => {
   const backend = createDeusNativeRuntime(stubDeps);
 
@@ -297,16 +314,14 @@ describe('DeusNativeBackend', () => {
 
   it('runTurn maps a scripted createAgent response into the RunResult contract and emits the expected RuntimeEvent sequence', async () => {
     createAgentMock.mockReturnValue({ invoke: invokeMock });
-    invokeMock.mockResolvedValue({
-      messages: [
-        { content: 'search the web for X' },
-        {
-          content: '',
-          tool_calls: [{ name: 'web_search', args: { query: 'X' } }],
-        },
-        { content: 'Here is what I found about X.' },
-      ],
-    });
+    invokeMockEcho(
+      { content: 'search the web for X' },
+      {
+        content: '',
+        tool_calls: [{ name: 'web_search', args: { query: 'X' } }],
+      },
+      { content: 'Here is what I found about X.' },
+    );
 
     const events: RuntimeEvent[] = [];
     const result = await backend.runTurn(
@@ -350,13 +365,26 @@ describe('DeusNativeBackend', () => {
     // systemMessage boundary. B4 (LIA-404): invoke gains a second argument —
     // the checkpointer thread_id, which must be the SAME id the
     // RunResult.sessionRef carries (the session row references exactly the
-    // checkpointer state this turn wrote).
-    expect(invokeMock).toHaveBeenCalledWith(
-      {
-        messages: [{ role: 'user', content: 'find X' }],
-      },
-      { configurable: { thread_id: result.sessionRef?.session_id } },
-    );
+    // checkpointer state this turn wrote). D5 (LIA-419): the single input
+    // message is now a HumanMessage carrying a per-turn stable `id` (rather
+    // than a bare `{role, content}` literal) — checked structurally via
+    // toMatchObject (HumanMessage carries additional LangChain-internal
+    // fields a strict toEqual would reject) plus an explicit `id` presence
+    // check, since the id's value is generated fresh per call.
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    const [invokeInput, invokeConfig] = invokeMock.mock.calls[0] as [
+      { messages: Array<{ id?: unknown; content?: unknown; type?: unknown }> },
+      unknown,
+    ];
+    expect(invokeInput.messages).toHaveLength(1);
+    expect(invokeInput.messages[0]).toMatchObject({
+      type: 'human',
+      content: 'find X',
+    });
+    expect(typeof invokeInput.messages[0].id).toBe('string');
+    expect(invokeConfig).toEqual({
+      configurable: { thread_id: result.sessionRef?.session_id },
+    });
 
     // OAuth-vs-API-key branching happened via detectAuthMode, and a
     // per-group token was minted.
@@ -367,12 +395,17 @@ describe('DeusNativeBackend', () => {
     // runtime level; composition semantics are proven in
     // middleware-stack.test.ts's AC4 ordering test). B3 (LIA-403) appends
     // its prompt-lifecycle middleware LAST — appended, never prepended, so
-    // B2's AC1-locked order is untouched.
+    // B2's AC1-locked order is untouched. D5 (LIA-419) prepends
+    // context-compaction AHEAD of B2's stack — it must replace stale
+    // checkpointed history before memory's beforeModel hook appends
+    // turn-specific recalled context, so the leading array position is
+    // required, not incidental.
     const createAgentArgs = createAgentMock.mock.calls[0]?.[0] as {
       middleware?: Array<{ name: string }>;
       checkpointer?: unknown;
     };
     expect(createAgentArgs.middleware?.map((m) => m.name)).toEqual([
+      'context-compaction',
       'permissions',
       'wardens',
       'memory',
@@ -390,9 +423,7 @@ describe('DeusNativeBackend', () => {
   it('branches to OAuth-mode client construction when detectAuthMode() returns "oauth"', async () => {
     detectAuthModeMock.mockReturnValue('oauth');
     createAgentMock.mockReturnValue({ invoke: invokeMock });
-    invokeMock.mockResolvedValue({
-      messages: [{ content: 'ok' }],
-    });
+    invokeMockEcho({ content: 'ok' });
 
     const result = await backend.runTurn(
       {
@@ -460,7 +491,7 @@ describe('DeusNativeBackend — permission profile wiring (B7/LIA-407)', () => {
 
   async function runTurnWith(backendConfig?: Record<string, unknown>) {
     createAgentMock.mockReturnValue({ invoke: invokeMock });
-    invokeMock.mockResolvedValue({ messages: [{ content: 'ok' }] });
+    invokeMockEcho({ content: 'ok' });
     return backend.runTurn(
       {
         prompt: 'test',
@@ -478,7 +509,9 @@ describe('DeusNativeBackend — permission profile wiring (B7/LIA-407)', () => {
     const args = createAgentMock.mock.calls[0]?.[0] as {
       middleware?: Array<{ name: string; wrapToolCall?: unknown }>;
     };
-    const permissions = args.middleware?.[0];
+    // D5 (LIA-419) prepends context-compaction ahead of B2's stack, so
+    // 'permissions' now sits at index 1, not 0.
+    const permissions = args.middleware?.[1];
     expect(permissions?.name).toBe('permissions');
     return permissions as { name: string; wrapToolCall?: unknown };
   }
@@ -504,11 +537,12 @@ describe('DeusNativeBackend — permission profile wiring (B7/LIA-407)', () => {
     expect(result.status).toBe('success');
 
     // Canonical order is untouched by the profile selection (B2's AC1 +
-    // B3's appended prompt-lifecycle).
+    // B3's appended prompt-lifecycle + D5's prepended context-compaction).
     const createAgentArgs = createAgentMock.mock.calls[0]?.[0] as {
       middleware?: Array<{ name: string }>;
     };
     expect(createAgentArgs.middleware?.map((m) => m.name)).toEqual([
+      'context-compaction',
       'permissions',
       'wardens',
       'memory',
@@ -601,7 +635,7 @@ describe('DeusNativeBackend — memory retrieval wiring (D1/LIA-415)', () => {
 
   async function runTurnAs(isControlGroup: boolean) {
     createAgentMock.mockReturnValue({ invoke: invokeMock });
-    invokeMock.mockResolvedValue({ messages: [{ content: 'ok' }] });
+    invokeMockEcho({ content: 'ok' });
     return backend.runTurn(
       {
         prompt: 'a generic fixture prompt about testing',
@@ -645,6 +679,7 @@ describe('DeusNativeBackend — memory retrieval wiring (D1/LIA-415)', () => {
       middleware?: Array<{ name: string }>;
     };
     expect(createAgentArgs.middleware?.map((m) => m.name)).toEqual([
+      'context-compaction',
       'permissions',
       'wardens',
       'memory',
@@ -666,6 +701,7 @@ describe('DeusNativeBackend — memory retrieval wiring (D1/LIA-415)', () => {
       middleware?: Array<{ name: string }>;
     };
     expect(createAgentArgs.middleware?.map((m) => m.name)).toEqual([
+      'context-compaction',
       'permissions',
       'wardens',
       'memory',
@@ -772,7 +808,9 @@ describe('DeusNativeBackend — wardens cwd wiring (C1/LIA-409)', () => {
     const args = createAgentMock.mock.calls[0]?.[0] as {
       middleware?: Array<{ name: string; wrapToolCall?: unknown }>;
     };
-    const wardens = args.middleware?.[1];
+    // D5 (LIA-419) prepends context-compaction ahead of B2's stack, so
+    // 'wardens' now sits at index 2, not 1.
+    const wardens = args.middleware?.[2];
     expect(wardens?.name).toBe('wardens');
     return wardens as { name: string; wrapToolCall?: unknown };
   }
@@ -799,7 +837,7 @@ describe('DeusNativeBackend — wardens cwd wiring (C1/LIA-409)', () => {
     }) as any);
 
     createAgentMock.mockReturnValue({ invoke: invokeMock });
-    invokeMock.mockResolvedValue({ messages: [{ content: 'ok' }] });
+    invokeMockEcho({ content: 'ok' });
 
     // worktreePath is THIS worktree's real root (a genuine git repo, so the
     // production repo-root resolution succeeds for real); cwd is a
@@ -859,7 +897,7 @@ describe('DeusNativeBackend — wardens cwd wiring (C1/LIA-409)', () => {
     }) as any);
 
     createAgentMock.mockReturnValue({ invoke: invokeMock });
-    invokeMock.mockResolvedValue({ messages: [{ content: 'ok' }] });
+    invokeMockEcho({ content: 'ok' });
     buildNestedDispatchToolMock.mockClear();
 
     const worktreePath = process.cwd();
