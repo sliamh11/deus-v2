@@ -34,13 +34,6 @@
  *   scope — that caller mints a fresh one-shot task per call by design) and
  *   any cleanup/expiry of accumulated checkpoint rows (unbounded growth, a
  *   separate future concern).
- * - Context windowing/summarization for the checkpointed message history
- *   (flagged by ai-eng-warden review). `agent.invoke()` loads the FULL
- *   accumulated `messages` channel on every resumed turn and sends it to the
- *   model as-is — per-turn token cost grows linearly, unbounded, for the
- *   life of a session. No cap, truncation, or summarization exists yet.
- *   Deliberately out of this ticket's scope; a real future concern once
- *   long-lived sessions are common.
  * - Any tool beyond web_search/web_fetch. B7/LIA-407 landed the wrapToolCall
  *   permission-rules engine (permission-rules.ts + middleware-stack.ts's
  *   real permissions layer, profile-selected via
@@ -81,7 +74,9 @@ import crypto from 'crypto';
 import path from 'node:path';
 
 import { createAgent, type AgentMiddleware } from 'langchain';
+import { HumanMessage } from '@langchain/core/messages';
 
+import { FatalError } from '../errors/index.js';
 import type {
   AgentRuntime,
   RuntimeCapabilities,
@@ -106,6 +101,7 @@ import {
   type PromptEventRecord,
 } from './lifecycle-events.js';
 import { getCheckpointer } from './checkpointer.js';
+import { buildContextCompactionMiddleware } from './context-compaction.js';
 import { createTurnUsageCollector } from './deus-native-usage.js';
 import { buildNestedDispatchTool } from './nested-dispatch-tool.js';
 import {
@@ -252,20 +248,13 @@ export class DeusNativeRuntime implements AgentRuntime {
           ? sessionRef.session_id
           : crypto.randomUUID();
 
-      // B4 (LIA-404): read the real checkpoint state ONCE, and derive BOTH
-      // the injection-gating signal and the tool-call-scoping count from it.
-      // This read happens before invoke()'s own internal getTuple() in the
-      // same process — both read the identical "before this turn" state.
+      // B4 (LIA-404): read the real checkpoint state ONCE to derive the
+      // injection-gating signal. This happens before invoke()'s own internal
+      // getTuple() in the same process — both read the identical "before this
+      // turn" state.
       const priorTuple = await getCheckpointer().getTuple({
         configurable: { thread_id: outgoingSessionId },
       });
-      const priorMessages = Array.isArray(
-        (priorTuple?.checkpoint?.channel_values as { messages?: unknown[] })
-          ?.messages,
-      )
-        ? (priorTuple!.checkpoint.channel_values as { messages: unknown[] })
-            .messages
-        : [];
       // isNewSession = "does a REAL checkpoint exist for this thread_id" —
       // deliberately NOT B3's `sessionRef.session_id === ''` string check.
       // B3-era production rows carry non-empty, UUID-shaped session_ids that
@@ -281,7 +270,6 @@ export class DeusNativeRuntime implements AgentRuntime {
       // checkpointer's perspective it truthfully IS a new session. This one
       // signal is the entire upgrade-path fix — no migration, no backfill.
       const isNewSession = priorTuple === undefined;
-      const priorMessageCount = priorMessages.length;
 
       // Session-open injection fires only on a genuinely NEW session (once
       // per open lifecycle — a resumed turn never even calls
@@ -298,6 +286,14 @@ export class DeusNativeRuntime implements AgentRuntime {
         : undefined;
 
       const model = buildNativeModelClient(runContext, effectiveModels.main);
+      // D5 (LIA-419): the checkpoint-aware compaction middleware uses this
+      // same proxy-routed model for its occasional continuity-summary call.
+      // It is composed OUTSIDE and before B2's canonical policy stack below:
+      // compaction must replace old checkpointed history before memory's
+      // beforeModel hook appends turn-specific recalled context. One-shot
+      // nested agents deliberately do not receive it — they have no
+      // checkpointer or cross-turn history to compact.
+      const contextCompaction = buildContextCompactionMiddleware(model);
       const toolCtx = buildToolBrokerContext(runContext);
 
       // B2 (LIA-402): ordered, per-layer-toggleable middleware stack —
@@ -498,7 +494,11 @@ export class DeusNativeRuntime implements AgentRuntime {
       );
       // Explicit AgentMiddleware[] annotation: the mixed array literal
       // otherwise infers a shape that misses createAgent's overloads.
-      const allMiddleware: AgentMiddleware[] = [...middleware, promptLifecycle];
+      const allMiddleware: AgentMiddleware[] = [
+        contextCompaction,
+        ...middleware,
+        promptLifecycle,
+      ];
 
       const agent = createAgent({
         model,
@@ -514,9 +514,19 @@ export class DeusNativeRuntime implements AgentRuntime {
       // the bare runContext.prompt — session-open repository context reaches
       // the model via the prompt-lifecycle middleware's wrapModelCall
       // systemMessage injection, never by changing what invoke() receives.
+      // D5 (LIA-419): a stable ID marks the beginning of THIS turn in the
+      // returned checkpoint state. Message-count slicing is invalid once
+      // compaction can replace a large prefix with one summary and make the
+      // final state shorter than it was before this turn.
+      const currentTurnMessageId = crypto.randomUUID();
       const result = await agent.invoke(
         {
-          messages: [{ role: 'user', content: runContext.prompt }],
+          messages: [
+            new HumanMessage({
+              id: currentTurnMessageId,
+              content: runContext.prompt,
+            }),
+          ],
         },
         { configurable: { thread_id: outgoingSessionId } },
       );
@@ -530,14 +540,21 @@ export class DeusNativeRuntime implements AgentRuntime {
       // `?.`/Array.isArray, never assumed present) rather than assert a
       // stronger runtime guarantee than the union actually provides.
       //
-      // B4 (LIA-404): with a checkpointer wired in, invoke() on a RESUMED
-      // thread returns the FULL accumulated state (prior turns included),
-      // not just this turn's messages — slicing by priorMessageCount scopes
-      // the tool-call-emission loop below to only THIS turn's messages, so
-      // earlier turns' tool calls are never re-emitted on resume. For a new
-      // session (or a pre-B4 row with no real checkpoint) the count is 0 and
-      // every message is processed — identical to pre-B4 behavior.
-      const messages = (result.messages ?? []).slice(priorMessageCount);
+      // B4/D5: invoke() returns the FULL final checkpoint state, which may now
+      // be either longer (ordinary resume) or shorter (compacted resume) than
+      // the pre-turn state. Locate the stable current-input ID rather than
+      // assuming a preserved prefix length, then scope tool/usage/output work
+      // to this turn exactly.
+      const allResultMessages = result.messages ?? [];
+      const currentTurnStart = allResultMessages.findIndex(
+        (message) => message.id === currentTurnMessageId,
+      );
+      if (currentTurnStart < 0) {
+        throw new FatalError(
+          'deus-native: current turn input was missing from final agent state',
+        );
+      }
+      const messages = allResultMessages.slice(currentTurnStart);
       for (const message of messages) {
         const m = message as {
           tool_calls?: Array<{ name?: string; args?: unknown }>;

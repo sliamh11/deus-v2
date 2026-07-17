@@ -25,7 +25,7 @@ All variables are set in `.env` at the project root. Copy `.env.example` to get 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEUS_AGENT_BACKEND` | `claude` | Default container agent backend: `claude` or `openai` |
+| `DEUS_AGENT_BACKEND` | `claude` | Default agent runtime backend: `claude`, `openai`, `llama-cpp` (containerized), or `deus-native` (host-side) |
 | `DEUS_AGENT_EFFORT` | `low` | Default agent reasoning effort: `low`, `medium`, `high`, or `max`. Per-group override via `/settings effort=X`. |
 | `DEUS_CLI_AGENT` | `DEUS_AGENT_BACKEND` | Default `deus` global command agent: `claude`, `codex`, or `openai` |
 | `DEUS_OPENAI_MODEL` | `gpt-4o` | Default OpenAI model for the `openai` agent backend |
@@ -143,10 +143,11 @@ All variables are set in `.env` at the project root. Copy `.env.example` to get 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SESSION_IDLE_RESET_HOURS` | `8` | Reset a group's session after N idle hours (0 = never reset). Per-channel override via `/settings session_idle_hours=N`. |
+| `DEUS_NATIVE_COMPACTION_TOKEN_THRESHOLD` | `150000` | Approximate input-token threshold at which the `deus-native` runtime's checkpoint-aware compaction middleware (LIA-419, `src/agent-runtimes/context-compaction.ts`) summarizes older checkpointed history and keeps the last 8 messages verbatim. Must be a positive integer; invalid values fail visibly at startup rather than silently disabling compaction. |
 
 Group/task backend overrides:
 
-- Registered groups can set `containerConfig.agentBackend` to pin a group to `claude` or `openai`.
+- Registered groups can set `containerConfig.agentBackend` to pin a group to `claude`, `openai`, `llama-cpp`, or `deus-native` (via `/settings backend=<value>`; `backend=default` clears the override).
 - Scheduled tasks can set `agent_backend` to override the group/default backend for that task only.
 - Resolution order is: task override, group override, `DEUS_AGENT_BACKEND`, then `claude`.
 

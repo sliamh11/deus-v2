@@ -3,10 +3,11 @@ import { describe, it, expect } from 'vitest';
 import { parseAgentBackend } from '../agent-runtimes/types.js';
 
 describe('parseAgentBackend', () => {
-  it('accepts the three valid backend IDs verbatim', () => {
+  it('accepts the valid backend IDs verbatim', () => {
     expect(parseAgentBackend('claude')).toBe('claude');
     expect(parseAgentBackend('openai')).toBe('openai');
     expect(parseAgentBackend('llama-cpp')).toBe('llama-cpp');
+    expect(parseAgentBackend('deus-native')).toBe('deus-native');
   });
 
   it('rejects unknown strings', () => {
@@ -30,5 +31,6 @@ describe('parseAgentBackend', () => {
     expect(parseAgentBackend('Claude')).toBeUndefined();
     expect(parseAgentBackend('OPENAI')).toBeUndefined();
     expect(parseAgentBackend('Llama-CPP')).toBeUndefined();
+    expect(parseAgentBackend('Deus-Native')).toBeUndefined();
   });
 });

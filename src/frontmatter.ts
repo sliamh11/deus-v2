@@ -16,6 +16,10 @@ import { parse as parseYaml } from 'yaml';
 export function extractFrontmatter(content: string): {
   data: Record<string, unknown>;
   body: string;
+  /** Present only when a leading frontmatter block matched but YAML parsing
+   * failed. Existing permissive consumers may continue to ignore it; strict
+   * configuration loaders can surface the parser's actionable diagnostic. */
+  parseError?: string;
 } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return { data: {}, body: content };
@@ -24,7 +28,11 @@ export function extractFrontmatter(content: string): {
       data: parseYaml(match[1]) as Record<string, unknown>,
       body: match[2],
     };
-  } catch {
-    return { data: {}, body: content };
+  } catch (err) {
+    return {
+      data: {},
+      body: content,
+      parseError: err instanceof Error ? err.message : String(err),
+    };
   }
 }

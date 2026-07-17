@@ -15,7 +15,7 @@ Deus now has a backend-neutral host runtime with per-group and per-task backend 
 - Container-side backend changes require rebuilding/restarting the agent container/service before live testing.
 
 **What IS swappable:**
-- **Container agent backend** — `claude` or `openai`, selected globally or overridden per group/task
+- **Agent runtime backend** — `claude`, `openai`, and `llama-cpp` run as containerized agents; `deus-native` runs host-side (in-process, no container) via the same registry/selection mechanism — see `docs/decisions/deus-v2-langchain-runtime.md`. All four are selectable globally or overridden per group/task.
 - **Eval/evolution judges** — can use Ollama (local, free), Gemini, or Claude
 - **Embedding model** — pluggable via `EMBEDDING_PROVIDER` env var (default: `auto` → Ollama first, Gemini fallback). See `evolution/providers/embeddings.py` to add providers
 - **Memory indexer** — uses the pluggable embedding provider
