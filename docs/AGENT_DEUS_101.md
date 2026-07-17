@@ -116,7 +116,7 @@ CLI interface choices:
 - `deus codex` (sets CLI to Codex and runtime backend to OpenAI for that invocation)
 - `deus openai` (alias for `deus codex`)
 - `DEUS_CLI_AGENT=claude|codex`
-- `DEUS_AGENT_BACKEND=claude|openai`
+- `DEUS_AGENT_BACKEND=claude|openai|llama-cpp|deus-native`
 - `deus chat` (deus-native terminal chat; `/plan on|off`, `/status`, `/exit`,
   `/quit` inside the session)
 
@@ -126,6 +126,7 @@ Chat/channel commands must not depend on backend:
 - `/settings session_idle_hours=N`
 - `/settings timeout=N`
 - `/settings requires_trigger=true|false`
+- `/settings backend=claude|openai|llama-cpp|deus-native|default`
 - `/compact`
 
 Host/session skills are native slash skills for direct Claude/Codex sessions,

@@ -29,6 +29,7 @@ import {
   type RunContext,
   type RuntimeEventSink,
 } from './agent-runtimes/types.js';
+import { resolveAgentRuntime } from './agent-runtimes/resolve.js';
 import type { RuntimeRegistry } from './agent-runtimes/registry.js';
 import {
   type ContainerOutput,
@@ -118,6 +119,7 @@ export function createMessageOrchestrator(deps: OrchestratorDeps) {
     const isControlGroup = group.isControlGroup === true;
     const resolvedBackend = registry.resolve(group);
     const backend = resolvedBackend.name();
+    logger.debug({ group: group.name, backend }, 'Backend resolved for run');
     let sessionRef = state.getSession(group.folder, backend);
 
     // Idle session reset: per-group setting takes precedence over global default.
@@ -409,6 +411,15 @@ export function createMessageOrchestrator(deps: OrchestratorDeps) {
     );
     if (hostResult.matched) {
       if (hostResult.updatedGroup) {
+        const from = resolveAgentRuntime(group);
+        const to = resolveAgentRuntime(hostResult.updatedGroup);
+        if (from !== to) {
+          logger.debug(
+            { group: group.name, from, to },
+            'Backend override changed — closing active container to force cutover',
+          );
+          queue.closeStdin(chatJid);
+        }
         setRegisteredGroup(chatJid, hostResult.updatedGroup);
         state.registeredGroups[chatJid] = hostResult.updatedGroup;
         logger.info({ group: group.name }, 'Group setting updated');
@@ -848,6 +859,15 @@ export function createMessageOrchestrator(deps: OrchestratorDeps) {
             );
             if (loopHostResult.matched) {
               if (loopHostResult.updatedGroup) {
+                const from = resolveAgentRuntime(group);
+                const to = resolveAgentRuntime(loopHostResult.updatedGroup);
+                if (from !== to) {
+                  logger.debug(
+                    { group: group.name, from, to },
+                    'Backend override changed — closing active container to force cutover',
+                  );
+                  queue.closeStdin(chatJid);
+                }
                 setRegisteredGroup(chatJid, loopHostResult.updatedGroup);
                 state.registeredGroups[chatJid] = loopHostResult.updatedGroup;
                 logger.info({ group: group.name }, 'Group setting updated');

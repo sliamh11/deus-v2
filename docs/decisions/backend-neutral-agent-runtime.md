@@ -67,6 +67,26 @@ At minimum, run TypeScript checks plus targeted backend/session/auth/container t
 | Scheduling | Existing IPC task tools | Same IPC task file contract with optional backend override | Same IPC task file contract with optional backend override |
 | Global CLI | `deus` / `deus claude` | `deus codex`, `deus openai`, or `DEUS_CLI_AGENT=codex deus` | `deus backend set llama-cpp` (foreground `deus llama` shorthand is a follow-up) |
 
+## Deus-Native Opt-In Readiness Matrix
+
+| Surface | Status | Detail |
+|---|---|---|
+| Shell | Known Gap | `bash_exec` has no host-side sandbox boundary; the container-isolation assumption does not hold in-process. Deferred pending isolation review (`deus-native-backend.ts` `DEUS_NATIVE_CAPABILITIES.shell = false`). |
+| Filesystem | Known Gap | `resolveWorkspacePath`'s `/workspace/*` allowlist is a container boundary, not a host boundary. Deferred with shell pending isolation review (`filesystem = false`). |
+| Web | Verified Pass | `web_search`/host-allowlisted `web_fetch` are wired (`web = true`) — the only Deus-native tool-broker tools currently enabled (`buildSafeTools`). The model's tool list also includes `dispatch_nested_agent`, a separate non-broker primitive — see the "Nested agent dispatch" row below. |
+| Multimodal | Known Gap | No image-input handling in `runTurn` (`multimodal = false`). |
+| Handoffs | Known Gap | Missing across every backend today, not Deus-native-specific (`handoffs = false`). |
+| Persistent sessions | Verified Pass | LangGraph `SqliteSaver` checkpointer keyed by `RuntimeSession.session_id` as `thread_id` (B4/LIA-404, `persistent_sessions = true`), covered by `deus-native-checkpointer-integration.test.ts`. |
+| Tool streaming | Known Gap | `runTurn` returns one buffered result, no incremental deltas (`tool_streaming = false`). |
+| Group-level backend opt-in | Verified Pass | `/settings backend=deus-native` + resolver behavior covered by this PR's new automated tests; not yet exercised in a live deployment. A backend-value change also closes any active warm container for that group (`queue.closeStdin`) so the very next message doesn't get piped into a stale process on the old backend — scoped precisely to backend changes, not other `/settings` keys. |
+| Public-ingress interaction | Verified Pass | Enforced solely by the two pre-existing runtime guards in `container-runner.ts` and `deus-native-backend.ts`. `/settings` cannot reach a `publicIngress` group in the first place — webhook events never route through `dispatchHostCommand` (`message-orchestrator.ts:328-330`, `:833-839`) — so this PR adds no settings-layer check for it (would be unreachable dead code). |
+| Backend-selection diagnostic visibility | Verified Pass | `RuntimeSession.backend` metadata, the existing `/context` command, and this PR's new per-run debug log. |
+| Scheduled-task-level Deus-native override | Not Tested | Resolution path is generic/shared with other backends and covered at the resolver-unit level by this PR, but no test runs a Deus-native scheduled task end-to-end through `task-scheduler.ts`. |
+| Nested agent dispatch (`dispatch_nested_agent`) | Verified Pass | Wired into every Deus-native turn's tool list (`deus-native-backend.ts`: `tools = [...buildSafeTools(...), dispatchTool]`). In-process, one-shot nested `createAgent` dispatch (B8/LIA-408), covered by `nested-dispatch.test.ts` and `nested-dispatch.oracle.test.ts`, per `docs/decisions/deus-v2-subagent-dispatch.md`. Pre-existing, unrelated to and unmodified by this PR — listed here for completeness per AC3 ("each supported surface has an entry"). |
+| Container-based multi-agent orchestrator (`src/multi-agent/orchestrator.ts`) | Not Tested | Distinct mechanism from the row above (container-based `SubagentTask[]` scheduler vs. deus-native's in-process nested dispatch — AGENTS.md's own surface-map table keeps them as separate rows). Not exercised or verified by this PR. |
+| Credential-proxy routing | Not Tested | Not exercised by this PR. |
+| Container tool-broker parity | Not Tested | Not exercised by this PR. |
+
 ## Rollback
 
 Rollback is a single revert while `claude` remains the default. Existing legacy session rows still read as Claude sessions; rows created with `backend='openai'` are ignored when Claude is selected because sessions are backend-scoped.

@@ -69,6 +69,23 @@ describe('resolveAgentRuntime', () => {
 
     expect(resolveAgentRuntime(group)).toBe('llama-cpp');
   });
+
+  it('resolves the deus-native group override', () => {
+    const group = makeGroup({
+      containerConfig: { agentBackend: 'deus-native' },
+    });
+
+    expect(resolveAgentRuntime(group)).toBe('deus-native');
+  });
+
+  it('prefers a deus-native task override over the group backend', () => {
+    const group = makeGroup({
+      containerConfig: { agentBackend: 'claude' },
+    });
+    const task = makeTask({ agent_backend: 'deus-native' });
+
+    expect(resolveAgentRuntime(group, task)).toBe('deus-native');
+  });
 });
 
 describe('resolveAgentEffort', () => {
