@@ -15,6 +15,9 @@ dist/
 .claude/.warden-verdicts.json
 .claude/.warden-verdicts.json.lock
 .claude/.warden-log
+# Temporary LIA-413 double-enforcement telemetry (host-local; may contain paths)
+.claude/.warden-double-enforce.jsonl
+.claude/.warden-double-enforce-divergences.jsonl
 # Admin-merge gate markers (host-local; contain absolute worktree paths)
 .claude/.admin-merge-approved
 .claude/.admin-merge-standing

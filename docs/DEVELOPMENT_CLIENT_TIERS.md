@@ -24,7 +24,7 @@ real user traffic. Its centerpiece is `deus-native`, the Deus-owned
 - **Model selection** for product execution.
 
 These guarantees apply to product execution through channels (WhatsApp,
-Telegram, Slack, Discord, Gmail), isolated containers, the web UI, and
+Telegram, Slack, Discord, Gmail, Teams, Outlook), isolated containers, the web UI, and
 scheduled tasks. The product contract for all of this is defined in
 [`AGENTS.md`](../AGENTS.md).
 

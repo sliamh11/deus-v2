@@ -200,3 +200,40 @@ OpenAI, or llama-cpp paths. If manually enabled, it supplies only the legacy
 recursive-force-`rm`-outside-`/workspace` guard; it does not provide C1 warden
 parity. Provider- or Claude-specific project hooks are separate mechanisms and
 are not evidence that the model-neutral `HookPipeline` exists.
+
+## Update (C5/LIA-413 — 2026-07-17)
+
+The Claude Code hook path now has a temporary, configurable double-enforcement
+window for migration measurement. When `DEUS_WARDEN_DOUBLE_ENFORCEMENT=1`, the
+live `.claude/hooks/warden-shim.sh` shadows only the trigger intersection that
+the `deus-native` wardens middleware currently defines: literal
+`apply_patch` for plan review and commit-shaped literal `Bash` for code review,
+AI-engineering review, and verification. The shim captures the event once,
+mints one correlation ID, runs the Claude hook synchronously, and launches the
+same Python gate in a detached process with the middleware workspace profile.
+The flag remains configurable through MH sign-off; any value other than `1`
+retains the original hook invocation path.
+
+Authority is intentionally asymmetric. The Claude hook's stdout and exit code
+are the sole live tool decision. The middleware-profile invocation is
+observational: its deny, error, divergence, or launch failure cannot change the
+Claude result. Both tagged outcomes are appended under the event-cwd-derived
+worktree bucket, independent of the middleware `--workspace-root` used for the
+existing verdict store. Decision mismatch, deny-feedback mismatch, missing
+counterparts, and secondary launch failure produce a separate append-only
+divergence signal.
+
+Spawn-then-disappear failures are reconciled lazily. At the next tagged touch
+of the same bucket, a primary record at least 30 seconds old with no middleware
+record receives one deduplicated `missing_middleware` divergence. The 30-second
+threshold covers `run_ai_eng_gate()`'s two sequential Git diff subprocesses,
+each bounded at 10 seconds, plus headroom. Detection latency while a bucket is
+idle is intentional; later observer completion does not retract historical
+evidence from either append-only stream.
+
+This window does not instantiate or test the generic `AgentRuntime`
+`HookPipeline`. It exercises two invocations of the same Python runner from the
+Claude shim, with the second invocation configured like the dormant native
+middleware call. The production `deus-native` safe tool set still excludes
+`apply_patch` and `Bash`, so no second native authority is active and no
+cross-backend enforcement claim follows from this telemetry.

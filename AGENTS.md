@@ -64,7 +64,10 @@ Do not invent personal facts. Retrieve them or say what is missing.
 Single Node.js host process. No microservices.
 
 - Channels are skill-installed adapters such as WhatsApp, Telegram, Slack,
-  Discord, and Gmail.
+  Discord, Gmail, Teams, and Outlook. Teams and Outlook are wired and
+  unit-tested but not yet proven end-to-end against live Azure Bot Framework /
+  Microsoft Graph — planned, not ready for production traffic without that
+  verification (LIA-392).
 - Each conversation group runs in its own isolated container.
 - Deus owns the runtime/session/tool/context contract.
 - Claude is the default compatibility backend.
@@ -121,7 +124,7 @@ Use these instead of rediscovering the system:
 | Pipeline CLI                | `src/linear-pipeline-cli.ts`                                      | `deus pipeline` -- event audit from the terminal                                                                                                                                                                  |
 | Native CLI chat             | `src/cli/deus-native-chat.ts`, `src/cli/deus-native-chat-server.ts`, `src/cli/deus-native-chat-client.ts` | `deus chat` -- thin terminal client → authenticated loopback endpoint in the daemon → `deus-native` controller/session store; controller-owned `/plan on\|off` selects B7 read-only per turn (LIA-428/LIA-430; see `docs/decisions/deus-native-cli-chat.md`) |
 | Native model selection      | `src/agent-runtimes/model-selection.ts`, `src/cli/deus-native-model-config.ts` | Validated main/per-role model registry, durable config, and nested-tool enforcement (LIA-429) |
-| Codex Warden hooks          | `scripts/codex_warden_hooks.py`                                   | Installs and runs Codex hook equivalents for Warden gates (plan-reviewer, code-reviewer, verification-gate, threat-modeler)                                                                                       |
+| Codex Warden hooks          | `.claude/hooks/warden-shim.sh`, `scripts/codex_warden_hooks.py`, `scripts/warden_hooks/double_enforcement.py` | Installs and runs Codex hook equivalents for Warden gates; the shim can temporarily shadow shared Claude/middleware triggers with correlated append-only telemetry under `DEUS_WARDEN_DOUBLE_ENFORCEMENT=1` (LIA-413) |
 | Development client tiers    | [`docs/DEVELOPMENT_CLIENT_TIERS.md`](docs/DEVELOPMENT_CLIENT_TIERS.md) | Distinguishes the Tier 1 product runtime from optional Tier 2 development CLIs and documents their guardrail guarantees                                                                                      |
 
 More detailed maps live in [docs/AGENT_DEUS_101.md](docs/AGENT_DEUS_101.md).
@@ -147,7 +150,7 @@ Commands that must remain stable across backends:
 - `/compact`
 
 Host skills are not chat commands. Never suggest them inside WhatsApp,
-Telegram, Slack, Discord, or Gmail.
+Telegram, Slack, Discord, Gmail, Teams, or Outlook.
 
 Repo-owned host skills live under `.claude/skills/`. Some runtimes consume the
 generated `.agents/skills/` compatibility tree. When adding, removing, or
@@ -156,7 +159,6 @@ renaming a repo-owned skill, update this table in the same change.
 | Skill                            | When to Use                                                                                                                                        |
 |----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
 | `/add-asana`                     | Add Asana project management MCP integration (read/write tasks & projects)                                                                         |
-| `/add-claude-context`            | Deprecated — replaced by `scripts/code_search.py`; do not use                                                                                      |
 | `/add-codex`                     | Add OpenAI/Codex as a backend                                                                                                                      |
 | `/add-compact`                   | Add the backend-neutral `/compact` session command                                                                                                 |
 | `/add-discord`                   | Add Discord as a channel                                                                                                                           |

@@ -21,7 +21,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 
 ## Channel System
 
-The core ships with no channels built in — each channel (WhatsApp, Telegram, Slack, Discord, Gmail) is installed as a [Claude Code skill](https://code.claude.com/docs/en/skills) that adds the channel code to your fork. Channels self-register at startup; installed channels with missing credentials emit a WARN log and are skipped.
+The core ships with no channels built in — each channel (WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook) is installed as a [Claude Code skill](https://code.claude.com/docs/en/skills) that adds the channel code to your fork. Channels self-register at startup; installed channels with missing credentials emit a WARN log and are skipped. Teams and Outlook are wired and unit-tested but not yet proven end-to-end against live Azure Bot Framework / Microsoft Graph — see AGENTS.md's Quick Architecture section (LIA-392).
 
 ### System Diagram
 
