@@ -128,7 +128,18 @@ function loadToolBroker(): Promise<ToolBrokerModule> {
   return toolBrokerPromise;
 }
 
-const SAFE_TOOL_NAMES = new Set(['web_search', 'web_fetch']);
+/**
+ * The complete, immutable list of tool-broker names ever wired into the
+ * deus-native adapter (LIA-422/E3). Exported (read-only) so preflight code
+ * elsewhere (e.g. `deus-native-pipeline-readiness.ts`) can inspect the real
+ * security boundary without re-declaring `['web_search', 'web_fetch']` as a
+ * second source of truth. Exporting this tuple does not widen the boundary —
+ * see the module doc above for why widening it requires its own isolation
+ * review.
+ */
+export const DEUS_NATIVE_SAFE_TOOL_NAMES = ['web_search', 'web_fetch'] as const;
+
+const SAFE_TOOL_NAMES = new Set<string>(DEUS_NATIVE_SAFE_TOOL_NAMES);
 
 /**
  * Adapter: maps every tool-broker.ts tool definition to a LangChain

@@ -135,6 +135,7 @@ import type {
 } from './linear-dispatcher.js';
 import type { AgentRuntime, RunContext } from './agent-runtimes/types.js';
 import { RuntimeRegistry } from './agent-runtimes/registry.js';
+import { resolveAgentRuntime } from './agent-runtimes/resolve.js';
 import { logger } from './logger.js';
 import { EventBus } from './events/bus.js';
 
@@ -689,6 +690,250 @@ describe('pollLinear dispatch ordering', () => {
     // bouncedUnscoped label must be applied as the observable signal
     expect(updateIssue).toHaveBeenCalledWith('unscoped-issue-1', {
       addedLabelIds: ['label-bounced-id'],
+    });
+  });
+});
+
+describe('pollLinear — backend selection and role loading are unaffected (LIA-422/E3)', () => {
+  const agentsDir = path.join(TEST_PROJECT_ROOT, '.claude', 'agents');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentsDir, 'test-role.md'),
+      `---\nname: test-role\nlinear_label: "agent:test"\n---\nYou are a test agent.`,
+    );
+  });
+
+  afterEach(() => {
+    stopLinearDispatcher();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+    fs.rmSync(TEST_PROJECT_ROOT, { recursive: true, force: true });
+  });
+
+  function makeIssue(id: string, sortOrder: number, labelName = 'agent:test') {
+    return {
+      id,
+      title: `Issue ${id}`,
+      identifier: `LIA-${id}`,
+      description: 'test',
+      sortOrder,
+      labels: vi.fn().mockResolvedValue({ nodes: [{ name: labelName }] }),
+      comments: vi.fn().mockResolvedValue({ nodes: [] }),
+    };
+  }
+
+  it('a linear-dispatch group with no backend override still dispatches normally (default claude runtime, unaffected by the E3 guard)', async () => {
+    const enqueueTask = vi.fn();
+    const deps = makeMockDeps({
+      queue: {
+        enqueueTask,
+        notifyIdle: vi.fn(),
+        closeStdin: vi.fn(),
+        availableSlots: vi.fn().mockReturnValue(5),
+      } as unknown as LinearDispatcherDependencies['queue'],
+    });
+    const ctx = makeMockCtx({
+      deps,
+      client: {
+        issues: vi.fn().mockResolvedValue({ nodes: [makeIssue('aaa', 1.0)] }),
+        updateIssue: vi.fn().mockResolvedValue({}),
+      } as unknown as LinearContext['client'],
+    });
+
+    startLinearDispatcher(ctx);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolveAgentRuntime resolves the dispatch group exactly like any other group (no dispatcher-specific selector)', () => {
+    const claudeGroup = makeMockCtx().dispatchGroup;
+    expect(resolveAgentRuntime(claudeGroup)).toBe('claude');
+
+    const nativeGroup = {
+      ...claudeGroup,
+      containerConfig: { agentBackend: 'deus-native' as const },
+    };
+    expect(resolveAgentRuntime(nativeGroup)).toBe('deus-native');
+  });
+
+  it('a group resolving to an UNREGISTERED backend name still dispatches normally — the E3 readiness guard never touches the registry', async () => {
+    // Proves resolveLinearDispatchReadiness's design premise: it uses the
+    // pure resolveAgentRuntime() name resolver, never ctx.deps.registry.resolve(),
+    // so a non-deus-native group with a backend name the registry has never
+    // registered (e.g. this test's bare `new RuntimeRegistry()` from
+    // makeMockDeps, which registers nothing) is still safe on the poll path
+    // — only executeAgentRun, deferred inside the enqueued task, would ever
+    // need that name actually registered.
+    const enqueueTask = vi.fn();
+    const deps = makeMockDeps({
+      queue: {
+        enqueueTask,
+        notifyIdle: vi.fn(),
+        closeStdin: vi.fn(),
+        availableSlots: vi.fn().mockReturnValue(5),
+      } as unknown as LinearDispatcherDependencies['queue'],
+    });
+    const ctx = makeMockCtx({
+      deps,
+      dispatchGroup: {
+        ...makeMockCtx().dispatchGroup,
+        containerConfig: { agentBackend: 'openai' as const },
+      },
+      client: {
+        issues: vi.fn().mockResolvedValue({ nodes: [makeIssue('aaa', 1.0)] }),
+        updateIssue: vi.fn().mockResolvedValue({}),
+      } as unknown as LinearContext['client'],
+    });
+
+    startLinearDispatcher(ctx);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('pollLinear — deus-native capability-blocked refusal (LIA-422/E3)', () => {
+  const agentsDir = path.join(TEST_PROJECT_ROOT, '.claude', 'agents');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentsDir, 'test-role.md'),
+      `---\nname: test-role\nlinear_label: "agent:test"\n---\nYou are a test agent.`,
+    );
+  });
+
+  afterEach(() => {
+    stopLinearDispatcher();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+    fs.rmSync(TEST_PROJECT_ROOT, { recursive: true, force: true });
+  });
+
+  function makeIssue(id: string, sortOrder: number, labelName = 'agent:test') {
+    return {
+      id,
+      title: `Issue ${id}`,
+      identifier: `LIA-${id}`,
+      description: 'test',
+      sortOrder,
+      labels: vi.fn().mockResolvedValue({ nodes: [{ name: labelName }] }),
+      comments: vi.fn().mockResolvedValue({ nodes: [] }),
+    };
+  }
+
+  function makeDeusNativeCtx(overrides: Partial<LinearContext> = {}) {
+    const base = makeMockCtx(overrides);
+    return {
+      ...base,
+      dispatchGroup: {
+        ...base.dispatchGroup,
+        containerConfig: { agentBackend: 'deus-native' as const },
+      },
+    };
+  }
+
+  it('refuses before creating a worktree or enqueuing a task, with no false-success events', async () => {
+    const enqueueTask = vi.fn();
+    const updateIssue = vi.fn().mockResolvedValue({});
+    const createComment = vi.fn().mockResolvedValue({});
+    const deps = makeMockDeps({
+      queue: {
+        enqueueTask,
+        notifyIdle: vi.fn(),
+        closeStdin: vi.fn(),
+        availableSlots: vi.fn().mockReturnValue(5),
+      } as unknown as LinearDispatcherDependencies['queue'],
+    });
+    const ctx = makeDeusNativeCtx({
+      deps,
+      gateLabels: {
+        effort: {},
+        complexity: {},
+        capabilityBlocked: 'capability-blocked-label-id',
+      },
+      client: {
+        issues: vi.fn().mockResolvedValue({ nodes: [makeIssue('aaa', 1.0)] }),
+        updateIssue,
+        createComment,
+      } as unknown as LinearContext['client'],
+    });
+
+    startLinearDispatcher(ctx);
+    await vi.advanceTimersByTimeAsync(100);
+
+    // Never reaches worktree creation / queueing / the agent run.
+    expect(enqueueTask).not.toHaveBeenCalled();
+
+    // Parked in Manual Review Required (mocked stateByName includes it —
+    // see makeMockCtx — falls back to Backlog only when absent).
+    expect(updateIssue).toHaveBeenCalledWith(
+      'aaa',
+      expect.objectContaining({ stateId: 'backlog-id' }),
+    );
+
+    // Labeled and commented, never silently dropped.
+    expect(updateIssue).toHaveBeenCalledWith('aaa', {
+      addedLabelIds: ['capability-blocked-label-id'],
+    });
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(createComment.mock.calls[0][0]).toMatchObject({
+      issueId: 'aaa',
+    });
+
+    // Never left in the in-flight set (would silently block re-poll forever).
+    expect(ctx.inFlightDispatch.has('aaa')).toBe(false);
+  });
+
+  it('clears a stale capability-blocked label once dispatch actually proceeds (non-deus-native backend)', async () => {
+    const enqueueTask = vi.fn();
+    const updateIssue = vi.fn().mockResolvedValue({});
+    const deps = makeMockDeps({
+      queue: {
+        enqueueTask,
+        notifyIdle: vi.fn(),
+        closeStdin: vi.fn(),
+        availableSlots: vi.fn().mockReturnValue(5),
+      } as unknown as LinearDispatcherDependencies['queue'],
+    });
+    const issue = {
+      ...makeIssue('bbb', 1.0),
+      labels: vi.fn().mockResolvedValue({
+        nodes: [
+          { name: 'agent:test' },
+          {
+            name: 'runtime:capability-blocked',
+            id: 'capability-blocked-label-id',
+          },
+        ],
+      }),
+    };
+    // Default (claude) backend — this issue was previously parked under a
+    // deus-native selection, then the group was switched back.
+    const ctx = makeMockCtx({
+      deps,
+      gateLabels: {
+        effort: {},
+        complexity: {},
+        capabilityBlocked: 'capability-blocked-label-id',
+      },
+      client: {
+        issues: vi.fn().mockResolvedValue({ nodes: [issue] }),
+        updateIssue,
+      } as unknown as LinearContext['client'],
+    });
+
+    startLinearDispatcher(ctx);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+    expect(updateIssue).toHaveBeenCalledWith('bbb', {
+      removedLabelIds: ['capability-blocked-label-id'],
     });
   });
 });

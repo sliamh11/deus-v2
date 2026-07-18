@@ -51,6 +51,7 @@
  */
 
 import { execFile, execFileSync } from 'node:child_process';
+import { accessSync, constants as fsConstants } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -370,6 +371,52 @@ function resolveWardenRepoRoot(wardenCwd: string): string {
     // the checkout root today.
     return fileURLToPath(new URL('../..', import.meta.url));
   }
+}
+
+/**
+ * Availability-only probe for the wardens gate integration (LIA-422/E3).
+ * Does NOT prove a protected call is actually blocked — that behavioral
+ * proof is `middleware-stack.warden-gates.oracle.test.ts`, unchanged. This
+ * probe answers a narrower, cheaper question: could the wardens layer even
+ * run right now, before any pipeline issue is dispatched to it? Checks, in
+ * order: (1) the `wardens` layer is not explicitly disabled via
+ * `MiddlewareStackConfig`; (2) `scripts/codex_warden_hooks.py` exists and is
+ * readable at the same repo-root this call's `wardenCwd` would resolve via
+ * `resolveWardenRepoRoot`; (3) the Python entrypoint loads via a
+ * non-mutating `--help` invocation (never `run <behavior>`, which would
+ * require a real hook event and could spawn a review agent).
+ * Fail-closed: any missing/unreadable script or non-zero-or-throwing
+ * `--help` invocation reports unavailable, never available-by-default.
+ */
+export function probeWardenGateIntegration(
+  wardenCwd: string,
+  config: MiddlewareStackConfig = resolveMiddlewareStackConfig(),
+): { available: true } | { available: false; reason: string } {
+  if (config.wardens === false) {
+    return { available: false, reason: 'wardens layer disabled by config' };
+  }
+  const repoRoot = resolveWardenRepoRoot(wardenCwd);
+  const scriptPath = join(repoRoot, 'scripts', 'codex_warden_hooks.py');
+  try {
+    accessSync(scriptPath, fsConstants.R_OK);
+  } catch {
+    return {
+      available: false,
+      reason: `warden gate script not readable at ${scriptPath}`,
+    };
+  }
+  try {
+    execFileSync('python3', [scriptPath, '--help'], {
+      timeout: 5000,
+      stdio: 'ignore',
+    });
+  } catch {
+    return {
+      available: false,
+      reason: 'warden gate script failed to load via --help probe',
+    };
+  }
+  return { available: true };
 }
 
 /** The two possible outcomes `codex_warden_hooks.py` can ever produce for
