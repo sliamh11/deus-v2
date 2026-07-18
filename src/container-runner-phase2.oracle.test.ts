@@ -401,6 +401,26 @@ describe('oracle (a): publicIngress=true group — reduced-privilege env', () =>
     ).toThrow(/claude/i);
   });
 
+  it('publicIngress group THROWS for a non-Claude backend (deus-native)', async () => {
+    const { buildContainerArgs } = await import('./container-runner.js');
+    const group: RegisteredGroup = {
+      name: 'Webhook Group',
+      folder: 'webhook-group-deus-native',
+      trigger: '@Webhook',
+      added_at: new Date().toISOString(),
+      containerConfig: { publicIngress: true },
+    };
+    expect(() =>
+      buildContainerArgs(
+        [],
+        'wh-deus-native',
+        'deus-native',
+        'iid-wh-dn',
+        group,
+      ),
+    ).toThrow(/claude/i);
+  });
+
   it('default group on a non-Claude backend is unaffected (no throw)', async () => {
     const { buildContainerArgs } = await import('./container-runner.js');
     const group: RegisteredGroup = {

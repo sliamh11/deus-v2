@@ -17,17 +17,18 @@ import {
   writeAuditEntry,
   generateToolUseId,
 } from './tool-audit.js';
-import {
-  ScheduleInput,
-  validateSchedule,
-} from './schedule-validator.js';
+import { ScheduleInput, validateSchedule } from './schedule-validator.js';
 
-// Container-side mirror of the host AgentRuntimeId union. Keep in sync
-// when adding backends.
+// User/agent-selectable backends for schedule_task, update_task, and
+// register_group. Deliberately narrower than runtime-types.ts's
+// CONTAINER_DISPATCH_BACKENDS: LIA-423 lets this process execute a direct
+// deus-native request without making that backend newly selectable by tools.
 export const VALID_BACKENDS = ['claude', 'openai', 'llama-cpp'] as const;
-export type AgentRuntimeId = (typeof VALID_BACKENDS)[number];
+export type ToolSelectableBackendId = (typeof VALID_BACKENDS)[number];
 
-export function isValidAgentBackend(value: unknown): value is AgentRuntimeId {
+export function isValidAgentBackend(
+  value: unknown,
+): value is ToolSelectableBackendId {
   return (
     typeof value === 'string' &&
     (VALID_BACKENDS as readonly string[]).includes(value)
@@ -668,7 +669,6 @@ export function normalizeTaskContextMode(value: unknown): 'group' | 'isolated' {
   return value === 'isolated' ? 'isolated' : 'group';
 }
 
-
 function readVisibleTasks(containerInput: ToolBrokerContainerInput): unknown[] {
   const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
   if (!fs.existsSync(tasksFile)) return [];
@@ -854,7 +854,10 @@ export async function executeBrokerTool(
       return { ok: true };
     }
     case 'update_task': {
-      if (args.schedule_type !== undefined || args.schedule_value !== undefined) {
+      if (
+        args.schedule_type !== undefined ||
+        args.schedule_value !== undefined
+      ) {
         const scheduleInputParsed = ScheduleInput.safeParse({
           schedule_type: args.schedule_type,
           schedule_value: String(args.schedule_value || ''),
@@ -905,4 +908,3 @@ export async function executeBrokerTool(
       return { ok: false, error: `Unknown tool: ${name}` };
   }
 }
-

@@ -7,12 +7,12 @@ import { fetchMemoryContext } from './memory-retrieval-hook.js';
 import { DoomLoopDetector, normalizeArgs } from './doom-loop-detector.js';
 import { dispatchPreToolUseGate } from './pre-tool-use-hook.js';
 import {
-  type AgentRuntimeId,
   createOpenAIMcpToolBridge,
   executeBrokerTool,
   getOpenAIToolDefinitions,
   resolveGroupAttachmentPath as resolveBrokerGroupAttachmentPath,
 } from './tool-broker.js';
+import type { ContainerDispatchBackendId } from './runtime-types.js';
 
 export {
   buildRipgrepSearchArgs,
@@ -24,7 +24,7 @@ export {
 export { validateSchedule } from './schedule-validator.js';
 
 export interface RuntimeSession {
-  backend: AgentRuntimeId;
+  backend: ContainerDispatchBackendId;
   session_id: string;
   resume_cursor?: string;
   metadata_json?: string;
@@ -32,7 +32,7 @@ export interface RuntimeSession {
 
 export interface ContainerInput {
   prompt: string;
-  backend?: AgentRuntimeId;
+  backend?: ContainerDispatchBackendId;
   sessionId?: string;
   sessionRef?: RuntimeSession;
   groupFolder: string;

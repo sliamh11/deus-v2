@@ -81,15 +81,8 @@ import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { processImage } from './image.js';
 import { logger } from './logger.js';
-import { initRuntimeRegistry } from './agent-runtimes/registry.js';
-import { createClaudeRuntime } from './agent-runtimes/claude-backend.js';
-import { createOpenAIRuntime } from './agent-runtimes/openai-backend.js';
-import { createLlamaCppRuntime } from './agent-runtimes/llama-cpp-backend.js';
-import { createDeusNativeRuntime } from './agent-runtimes/deus-native-backend.js';
-import {
-  RuntimeActivityBroadcaster,
-  withRuntimeActivityBroadcast,
-} from './agent-runtimes/activity-broadcaster.js';
+import { RuntimeActivityBroadcaster } from './agent-runtimes/activity-broadcaster.js';
+import { createProductionRuntimeRegistry } from './agent-runtimes/production-registry.js';
 import {
   initLinearContext,
   startLinearDispatcher,
@@ -166,7 +159,6 @@ async function main(): Promise<void> {
   const queue = new GroupQueue();
 
   // Initialize backend registry — all container-based backends share the same deps
-  const registry = initRuntimeRegistry();
   const backendDeps = {
     resolveGroup: (groupFolder: string) =>
       Object.values(state.registeredGroups).find(
@@ -188,14 +180,9 @@ async function main(): Promise<void> {
   // the true tail of shutdown(), after channels/queue/Linear have drained.
   const activityBroadcaster = new RuntimeActivityBroadcaster();
 
-  registry.register(createClaudeRuntime(backendDeps));
-  registry.register(createOpenAIRuntime(backendDeps));
-  registry.register(createLlamaCppRuntime(backendDeps));
-  registry.register(
-    withRuntimeActivityBroadcast(
-      createDeusNativeRuntime(backendDeps),
-      activityBroadcaster,
-    ),
+  const registry = createProductionRuntimeRegistry(
+    backendDeps,
+    activityBroadcaster,
   );
   logger.info({ backends: registry.list() }, 'Backend registry initialized');
 

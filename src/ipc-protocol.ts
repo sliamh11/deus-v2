@@ -26,7 +26,7 @@ export const OUTPUT_END_MARKER = '---DEUS_OUTPUT_END---';
 // ── Sub-schemas ─────────────────────────────────────────────────────────────
 
 export const RuntimeSessionSchema = z.object({
-  backend: z.enum(['claude', 'openai', 'llama-cpp']),
+  backend: z.enum(['claude', 'openai', 'llama-cpp', 'deus-native']),
   session_id: z.string(),
   resume_cursor: z.string().optional(),
   metadata_json: z.string().optional(),
@@ -99,7 +99,7 @@ export type CompactionEvent = z.infer<typeof CompactionEventSchema>;
 
 export const ContainerInputSchema = z.object({
   prompt: z.string(),
-  backend: z.enum(['claude', 'openai', 'llama-cpp']).optional(),
+  backend: z.enum(['claude', 'openai', 'llama-cpp', 'deus-native']).optional(),
   sessionId: z.string().optional(),
   sessionRef: RuntimeSessionSchema.optional(),
   groupFolder: z.string(),

@@ -7,11 +7,41 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ContainerOutputSchema, IpcMessageFileSchema } from './ipc-protocol.js';
+import {
+  ContainerInputSchema,
+  ContainerOutputSchema,
+  IpcMessageFileSchema,
+} from './ipc-protocol.js';
+
+describe('ContainerInputSchema deus-native portability', () => {
+  it('accepts a direct deus-native container request', () => {
+    expect(
+      ContainerInputSchema.safeParse({
+        prompt: 'hello',
+        backend: 'deus-native',
+        groupFolder: 'main',
+        chatJid: 'main@g.us',
+        isControlGroup: true,
+      }).success,
+    ).toBe(true);
+  });
+});
 
 // ── ContainerOutputSchema ───────────────────────────────────────────────────
 
 describe('ContainerOutputSchema', () => {
+  it('accepts a deus-native container session result', () => {
+    const result = ContainerOutputSchema.safeParse({
+      status: 'success',
+      result: 'hello',
+      newSessionId: 'deus-native-container-123',
+      newSessionRef: {
+        backend: 'deus-native',
+        session_id: 'deus-native-container-123',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
   it('accepts a minimal valid ContainerOutput', () => {
     const result = ContainerOutputSchema.safeParse({
       status: 'success',
