@@ -5,7 +5,7 @@ Queries the Linear GraphQL API for active issues and rebuilds the pending:
 block in CLAUDE.md. Uses the same sentinel/block-replace pattern as the
 TypeScript webhook-driven sync in src/linear-vault-sync.ts.
 
-Config resolution: ~/.config/deus/config.json (vault_path)
+Config resolution: ~/.config/deus-v2/config.json (vault_path)
 Token resolution: env vars -> DEUS_HOME/.env -> LINEAR_API_TOKEN
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ EXCLUDED_STATES = {"Done", "Canceled", "Duplicate"}
 
 
 def _load_config() -> dict:
-    cfg_path = Path.home() / ".config" / "deus" / "config.json"
+    cfg_path = Path.home() / ".config" / "deus-v2" / "config.json"
     try:
         return json.loads(cfg_path.read_text())
     except (OSError, json.JSONDecodeError):

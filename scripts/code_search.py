@@ -7,7 +7,7 @@ via stat()+mtime and content SHA-256.
 
 Subcommands: reindex | search | status | generate-fixture | benchmark
 
-DB path: ~/.deus/code_search.db (override via DEUS_CODE_SEARCH_DB).
+DB path: ~/.deus-v2/code_search.db (override via DEUS_CODE_SEARCH_DB).
 Embedding: reuses evolution.providers.embeddings (Ollama embeddinggemma 768d).
 
 See docs/decisions/no-db-deletion.md (soft-delete only) and
@@ -48,7 +48,7 @@ EMBED_DIM = 768
 # Legacy shared DB (tier-3 fallback). Per-project resolution lives in
 # _resolve_db_path(); DB_PATH stays a stable constant so the fallback is
 # import-order-safe and patchable in tests (no import-time env read).
-DB_PATH = Path("~/.deus/code_search.db").expanduser()
+DB_PATH = Path("~/.deus-v2/code_search.db").expanduser()
 
 
 def _main_worktree_root(root: Path) -> Path:
@@ -98,7 +98,7 @@ def _resolve_db_path(project_dir: Path | str | None = None) -> Path:
 
     1. ``DEUS_CODE_SEARCH_DB`` env override (tests / power users).
     2. Per-project, centralized:
-       ``~/.config/deus/projects/<md5(realpath)>/code_search.db`` — md5 matches
+       ``~/.config/deus-v2/projects/<md5(realpath)>/code_search.db`` — md5 matches
        the deus-cmd.sh ``_project_config_path`` convention; non-security path
        keying, so collisions over a handful of project paths are negligible.
     3. Legacy shared DB (kept forever per docs/decisions/no-db-deletion.md).
@@ -109,7 +109,7 @@ def _resolve_db_path(project_dir: Path | str | None = None) -> Path:
     root = _project_root(project_dir)
     if root is not None:
         digest = hashlib.md5(str(root).encode()).hexdigest()
-        return Path("~/.config/deus/projects").expanduser() / digest / "code_search.db"
+        return Path("~/.config/deus-v2/projects").expanduser() / digest / "code_search.db"
     return DB_PATH
 
 

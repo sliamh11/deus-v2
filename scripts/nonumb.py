@@ -429,12 +429,12 @@ def author(
 
 # ── learning-card persistence (P2) ───────────────────────────────────────────
 def resolve_vault(config_path: str | None = None) -> Path:
-    """Vault root from ~/.config/deus/config.json `vault_path` (compress/resume convention).
+    """Vault root from ~/.config/deus-v2/config.json `vault_path` (compress/resume convention).
 
     No DEUS_VAULT_PATH env fallback — keeps this file free of a net-new DEUS_* literal
     and the flag_lint citation question. Raises FileNotFoundError on a missing config/key.
     """
-    cfg = Path(config_path) if config_path else Path.home() / ".config" / "deus" / "config.json"
+    cfg = Path(config_path) if config_path else Path.home() / ".config" / "deus-v2" / "config.json"
     if not cfg.is_file():
         raise FileNotFoundError(f"deus config not found at {cfg}")
     data = json.loads(cfg.read_text(encoding="utf-8"))
@@ -449,13 +449,13 @@ def gen_id() -> str:
 
 
 def _nonumb_config(path: str | None = None) -> dict:
-    """Read ~/.config/deus/nonumb.json (the gate/skill config). Missing/garbled → {}.
+    """Read ~/.config/deus-v2/nonumb.json (the gate/skill config). Missing/garbled → {}.
 
     This is the config the gate + skill already use for `depth`/`grader`/`cards`; `record`
     reads `cards.{enabled,dir}` from it so a user-set card directory is honored without the
     caller having to thread it through — the config is the single source of truth.
     """
-    p = Path(path) if path else Path.home() / ".config" / "deus" / "nonumb.json"
+    p = Path(path) if path else Path.home() / ".config" / "deus-v2" / "nonumb.json"
     if not p.is_file():
         return {}
     try:
@@ -601,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
     pa.add_argument("--repo", default=".", help="repo whose worktree diff to quiz on (default: cwd)")
     pa.add_argument("--depth", default="standard", choices=list(DEPTHS))
     pa.add_argument("--nonumb-config",
-                    help="path to nonumb.json (default ~/.config/deus/nonumb.json); source of grader_* settings")
+                    help="path to nonumb.json (default ~/.config/deus-v2/nonumb.json); source of grader_* settings")
     pa.add_argument("--model", default=None,
                     help="codex model override ('' = codex config default; default: grader_model from nonumb.json)")
     pa.add_argument("--reasoning", default=None,
@@ -612,9 +612,9 @@ def main(argv: list[str] | None = None) -> int:
     _add_agent_flags(pa)
 
     pr = sub.add_parser("record", help="persist a learning card to the vault and index it")
-    pr.add_argument("--config", help="path to deus config.json (default ~/.config/deus/config.json)")
+    pr.add_argument("--config", help="path to deus config.json (default ~/.config/deus-v2/config.json)")
     pr.add_argument("--nonumb-config",
-                    help="path to nonumb.json (default ~/.config/deus/nonumb.json); source of cards.{enabled,dir}")
+                    help="path to nonumb.json (default ~/.config/deus-v2/nonumb.json); source of cards.{enabled,dir}")
     pr.add_argument("--cards-dir", default=None,
                     help="override the vault-relative cards directory (default: cards.dir from nonumb.json)")
     _add_agent_flags(pr)

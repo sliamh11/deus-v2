@@ -59,7 +59,7 @@ def _make_main_and_worktree(tmp_path: Path) -> tuple[Path, Path]:
 
 def _expected_per_project(home: Path, root: Path) -> Path:
     digest = hashlib.md5(str(root.resolve()).encode()).hexdigest()
-    return home / ".config" / "deus" / "projects" / digest / "code_search.db"
+    return home / ".config" / "deus-v2" / "projects" / digest / "code_search.db"
 
 
 # ── tier 1: explicit env override ────────────────────────────────────────────
