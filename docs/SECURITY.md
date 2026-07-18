@@ -89,9 +89,19 @@ The following local files contain sensitive data and are never committed to git:
 |------|----------|------------|
 | `store/auth/creds.json` | WhatsApp session credentials (encrypted by Baileys) | `.gitignore`, host-only (never mounted) |
 | `store/messages.db` | Full message history across all groups | `.gitignore`, host-only |
+| `store/transcripts/deus-native/*.jsonl` | Raw native prompts, responses, cwd values, model usage, and tool arguments | `.gitignore`, host-local; session ids are SHA-256 filenames; POSIX directory `0700` and files `0600` |
 | `.env` | API keys and channel tokens (GEMINI, Telegram, OAuth) | `.gitignore`, `umask 077` on write |
 | `~/.config/deus/mount-allowlist.json` | Allowed mount paths | Outside project, never mounted |
 | `data/sessions/*/` | Per-group Claude session state (full conversation history) | `.gitignore`, group-isolated mounts |
+
+Native transcripts are durable sensitive records, not sanitized logs. The writer
+does not store tool results, system prompts, injected vault/repository context, or
+retrieved memory content, but prompt/response/tool-argument text can still contain
+private data. On POSIX the writer resets the final directory to `0700` and each
+file to `0600`, including pre-existing paths. Windows POSIX mode bits do not map
+to an ACL guarantee, so Windows relies on the user's local filesystem ACL. Files
+remain after feature rollback; retention or deletion must be a separate explicit
+operator action.
 
 **Recommendations:**
 - Back up `store/auth/` if you want to avoid WhatsApp re-authentication

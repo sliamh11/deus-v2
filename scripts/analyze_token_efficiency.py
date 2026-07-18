@@ -2,7 +2,7 @@
 """
 Token-efficiency analyzer for Deus.
 
-Covers two execution paths:
+Covers three execution paths:
 
   A) Container (channel traffic — WhatsApp/Telegram/etc.)
      - groups/<group_folder>/logs/usage.jsonl — per-turn SDK-reported billing
@@ -16,6 +16,10 @@ Covers two execution paths:
        usage (incl. the model name) on every assistant message. By default we
        aggregate across ALL projects (matching ccusage), deduped by session id.
        --project filters by dir substring; --cli-project-dir scopes to one dir.
+
+  C) Deus-native (host-side runtime transcript store)
+     - store/transcripts/deus-native/*.jsonl — authoritative per-model-call
+       usage without Claude Code cache-token fields or call provenance.
 
 Layered output (the `deus usage` view):
   - Efficiency (pricing-independent): per-model cacheRead:output, amortization
@@ -63,6 +67,19 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+try:
+    from transcript_sources import (
+        extract_native_usage,
+        iter_native_records,
+        iter_native_transcript_files,
+    )
+except ModuleNotFoundError:  # Imported as scripts.analyze_token_efficiency in tests.
+    from scripts.transcript_sources import (
+        extract_native_usage,
+        iter_native_records,
+        iter_native_transcript_files,
+    )
 
 PROJECT_ROOT = Path(__file__).parent.parent
 GROUPS_DIR = PROJECT_ROOT / 'groups'
@@ -116,6 +133,32 @@ class InteractionRow:
     session_id: str
     judge_score: float | None
     latency_ms: float | None
+
+
+@dataclass
+class NativeUsageCall:
+    provider: str
+    model: str
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+
+    @property
+    def tokens_reported(self) -> bool:
+        return (
+            self.input_tokens is not None
+            and self.output_tokens is not None
+            and self.total_tokens is not None
+        )
+
+
+@dataclass
+class NativeTurnUsage:
+    ts: datetime
+    session_id: str
+    group: str
+    turn_id: str
+    calls: list[NativeUsageCall]
 
 
 def parse_iso(s: str) -> datetime:
@@ -343,6 +386,110 @@ def load_cli_usage(
                     )
                 )
     return out
+
+
+def native_transcripts_exist(native_transcripts_dir: str | Path | None = None) -> bool:
+    return next(
+        iter_native_transcript_files(
+            native_transcripts_dir=native_transcripts_dir
+        ),
+        None,
+    ) is not None
+
+
+def load_native_usage(
+    since,
+    until,
+    native_transcripts_dir: str | Path | None = None,
+) -> list[NativeTurnUsage]:
+    """Load one turn entry per native assistant record and its model calls."""
+    turns: list[NativeTurnUsage] = []
+    for record in iter_native_records(
+        native_transcripts_dir=native_transcripts_dir
+    ):
+        if record.role != 'assistant' or not record.turn_id or not record.timestamp:
+            continue
+        try:
+            ts = parse_iso(record.timestamp)
+        except ValueError:
+            continue
+        if not in_window(ts, since, until):
+            continue
+        turns.append(
+            NativeTurnUsage(
+                ts=ts,
+                session_id=record.session_id,
+                group=f'deus-native:{record.group_folder or "unknown"}',
+                turn_id=record.turn_id,
+                calls=[
+                    NativeUsageCall(
+                        provider=event.provider,
+                        model=event.model,
+                        input_tokens=event.input_tokens,
+                        output_tokens=event.output_tokens,
+                        total_tokens=event.total_tokens,
+                    )
+                    for event in extract_native_usage(record)
+                ],
+            )
+        )
+    return turns
+
+
+def summarize_native_usage(turns: list[NativeTurnUsage]) -> dict:
+    per_model: dict[tuple[str, str], dict] = {}
+    reported_calls = 0
+    unreported_calls = 0
+    input_tokens = output_tokens = total_tokens = 0
+    for turn in turns:
+        for call in turn.calls:
+            key = (call.provider, call.model)
+            row = per_model.setdefault(
+                key,
+                {
+                    'source': 'deus-native',
+                    'provider': call.provider,
+                    'model': call.model,
+                    'calls': 0,
+                    'reported_calls': 0,
+                    'unreported_calls': 0,
+                    'input_tokens': 0,
+                    'output_tokens': 0,
+                    'total_tokens': 0,
+                    'cache_tokens': None,
+                    'provenance': None,
+                },
+            )
+            row['calls'] += 1
+            if not call.tokens_reported:
+                unreported_calls += 1
+                row['unreported_calls'] += 1
+                continue
+            reported_calls += 1
+            row['reported_calls'] += 1
+            input_tokens += call.input_tokens
+            output_tokens += call.output_tokens
+            total_tokens += call.total_tokens
+            row['input_tokens'] += call.input_tokens
+            row['output_tokens'] += call.output_tokens
+            row['total_tokens'] += call.total_tokens
+    return {
+        'source': 'deus-native',
+        'turns': len(turns),
+        'sessions': len({turn.session_id for turn in turns}),
+        'groups': sorted({turn.group for turn in turns}),
+        'calls': reported_calls + unreported_calls,
+        'reported_calls': reported_calls,
+        'unreported_calls': unreported_calls,
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens,
+        'total_tokens': total_tokens,
+        'cache': None,
+        'per_model': sorted(
+            per_model.values(),
+            key=lambda row: (row['provider'], row['model']),
+        ),
+    }
 
 
 def load_tool_sizes(groups: list[str], since, until) -> list[ToolSizeEntry]:
@@ -798,18 +945,77 @@ def _format_usage_block(title: str, usage: dict) -> list[str]:
     return lines
 
 
+# Taste-pass sketches considered for the native block (LIA-427/F5):
+# A  -- Deus-native --  turns 2  input 240  output 60  cache —
+# B  -- Deus-native usage --  calls 3  turns 2  tokens 300  cache not reported
+# C  source        model                 calls   input  output   cache
+#    deus-native   claude-sonnet-4-5         2     200      50       —
+# Selected: B for the summary, followed by C's compact per-model evidence.
+# It avoids presenting unavailable cache ratios in the Claude-specific table.
+# Manual mixed-fixture pass (2026-07-18): Claude/native labels were distinct,
+# native cache was textual (never zero), columns aligned, both models appeared,
+# and two turns remained separate from three model calls; no correction needed.
+def format_native_usage(native_usage: dict) -> list[str]:
+    lines = ['  -- Deus-native usage --']
+    lines.append('    source:         deus-native')
+    lines.append(
+        f'    turns:          {native_usage.get("turns", 0):,}  '
+        f'model calls: {native_usage.get("calls", 0):,} '
+        f'(reported {native_usage.get("reported_calls", 0):,}; '
+        f'unreported {native_usage.get("unreported_calls", 0):,})'
+    )
+    lines.append(
+        f'    tokens:         input {format_number(native_usage.get("input_tokens", 0))}  '
+        f'output {format_number(native_usage.get("output_tokens", 0))}  '
+        f'total {format_number(native_usage.get("total_tokens", 0))}'
+    )
+    lines.append('    cache:          not reported by deus-native')
+    rows = native_usage.get('per_model', [])
+    if rows:
+        lines.append(
+            f'    {"provider/model":<43}{"calls":>7}{"input":>10}'
+            f'{"output":>10}{"total":>10}'
+        )
+        for row in rows:
+            label = f'{row["provider"]}/{row["model"]}'[:43]
+            input_value = (
+                format_number(row['input_tokens'])
+                if row['reported_calls']
+                else '—'
+            )
+            output_value = (
+                format_number(row['output_tokens'])
+                if row['reported_calls']
+                else '—'
+            )
+            total_value = (
+                format_number(row['total_tokens'])
+                if row['reported_calls']
+                else '—'
+            )
+            lines.append(
+                f'    {label:<43}{row["calls"]:>7}'
+                f'{input_value:>10}{output_value:>10}{total_value:>10}'
+            )
+    return lines
+
+
 def format_report(
     label: str,
     container_usage: dict,
     cli_usage: dict,
     tools: dict,
     quality: dict,
+    native_usage: dict | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append(f'=== {label} ===')
     lines.extend(_format_usage_block('Container (channel traffic)', container_usage))
     lines.append('')
     lines.extend(_format_usage_block('CLI (this session path)', cli_usage))
+    if native_usage is not None:
+        lines.append('')
+        lines.extend(format_native_usage(native_usage))
 
     # Container-only extras: duration / cost come from the SDK result message
     # which CLI transcripts don't store.
@@ -1043,17 +1249,20 @@ def analyze(
     project_filters: list[str] | None = None,
     rates: dict[str, dict[str, float]] | None = None,
     pricing: str = 'notional',
+    native_transcripts_dir: str | Path | None = None,
 ) -> dict:
     rates = rates if rates is not None else MODEL_RATES
     container_entries = load_usage(groups, since, until)
     cli_entries = (
         load_cli_usage(since, until, project_filters) if include_cli else []
     )
+    native_turns = load_native_usage(since, until, native_transcripts_dir)
     tools = load_tool_sizes(groups, since, until)
     quality_rows = load_interactions(groups, since, until)
     return {
         'container_usage': summarize_usage(container_entries),
         'cli_usage': summarize_usage(cli_entries),
+        'deus_native_usage': summarize_native_usage(native_turns),
         'container_per_model': summarize_by_model(
             container_entries, rates, pricing
         ),
@@ -1066,7 +1275,7 @@ def analyze(
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description='Analyze Deus token-usage and quality logs.'
     )
@@ -1087,7 +1296,14 @@ def main() -> int:
             'to scope to one repo.'
         ),
     )
-    args = ap.parse_args()
+    ap.add_argument(
+        '--native-transcripts-dir',
+        help=(
+            'Override the final Deus-native transcript directory. Default: '
+            '<repo>/store/transcripts/deus-native.'
+        ),
+    )
+    args = ap.parse_args(argv)
 
     # Allow overriding to a single transcript dir (disables all-projects scan).
     if args.cli_project_dir:
@@ -1111,9 +1327,13 @@ def main() -> int:
     groups = args.group or discover_groups()
     # CLI data is still loaded even when no channel groups exist. Fail only when
     # there is neither a channel group nor any CLI transcript dir to scan.
-    if not groups and not _iter_project_dirs(args.project):
+    if (
+        not groups
+        and not _iter_project_dirs(args.project)
+        and not native_transcripts_exist(args.native_transcripts_dir)
+    ):
         print(
-            'no groups with logs/ and no CLI transcripts found',
+            'no groups with logs/, no Claude CLI transcripts, and no Deus-native transcripts found',
             file=sys.stderr,
         )
         return 1
@@ -1124,8 +1344,8 @@ def main() -> int:
         compare_from = parse_day(args.compare_from)
         since = parse_day(args.since)
         until = parse_day(args.until, end_of_day=True)
-        baseline = analyze(groups, since, baseline_until, project_filters=args.project, rates=rates, pricing=args.pricing)
-        compare = analyze(groups, compare_from, until, project_filters=args.project, rates=rates, pricing=args.pricing)
+        baseline = analyze(groups, since, baseline_until, project_filters=args.project, rates=rates, pricing=args.pricing, native_transcripts_dir=args.native_transcripts_dir)
+        compare = analyze(groups, compare_from, until, project_filters=args.project, rates=rates, pricing=args.pricing, native_transcripts_dir=args.native_transcripts_dir)
         if args.json:
             print(
                 json.dumps(
@@ -1144,6 +1364,7 @@ def main() -> int:
                 baseline['cli_usage'],
                 baseline['tools'],
                 baseline['quality'],
+                baseline['deus_native_usage'],
             )
         )
         print()
@@ -1154,6 +1375,7 @@ def main() -> int:
                 compare['cli_usage'],
                 compare['tools'],
                 compare['quality'],
+                compare['deus_native_usage'],
             )
         )
         print()
@@ -1163,7 +1385,7 @@ def main() -> int:
     # Single-window mode
     since = parse_day(args.since)
     until = parse_day(args.until, end_of_day=True)
-    result = analyze(groups, since, until, project_filters=args.project, rates=rates, pricing=args.pricing)
+    result = analyze(groups, since, until, project_filters=args.project, rates=rates, pricing=args.pricing, native_transcripts_dir=args.native_transcripts_dir)
     if args.json:
         print(json.dumps(result, indent=2))
         return 0
@@ -1177,6 +1399,7 @@ def main() -> int:
             result['cli_usage'],
             result['tools'],
             result['quality'],
+            result['deus_native_usage'],
         )
     )
     # Per-project breakdown FIRST (understand each project), then the

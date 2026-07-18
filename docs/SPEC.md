@@ -214,10 +214,13 @@ deus/
 │
 ├── store/                         # Local data (gitignored)
 │   ├── auth/                      # WhatsApp authentication state
+│   ├── transcripts/
+│   │   └── deus-native/           # Owned append-only successful-turn JSONL
+│   │       └── <sha256>.jsonl     # SHA-256 of the UTF-8 runtime session id
 │   └── messages.db                # SQLite database (messages, chats, scheduled_tasks, task_run_logs, registered_groups, sessions, router_state)
 │
 ├── data/                          # Application state (gitignored)
-│   ├── sessions/                  # Per-group session data (.claude/ dirs with JSONL transcripts)
+│   ├── sessions/                  # Legacy per-group container .claude state and Claude Code JSONL
 │   ├── env/env                    # Copy of .env for container mounting
 │   └── ipc/                       # Container IPC (messages/, tasks/)
 │
@@ -229,6 +232,12 @@ deus/
 └── launchd/
     └── com.deus.plist         # macOS service configuration
 ```
+
+`store/transcripts/deus-native/` is the Deus-owned, append-only raw conversation
+source for successful completed native turns. It is distinct from LangGraph
+checkpoint/session state (used to resume execution), legacy container-owned
+`data/sessions/*/.claude` history, and lossy vault Markdown summaries. Reverting
+the writer stops new appends but never removes existing transcript files.
 
 ---
 

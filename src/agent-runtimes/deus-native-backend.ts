@@ -113,6 +113,11 @@ import {
   loadWardenRoleModels,
   resolveWardenModelAlias,
 } from './warden-role-models.js';
+import {
+  appendDeusNativeTranscriptTurn,
+  type TranscriptToolCall,
+  type TranscriptUsageEvent,
+} from './transcript-store.js';
 
 // capabilities() — each flag has an inline rationale, matching
 // llama-cpp-backend.ts's existing comment convention.
@@ -247,6 +252,25 @@ export class DeusNativeRuntime implements AgentRuntime {
         sessionRef.session_id !== ''
           ? sessionRef.session_id
           : crypto.randomUUID();
+      const transcriptUsageEvents: TranscriptUsageEvent[] = [];
+      const usageEventSink: RuntimeEventSink = async (event) => {
+        if (event.type === 'usage') {
+          transcriptUsageEvents.push({
+            provider: event.provider,
+            model: event.model,
+            ...(event.inputTokens !== undefined
+              ? { inputTokens: event.inputTokens }
+              : {}),
+            ...(event.outputTokens !== undefined
+              ? { outputTokens: event.outputTokens }
+              : {}),
+            ...(event.totalTokens !== undefined
+              ? { totalTokens: event.totalTokens }
+              : {}),
+          });
+        }
+        await eventSink(event);
+      };
 
       // B4 (LIA-404): read the real checkpoint state ONCE to derive the
       // injection-gating signal. This happens before invoke()'s own internal
@@ -383,7 +407,7 @@ export class DeusNativeRuntime implements AgentRuntime {
       // AIMessage came from the parent or from a dispatched child.
       const usageCollector = createTurnUsageCollector({
         sessionId: outgoingSessionId,
-        eventSink,
+        eventSink: usageEventSink,
       });
 
       // B8 (LIA-408): the parent-facing dispatch_nested_agent tool. Every
@@ -519,6 +543,7 @@ export class DeusNativeRuntime implements AgentRuntime {
       // compaction can replace a large prefix with one summary and make the
       // final state shorter than it was before this turn.
       const currentTurnMessageId = crypto.randomUUID();
+      const startedAt = new Date();
       const result = await agent.invoke(
         {
           messages: [
@@ -555,13 +580,25 @@ export class DeusNativeRuntime implements AgentRuntime {
         );
       }
       const messages = allResultMessages.slice(currentTurnStart);
+      const transcriptToolCalls: TranscriptToolCall[] = [];
       for (const message of messages) {
         const m = message as {
-          tool_calls?: Array<{ name?: string; args?: unknown }>;
+          tool_calls?: Array<{ id?: string; name?: string; args?: unknown }>;
         };
         if (Array.isArray(m.tool_calls)) {
           for (const call of m.tool_calls) {
             if (!call.name) continue;
+            const transcriptInput =
+              call.args !== null &&
+              typeof call.args === 'object' &&
+              !Array.isArray(call.args)
+                ? (call.args as Record<string, unknown>)
+                : {};
+            transcriptToolCalls.push({
+              ...(call.id !== undefined ? { id: call.id } : {}),
+              name: call.name,
+              input: transcriptInput,
+            });
             await eventSink({
               type: 'tool_call',
               name: call.name,
@@ -601,6 +638,10 @@ export class DeusNativeRuntime implements AgentRuntime {
           : last?.content !== undefined
             ? JSON.stringify(last.content)
             : '';
+      const completedAt = new Date();
+      const assistantMessageId = (
+        messages[messages.length - 1] as { id?: unknown } | undefined
+      )?.id;
 
       await eventSink({ type: 'output_text', text });
       await eventSink({ type: 'turn_complete' });
@@ -611,7 +652,7 @@ export class DeusNativeRuntime implements AgentRuntime {
       // existing generic `if (runResult.sessionRef) setSession(...)`
       // persistence. Unlike B3's cosmetic marker, this id now references
       // real, resumable checkpointer state for this thread.
-      return {
+      const runResult: RunResult = {
         status: 'success',
         result: text,
         sessionRef: { backend: 'deus-native', session_id: outgoingSessionId },
@@ -619,6 +660,30 @@ export class DeusNativeRuntime implements AgentRuntime {
         // carried usage_metadata — never fabricate counts.
         ...(turnUsage !== undefined ? { usage: turnUsage } : {}),
       };
+      try {
+        await appendDeusNativeTranscriptTurn({
+          sessionId: outgoingSessionId,
+          groupFolder: runContext.groupFolder,
+          ...(runContext.cwd !== undefined ? { cwd: runContext.cwd } : {}),
+          prompt: runContext.prompt,
+          assistantText: text,
+          userMessageId: currentTurnMessageId,
+          ...(typeof assistantMessageId === 'string'
+            ? { assistantMessageId }
+            : {}),
+          primaryModel: effectiveModels.main.model,
+          toolCalls: transcriptToolCalls,
+          usageEvents: transcriptUsageEvents,
+          startedAt,
+          completedAt,
+        });
+      } catch (error) {
+        console.warn(
+          `deus-native transcript append unexpectedly rejected for session ${outgoingSessionId}`,
+          error,
+        );
+      }
+      return runResult;
     } catch (err) {
       // Never throw out of runTurn — matches ContainerRuntime.runTurn's
       // never-throw contract (network failure, proxy auth failure, or any

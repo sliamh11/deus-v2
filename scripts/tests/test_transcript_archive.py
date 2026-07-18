@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
+_NATIVE_FIXTURE = _ROOT / "scripts/tests/fixtures/deus_native_transcript_v1.jsonl"
 
 
 def _load(name: str):
@@ -165,6 +167,174 @@ class TestResolve:
         assert ta.resolve_transcript("/no/such/cwd") is None
 
 
+class TestNativeResolve:
+    def _native(self, tmp_path, session_id="native-session-001"):
+        root = tmp_path / "native"
+        path = ta.native_transcript_path(
+            session_id, native_transcripts_dir=root
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(_NATIVE_FIXTURE, path)
+        return root, path
+
+    def test_explicit_backend_and_session_find_hashed_native_file(
+        self, tmp_path, store, capsys
+    ):
+        root, path = self._native(tmp_path)
+        rc = ta.main(
+            [
+                "--backend",
+                "deus-native",
+                "--session-id",
+                "native-session-001",
+                "--native-transcripts-dir",
+                str(root),
+                "--json",
+            ]
+        )
+        assert rc == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result["ok"] is True
+        assert ta.decompress(Path(result["dest"])) == path.read_bytes()
+
+    def test_explicit_directory_override_is_honored(self, tmp_path):
+        root, path = self._native(tmp_path)
+        assert ta.resolve_native_transcript(
+            "native-session-001", native_transcripts_dir=root
+        ) == path
+
+    def test_native_archive_preserves_raw_fixture_bytes_and_sha(self, tmp_path, store):
+        _, path = self._native(tmp_path)
+        result = ta.archive(path)
+        assert result["sha256"] == __import__("hashlib").sha256(path.read_bytes()).hexdigest()
+        assert ta.decompress(Path(result["dest"])) == _NATIVE_FIXTURE.read_bytes()
+
+    def test_missing_native_session_best_effort_keeps_clean_shape(
+        self, tmp_path, store, capsys
+    ):
+        rc = ta.main(
+            [
+                "--backend",
+                "deus-native",
+                "--session-id",
+                "missing",
+                "--native-transcripts-dir",
+                str(tmp_path / "native"),
+                "--best-effort",
+                "--json",
+            ]
+        )
+        assert rc == 0
+        assert json.loads(capsys.readouterr().out) == {
+            "ok": False,
+            "error": "no deus-native transcript found for session missing",
+        }
+
+
+class TestAutoResolve:
+    def _claude_tree(self, tmp_path, monkeypatch, cwd="/Users/x/proj"):
+        sessions = tmp_path / "sessions"
+        projects = tmp_path / "projects"
+        sessions.mkdir(exist_ok=True)
+        slug = cwd.replace("/", "-")
+        directory = projects / slug
+        directory.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(ta, "_sessions_dir", lambda: sessions)
+        monkeypatch.setattr(ta, "_projects_dir", lambda: projects)
+        return cwd, sessions, directory
+
+    def _native(self, tmp_path, session_id):
+        root = tmp_path / "native"
+        path = ta.native_transcript_path(session_id, native_transcripts_dir=root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'{{"session":"{session_id}"}}\n')
+        return root, path
+
+    def test_explicit_session_beats_both_environment_ids_and_registry(
+        self, tmp_path, monkeypatch
+    ):
+        cwd, sessions, claude_dir = self._claude_tree(tmp_path, monkeypatch)
+        root, explicit = self._native(tmp_path, "explicit")
+        self._native(tmp_path, "native-env")
+        (claude_dir / "claude-env.jsonl").write_text("claude env\n")
+        (claude_dir / "registry.jsonl").write_text("registry\n")
+        (sessions / "1.json").write_text(
+            json.dumps({"cwd": cwd, "sessionId": "registry"})
+        )
+        monkeypatch.setenv("DEUS_NATIVE_SESSION_ID", "native-env")
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "claude-env")
+        assert ta.resolve_auto_transcript(
+            cwd=cwd, session_id="explicit", native_transcripts_dir=root
+        ) == explicit
+
+    def test_deus_environment_beats_claude_environment_and_registry(
+        self, tmp_path, monkeypatch
+    ):
+        cwd, sessions, claude_dir = self._claude_tree(tmp_path, monkeypatch)
+        root, native = self._native(tmp_path, "native-env")
+        (claude_dir / "claude-env.jsonl").write_text("claude env\n")
+        (claude_dir / "registry.jsonl").write_text("registry\n")
+        (sessions / "1.json").write_text(
+            json.dumps({"cwd": cwd, "sessionId": "registry"})
+        )
+        monkeypatch.setenv("DEUS_NATIVE_SESSION_ID", "native-env")
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "claude-env")
+        assert ta.resolve_auto_transcript(
+            cwd=cwd, session_id=None, native_transcripts_dir=root
+        ) == native
+
+    def test_claude_environment_beats_registry(self, tmp_path, monkeypatch):
+        cwd, sessions, claude_dir = self._claude_tree(tmp_path, monkeypatch)
+        claude = claude_dir / "claude-env.jsonl"
+        claude.write_text("claude env\n")
+        (claude_dir / "registry.jsonl").write_text("registry\n")
+        (sessions / "1.json").write_text(
+            json.dumps({"cwd": cwd, "sessionId": "registry"})
+        )
+        monkeypatch.delenv("DEUS_NATIVE_SESSION_ID", raising=False)
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "claude-env")
+        assert ta.resolve_auto_transcript(
+            cwd=cwd, session_id=None, native_transcripts_dir=tmp_path / "native"
+        ) == claude
+
+    def test_registry_wins_without_environment_ids(self, tmp_path, monkeypatch):
+        cwd, sessions, claude_dir = self._claude_tree(tmp_path, monkeypatch)
+        registry = claude_dir / "registry.jsonl"
+        registry.write_text("registry\n")
+        (sessions / "1.json").write_text(
+            json.dumps({"cwd": cwd, "sessionId": "registry"})
+        )
+        monkeypatch.delenv("DEUS_NATIVE_SESSION_ID", raising=False)
+        monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+        assert ta.resolve_auto_transcript(
+            cwd=cwd, session_id=None, native_transcripts_dir=tmp_path / "native"
+        ) == registry
+
+    def test_same_explicit_id_in_both_stores_is_ambiguous_and_backend_disambiguates(
+        self, tmp_path, monkeypatch, store, capsys
+    ):
+        cwd, _, claude_dir = self._claude_tree(tmp_path, monkeypatch)
+        root, native = self._native(tmp_path, "same")
+        claude = claude_dir / "same.jsonl"
+        claude.write_text("claude\n")
+        rc = ta.main(
+            [
+                "--cwd",
+                cwd,
+                "--session-id",
+                "same",
+                "--native-transcripts-dir",
+                str(root),
+                "--json",
+            ]
+        )
+        assert rc == 1
+        assert "both deus-native and Claude" in json.loads(capsys.readouterr().out)["error"]
+
+        assert ta.resolve_native_transcript("same", native_transcripts_dir=root) == native
+        assert ta.resolve_claude_transcript(cwd, session_id="same") == claude
+
+
 class TestCli:
     def test_json_best_effort_exit_zero_on_error(self, store, tmp_path, capsys):
         rc = ta.main(["--transcript", str(tmp_path / "nope.jsonl"), "--json", "--best-effort"])
@@ -185,3 +355,109 @@ class TestCli:
         rc = ta.main(["--transcript", str(tmp_path / "nope.jsonl")])
         assert rc == 1
         assert "transcript not found" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("backend", "source_args"),
+        [
+            ("claude", ["--transcript", "{explicit}"]),
+            ("claude", ["--cwd", "/Users/x/proj"]),
+            (
+                "claude",
+                ["--cwd", "/Users/x/proj", "--session-id", "claude-id"],
+            ),
+            ("deus-native", ["--transcript", "{explicit}"]),
+            ("deus-native", ["--session-id", "native-id"]),
+            ("deus-native", ["--cwd", "/Users/x/proj"]),
+            ("auto", ["--transcript", "{explicit}"]),
+            ("auto", ["--cwd", "/Users/x/proj"]),
+            ("auto", ["--cwd", "/Users/x/proj", "--session-id", "claude-id"]),
+            ("auto", ["--session-id", "native-id"]),
+        ],
+    )
+    def test_frozen_valid_argument_matrix(
+        self,
+        backend,
+        source_args,
+        tmp_path,
+        monkeypatch,
+        store,
+        capsys,
+    ):
+        explicit = tmp_path / "explicit.jsonl"
+        explicit.write_text("explicit\n")
+        native_root = tmp_path / "native"
+        native = ta.native_transcript_path(
+            "native-id", native_transcripts_dir=native_root
+        )
+        native.parent.mkdir(parents=True)
+        native.write_text("native\n")
+
+        projects = tmp_path / "projects"
+        claude_dir = projects / "-Users-x-proj"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / "claude-id.jsonl").write_text("claude\n")
+        monkeypatch.setattr(ta, "_projects_dir", lambda: projects)
+        monkeypatch.setattr(ta, "_sessions_dir", lambda: tmp_path / "sessions")
+        monkeypatch.setenv("DEUS_NATIVE_SESSION_ID", "native-id")
+
+        args = [
+            "--backend",
+            backend,
+            *[value.format(explicit=str(explicit)) for value in source_args],
+            "--native-transcripts-dir",
+            str(native_root),
+            "--json",
+        ]
+        assert ta.main(args) == 0
+        assert json.loads(capsys.readouterr().out)["ok"] is True
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--backend", "claude"],
+            ["--backend", "claude", "--session-id", "id"],
+            ["--backend", "deus-native"],
+            [
+                "--backend",
+                "deus-native",
+                "--cwd",
+                "/x",
+                "--session-id",
+                "id",
+            ],
+            ["--backend", "auto"],
+            ["--transcript", "/x", "--session-id", "id"],
+        ],
+    )
+    def test_frozen_invalid_argument_matrix_uses_clean_parser_errors(
+        self, args, monkeypatch
+    ):
+        monkeypatch.delenv("DEUS_NATIVE_SESSION_ID", raising=False)
+        with pytest.raises(SystemExit) as error:
+            ta.main(args)
+        assert error.value.code == 2
+
+    def test_native_cwd_without_environment_id_is_invalid(self, monkeypatch):
+        monkeypatch.delenv("DEUS_NATIVE_SESSION_ID", raising=False)
+        with pytest.raises(SystemExit) as error:
+            ta.main(["--backend", "deus-native", "--cwd", "/x"])
+        assert error.value.code == 2
+
+    def test_auto_session_only_missing_native_fails_cleanly(
+        self, tmp_path, store, capsys
+    ):
+        rc = ta.main(
+            [
+                "--backend",
+                "auto",
+                "--session-id",
+                "missing",
+                "--native-transcripts-dir",
+                str(tmp_path / "native"),
+                "--json",
+            ]
+        )
+        assert rc == 1
+        result = json.loads(capsys.readouterr().out)
+        assert result["ok"] is False
+        assert "pass --cwd" in result["error"]

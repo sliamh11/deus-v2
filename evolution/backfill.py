@@ -25,6 +25,12 @@ import time
 from pathlib import Path
 from typing import Iterator
 
+from scripts.transcript_sources import (
+    extract_completed_pairs,
+    iter_native_transcript_files,
+    iter_transcript_records,
+)
+
 from .config import REFLECTION_THRESHOLD, MAX_REFLECTIONS_TO_GENERATE
 from .ilog.interaction_log import log_interaction, update_score
 from .storage import get_storage
@@ -50,6 +56,14 @@ _MIN_RESPONSE_LEN = 20
 
 def _deterministic_id(session_id: str, pair_index: int) -> str:
     raw = f"backfill:{session_id}:{pair_index}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _deterministic_native_id(
+    session_id: str, turn_id: str | None, pair_index: int
+) -> str:
+    turn_key = turn_id if turn_id else str(pair_index)
+    raw = f"backfill:deus-native:{session_id}:{turn_key}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
@@ -139,6 +153,7 @@ def collect_pairs(
     limit: int | None = None,
     chunk_stats: bool = False,
     context_window: int = 0,
+    native_transcripts_dir: Path | None = None,
 ) -> list[dict]:
     """
     Walk sessions_dir, extract all valid pairs from non-subagent .jsonl files.
@@ -153,15 +168,25 @@ def collect_pairs(
     includes a "context" field with the N preceding messages (for retrieval experiments).
     """
     pattern = str(sessions_dir / "**" / ".claude" / "projects" / "*" / "*.jsonl")
-    all_files = [
+    legacy_files = sorted(
+        [
         Path(f) for f in glob.glob(pattern, recursive=True)
         if "/subagents/" not in f
-    ]
+        ],
+        key=lambda item: item.as_posix(),
+    )
+    native_files = sorted(
+        iter_native_transcript_files(
+            native_transcripts_dir=native_transcripts_dir
+        ),
+        key=lambda item: item.as_posix(),
+    )
+    all_files = [*legacy_files, *native_files]
 
     pairs = []
     file_pair_counts: dict[str, int] = {}
 
-    for fpath in all_files:
+    for fpath in legacy_files:
         session_id = fpath.stem
         group_folder = _infer_group_folder(fpath)
         file_count = 0
@@ -178,18 +203,47 @@ def collect_pairs(
                 entry["context"] = pair["context"]
             pairs.append(entry)
             file_count += 1
-            if limit and len(pairs) >= limit:
-                if chunk_stats:
-                    file_pair_counts[fpath.name] = file_count
-                    _print_chunk_stats(all_files, pairs, file_pair_counts)
-                return pairs
         if file_count > 0:
             file_pair_counts[fpath.name] = file_count
 
-    if chunk_stats:
-        _print_chunk_stats(all_files, pairs, file_pair_counts)
+    for fpath in native_files:
+        file_count = 0
+        records = iter_transcript_records(fpath)
+        for pair_index, pair in enumerate(extract_completed_pairs(records)):
+            if len(pair.prompt) < _MIN_PROMPT_LEN:
+                continue
+            if any(pair.prompt.startswith(prefix) for prefix in _SKIP_PROMPT_PREFIXES):
+                continue
+            if len(pair.response) < _MIN_RESPONSE_LEN:
+                continue
+            if any(
+                pair.response.startswith(prefix)
+                for prefix in _SKIP_RESPONSE_PREFIXES
+            ):
+                continue
+            pairs.append(
+                {
+                    "interaction_id": _deterministic_native_id(
+                        pair.session_id, pair.turn_id, pair_index
+                    ),
+                    "session_id": pair.session_id,
+                    "group_folder": pair.group_folder,
+                    "prompt": pair.prompt,
+                    "response": pair.response,
+                    "source": "deus-native",
+                    "turn_id": pair.turn_id,
+                }
+            )
+            file_count += 1
+        if file_count > 0:
+            file_pair_counts[fpath.name] = file_count
 
-    return pairs
+    selected_pairs = pairs[:limit] if limit is not None else pairs
+
+    if chunk_stats:
+        _print_chunk_stats(all_files, selected_pairs, file_pair_counts)
+
+    return selected_pairs
 
 
 def _print_chunk_stats(
@@ -221,11 +275,16 @@ def _print_chunk_stats(
 
 def run_backfill(
     sessions_dir: Path = SESSIONS_DIR,
+    native_transcripts_dir: Path | None = None,
     dry_run: bool = False,
     limit: int | None = None,
     verbose: bool = True,
 ) -> dict:
-    pairs = collect_pairs(sessions_dir, limit)
+    pairs = collect_pairs(
+        sessions_dir,
+        limit,
+        native_transcripts_dir=native_transcripts_dir,
+    )
     judge = make_runtime_judge()
 
     stats = {
@@ -357,6 +416,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill historical interactions into evolution loop")
     parser.add_argument("--sessions-dir", type=Path, default=SESSIONS_DIR,
                         help="Path to data/sessions directory")
+    parser.add_argument(
+        "--native-transcripts-dir",
+        type=Path,
+        help="Override the final Deus-native transcript directory",
+    )
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview pairs without writing to DB or calling judge")
     parser.add_argument("--limit", type=int, default=None,
@@ -376,11 +440,17 @@ def main() -> None:
         return
 
     if args.chunk_stats:
-        collect_pairs(args.sessions_dir, limit=args.limit, chunk_stats=True)
+        collect_pairs(
+            args.sessions_dir,
+            limit=args.limit,
+            chunk_stats=True,
+            native_transcripts_dir=args.native_transcripts_dir,
+        )
         return
 
     stats = run_backfill(
         sessions_dir=args.sessions_dir,
+        native_transcripts_dir=args.native_transcripts_dir,
         dry_run=args.dry_run,
         limit=args.limit,
         verbose=not args.quiet,
