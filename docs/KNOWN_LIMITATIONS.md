@@ -11,7 +11,7 @@ Deus now has a backend-neutral host runtime with per-group and per-task backend 
 - The credential proxy now supports both Anthropic and OpenAI routes, but other providers still need adapters.
 - OpenAI now uses the container-side Deus tool broker for filesystem, shell, web, browser, IPC, and task tools, plus bridged MCP tools for `deus`/`gcal` parity and Deus-owned compacted-session metadata for `/compact`.
 - OpenAI still needs live container verification with real credentials before it can be called parity-certified (tracked as AAG-001). The OpenAI adapter uses the Responses API; Agents SDK handoffs/tracing are deferred as optional accelerators.
-- Skill parity audit (2026-04-26): all skills except `x-integration` (broken on both backends) and `add-ollama-tool` (OpenAI backend hardcodes MCP server list) are instruction-only and work on both backends.
+- Skill parity audit (2026-04-26): all skills except `x-integration` (broken on both backends) and `add-ollama-tool` (OpenAI backend hardcodes MCP server list) are instruction-only and work on both backends. `deus-native`'s container driver additionally discovers and injects these as instruction-pack context (LIA-426/F4, `container/agent-runner/src/skill-context-loader.ts`) — both dispositions above are preserved unchanged, encoded in that module's `KNOWN_UNSUPPORTED_SKILL_DISPOSITIONS` map, excluded from the model-invocation catalog, and returned as the recorded limitation on direct invocation. F4 does not modify `x-integration`'s `agent.ts`, `skill-mcp-registry.ts`, or any backend's MCP server configuration.
 - Container-side backend changes require rebuilding/restarting the agent container/service before live testing.
 
 **What IS swappable:**

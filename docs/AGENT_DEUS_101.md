@@ -107,6 +107,20 @@ consume a generated `.agents/skills/` compatibility tree. Host skills are for
 host coding sessions, not commands to suggest inside WhatsApp, Telegram, Slack,
 Discord, Gmail, Teams, or Outlook.
 
+Two DISTINCT mechanisms load skills inside the container `deus-native` driver
+(LIA-426/F4), not to be confused with each other:
+- **Instruction-pack discovery** (`container/agent-runner/src/skill-context-loader.ts`)
+  — the common case (~50+ skills). A skill's `SKILL.md` Markdown body becomes
+  injectable context, exactly like `AGENTS.md`/`CLAUDE.md` already are. No code
+  runs; the model reads instructions via a catalog + a read-only `load_skill`
+  tool, or a user's direct `/name` invocation.
+- **Executable MCP tool registration** (`container/agent-runner/src/skill-mcp-registry.ts`)
+  — a much smaller class of skills that ship real code (`agent.js`/`agent.ts`,
+  e.g. `x-integration`). Registers actual MCP tools, unrelated to instruction
+  loading. `x-integration`'s pre-existing MCP registration break and
+  `add-ollama-tool`'s hardcoded MCP server list are NOT repaired by
+  instruction-pack discovery — see `docs/KNOWN_LIMITATIONS.md`.
+
 ## Commands To Preserve
 
 CLI interface choices:
