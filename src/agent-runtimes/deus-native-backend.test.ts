@@ -23,6 +23,7 @@ const {
   checkpointerStub,
   buildMiddlewareStackSpy,
   buildNestedDispatchToolMock,
+  appendTranscriptMock,
 } = vi.hoisted(() => ({
   createAgentMock: vi.fn(),
   invokeMock: vi.fn(),
@@ -42,6 +43,7 @@ const {
   buildNestedDispatchToolMock: vi.fn((_deps?: unknown) => ({
     name: 'dispatch_nested_agent',
   })),
+  appendTranscriptMock: vi.fn(),
 }));
 
 vi.mock('langchain', async (importOriginal) => {
@@ -144,6 +146,10 @@ vi.mock('./nested-dispatch-tool.js', () => ({
   buildNestedDispatchTool: buildNestedDispatchToolMock,
 }));
 
+vi.mock('./transcript-store.js', () => ({
+  appendDeusNativeTranscriptTurn: appendTranscriptMock,
+}));
+
 const { createDeusNativeRuntime } = await import('./deus-native-backend.js');
 
 const stubDeps: ContainerRuntimeDeps = {
@@ -151,6 +157,14 @@ const stubDeps: ContainerRuntimeDeps = {
   assistantName: 'Deus',
   registerProcess: () => {},
 };
+
+beforeEach(() => {
+  appendTranscriptMock.mockReset();
+  appendTranscriptMock.mockResolvedValue({
+    ok: true,
+    path: '/test/store/transcripts/deus-native/session.jsonl',
+  });
+});
 
 // D5 (LIA-419): production now invokes the agent with a single HumanMessage
 // carrying a per-turn stable `id` (`currentTurnMessageId` in
@@ -438,6 +452,372 @@ describe('DeusNativeBackend', () => {
 
     expect(result.status).toBe('success');
     expect(detectAuthModeMock).toHaveBeenCalled();
+  });
+});
+
+describe('DeusNativeBackend — completed-turn transcript wiring (LIA-427/F5)', () => {
+  const backend = createDeusNativeRuntime(stubDeps);
+
+  beforeEach(() => {
+    createAgentMock.mockReset();
+    invokeMock.mockReset();
+    detectAuthModeMock.mockReturnValue('api-key');
+    getOrCreateGroupTokenMock.mockReset();
+    getOrCreateGroupTokenMock.mockReturnValue('fake-proxy-token');
+    buildNestedDispatchToolMock.mockClear();
+  });
+
+  it('writes one successful turn after terminal events with exact prompt, ids, model, tools, usage, and timestamps', async () => {
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMockEcho(
+      {
+        id: 'tool-message',
+        type: 'ai',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call-1',
+            name: 'web_search',
+            args: { query: 'native source' },
+          },
+          {
+            id: 'call-2',
+            name: 'web_fetch',
+            args: { url: 'https://example.com' },
+          },
+        ],
+        usage_metadata: {
+          input_tokens: 40,
+          output_tokens: 10,
+          total_tokens: 50,
+        },
+      },
+      {
+        id: 'assistant-final',
+        type: 'ai',
+        content: 'Stored answer.',
+        usage_metadata: {
+          input_tokens: 120,
+          output_tokens: 30,
+          total_tokens: 150,
+        },
+      },
+    );
+    const order: string[] = [];
+    appendTranscriptMock.mockImplementation(async () => {
+      order.push('writer');
+      return { ok: true, path: '/transcript' };
+    });
+
+    const result = await backend.runTurn(
+      {
+        prompt: 'Store this exact prompt.',
+        groupFolder: 'whatsapp_main',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+        cwd: '/absolute/project/path',
+      },
+      { backend: 'deus-native', session_id: 'resumed-native-session' },
+      (event) => {
+        order.push(event.type);
+      },
+    );
+
+    expect(result).toEqual({
+      status: 'success',
+      result: 'Stored answer.',
+      sessionRef: {
+        backend: 'deus-native',
+        session_id: 'resumed-native-session',
+      },
+      usage: { inputTokens: 160, outputTokens: 40, totalTokens: 200 },
+    });
+    expect(order.slice(-3)).toEqual(['output_text', 'turn_complete', 'writer']);
+    expect(appendTranscriptMock).toHaveBeenCalledTimes(1);
+    const input = appendTranscriptMock.mock.calls[0]?.[0];
+    expect(input).toMatchObject({
+      sessionId: 'resumed-native-session',
+      groupFolder: 'whatsapp_main',
+      cwd: '/absolute/project/path',
+      prompt: 'Store this exact prompt.',
+      assistantText: 'Stored answer.',
+      assistantMessageId: 'assistant-final',
+      primaryModel: 'claude-opus-4-8',
+      toolCalls: [
+        {
+          id: 'call-1',
+          name: 'web_search',
+          input: { query: 'native source' },
+        },
+        {
+          id: 'call-2',
+          name: 'web_fetch',
+          input: { url: 'https://example.com' },
+        },
+      ],
+      usageEvents: [
+        {
+          provider: 'anthropic',
+          model: 'claude-opus-4-8',
+          inputTokens: 40,
+          outputTokens: 10,
+          totalTokens: 50,
+        },
+        {
+          provider: 'anthropic',
+          model: 'claude-opus-4-8',
+          inputTokens: 120,
+          outputTokens: 30,
+          totalTokens: 150,
+        },
+      ],
+    });
+    expect(input.userMessageId).toEqual(expect.any(String));
+    expect(input.startedAt).toBeInstanceOf(Date);
+    expect(input.completedAt).toBeInstanceOf(Date);
+    expect(input.completedAt.getTime()).toBeGreaterThanOrEqual(
+      input.startedAt.getTime(),
+    );
+  });
+
+  it('uses a minted outgoing id for a new session and the same resumed id on later turns', async () => {
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMockEcho({ id: 'assistant', type: 'ai', content: 'ok' });
+
+    const fresh = await backend.runTurn(
+      {
+        prompt: 'fresh',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: '' },
+      () => {},
+    );
+    const freshWriterId = appendTranscriptMock.mock.calls[0]?.[0].sessionId;
+    expect(freshWriterId).toBe(fresh.sessionRef?.session_id);
+
+    appendTranscriptMock.mockClear();
+    const resumed = await backend.runTurn(
+      {
+        prompt: 'resumed',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: 'stable-session-id' },
+      () => {},
+    );
+    expect(resumed.sessionRef?.session_id).toBe('stable-session-id');
+    expect(appendTranscriptMock.mock.calls[0]?.[0].sessionId).toBe(
+      'stable-session-id',
+    );
+  });
+
+  it('tees nested and parent usage events unchanged and preserves unreported token absence', async () => {
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMock.mockImplementation(
+      async (input: { messages: Array<{ id?: string }> }) => {
+        const nestedDeps = buildNestedDispatchToolMock.mock.calls[0]?.[0] as {
+          onUsage: (observation: {
+            message: unknown;
+            model: string;
+          }) => Promise<void>;
+        };
+        await nestedDeps.onUsage({
+          message: {
+            id: 'nested-ai',
+            type: 'ai',
+            content: 'nested',
+            usage_metadata: {
+              input_tokens: 7,
+              output_tokens: 3,
+              total_tokens: 10,
+            },
+          },
+          model: 'claude-haiku-4-5-20251001',
+        });
+        return {
+          messages: [
+            input.messages[0],
+            { id: 'parent-ai', type: 'ai', content: 'parent' },
+          ],
+        };
+      },
+    );
+    const events: RuntimeEvent[] = [];
+
+    const result = await backend.runTurn(
+      {
+        prompt: 'dispatch',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: 'usage-session' },
+      (event) => {
+        events.push(event);
+      },
+    );
+
+    expect(result.usage).toEqual({
+      inputTokens: 7,
+      outputTokens: 3,
+      totalTokens: 10,
+    });
+    const outwardUsage = events.filter((event) => event.type === 'usage');
+    expect(outwardUsage).toEqual([
+      {
+        type: 'usage',
+        sessionId: 'usage-session',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5-20251001',
+        inputTokens: 7,
+        outputTokens: 3,
+        totalTokens: 10,
+      },
+      {
+        type: 'usage',
+        sessionId: 'usage-session',
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        inputTokens: undefined,
+        outputTokens: undefined,
+        totalTokens: undefined,
+      },
+    ]);
+    const writerUsage = appendTranscriptMock.mock.calls[0]?.[0].usageEvents;
+    expect(writerUsage).toEqual([
+      {
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5-20251001',
+        inputTokens: 7,
+        outputTokens: 3,
+        totalTokens: 10,
+      },
+      {
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+      },
+    ]);
+    expect(writerUsage[1].inputTokens).toBeUndefined();
+    expect(writerUsage[1]).not.toHaveProperty('inputTokens');
+    expect(JSON.stringify(writerUsage)).not.toContain('provenance');
+  });
+
+  it.each([
+    [
+      'ok:false',
+      async () => ({ ok: false as const, error: new Error('disk full') }),
+    ],
+    [
+      'unexpected rejection',
+      async () => Promise.reject(new Error('mock reject')),
+    ],
+  ])(
+    'keeps the successful result and terminal events on writer %s',
+    async (_label, writer) => {
+      createAgentMock.mockReturnValue({ invoke: invokeMock });
+      invokeMockEcho({
+        id: 'assistant',
+        type: 'ai',
+        content: 'answer survives',
+        usage_metadata: {
+          input_tokens: 5,
+          output_tokens: 2,
+          total_tokens: 7,
+        },
+      });
+      appendTranscriptMock.mockImplementation(writer);
+      const consoleWarn = vi
+        .spyOn(console, 'warn')
+        .mockImplementation(() => {});
+      const events: RuntimeEvent[] = [];
+
+      const result = await backend.runTurn(
+        {
+          prompt: 'writer failure',
+          groupFolder: 'test-folder',
+          chatJid: 'test@g.us',
+          isControlGroup: false,
+        },
+        { backend: 'deus-native', session_id: 'failure-session' },
+        (event) => {
+          events.push(event);
+        },
+      );
+
+      expect(result).toEqual({
+        status: 'success',
+        result: 'answer survives',
+        sessionRef: {
+          backend: 'deus-native',
+          session_id: 'failure-session',
+        },
+        usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+      });
+      expect(events.at(-2)).toEqual({
+        type: 'output_text',
+        text: 'answer survives',
+      });
+      expect(events.at(-1)).toEqual({ type: 'turn_complete' });
+      if (_label === 'unexpected rejection') {
+        expect(consoleWarn).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
+
+  it('never writes when invoke fails before successful completion', async () => {
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMock.mockRejectedValue(new Error('provider failed'));
+
+    const result = await backend.runTurn(
+      {
+        prompt: 'will fail',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: 'error-session' },
+      () => {},
+    );
+
+    expect(result.status).toBe('error');
+    expect(appendTranscriptMock).not.toHaveBeenCalled();
+  });
+
+  it('never writes when turn_complete rejects after output_text succeeds', async () => {
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMockEcho({ id: 'assistant', type: 'ai', content: 'not completed' });
+    const events: RuntimeEvent[] = [];
+
+    const result = await backend.runTurn(
+      {
+        prompt: 'terminal failure',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: 'terminal-error-session' },
+      (event) => {
+        events.push(event);
+        if (event.type === 'turn_complete') {
+          throw new Error('terminal sink failed');
+        }
+      },
+    );
+
+    expect(result).toEqual({
+      status: 'error',
+      result: null,
+      error: 'terminal sink failed',
+    });
+    expect(events.at(-2)).toEqual({
+      type: 'output_text',
+      text: 'not completed',
+    });
+    expect(events.at(-1)).toEqual({ type: 'turn_complete' });
+    expect(appendTranscriptMock).not.toHaveBeenCalled();
   });
 });
 

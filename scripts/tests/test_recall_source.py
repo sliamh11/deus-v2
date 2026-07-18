@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
+_NATIVE_FIXTURE = _ROOT / "scripts/tests/fixtures/deus_native_transcript_v1.jsonl"
 
 
 def _load(name: str):
@@ -29,7 +30,7 @@ rs = _load("recall_source")
 def archived(tmp_path, monkeypatch):
     monkeypatch.setenv("DEUS_TRANSCRIPT_ARCHIVE_DIR", str(tmp_path / "archive"))
     transcript = tmp_path / "sess.jsonl"
-    transcript.write_text('{"type":"user"}\n{"type":"assistant"}\n', encoding="utf-8")
+    transcript.write_bytes(_NATIVE_FIXTURE.read_bytes())
     result = ta.archive(transcript)
     return transcript, result
 

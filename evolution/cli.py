@@ -747,6 +747,11 @@ def main() -> None:
     p_backfill = sub.add_parser("backfill", help="Backfill historical sessions into evolution loop")
     p_backfill.add_argument("--sessions-dir", type=Path,
                             help="Path to data/sessions (default: auto-detected)")
+    p_backfill.add_argument(
+        "--native-transcripts-dir",
+        type=Path,
+        help="Override the final Deus-native transcript directory",
+    )
     p_backfill.add_argument("--dry-run", action="store_true",
                             help="Preview pairs without writing to DB")
     p_backfill.add_argument("--limit", type=int, default=None,
@@ -835,6 +840,7 @@ def main() -> None:
             sessions_dir = Path(args.sessions_dir) if args.sessions_dir else SESSIONS_DIR
             run_backfill(
                 sessions_dir=sessions_dir,
+                native_transcripts_dir=args.native_transcripts_dir,
                 dry_run=args.dry_run,
                 limit=args.limit,
                 verbose=not args.quiet,
