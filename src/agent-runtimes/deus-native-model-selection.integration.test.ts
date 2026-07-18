@@ -177,9 +177,18 @@ afterEach(() => {
 
 describe('deus-native production model selection', () => {
   it('executes configured role model and never constructs the raw requested model', async () => {
+    // LIA-444: uses a synthetic role name ("some-analyst-role") rather than
+    // "researcher" — "researcher" is now a catalog-allowlisted role that
+    // gets Deus's own real prompt/contract substitution (see the dedicated
+    // catalog-mode tests in nested-dispatch.test.ts), so it's no longer a
+    // neutral stand-in for testing LIA-411's GENERIC model-selection
+    // precedence, which is what this test actually validates. A synthetic
+    // name with no real `.claude/agents/*.md` file exercises the exact
+    // same `effectiveModels.roles` override path, unaffected by the
+    // catalog branch.
     harness.mainModel = 'claude-opus-4-8';
     harness.dispatchPlan = [
-      { agentId: 'researcher', model: 'parent-raw-model-c' },
+      { agentId: 'some-analyst-role', model: 'parent-raw-model-c' },
     ];
     const events: RuntimeEvent[] = [];
     const result = await createDeusNativeRuntime(deps).runTurn(
@@ -192,7 +201,10 @@ describe('deus-native production model selection', () => {
           modelSelection: {
             main: { provider: 'anthropic', model: 'claude-opus-4-8' },
             roles: {
-              researcher: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+              'some-analyst-role': {
+                provider: 'anthropic',
+                model: 'claude-sonnet-4-6',
+              },
             },
           },
         },

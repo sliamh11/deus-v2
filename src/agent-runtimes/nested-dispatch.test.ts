@@ -19,6 +19,7 @@ import {
   type OutputContract,
 } from './nested-dispatch.js';
 import { buildNestedDispatchTool } from './nested-dispatch-tool.js';
+import type { LoadedAgentSpec } from './agent-spec-loader.js';
 
 const CONTRACT = z.object({
   summary: z.string().min(1),
@@ -407,8 +408,10 @@ describe('buildNestedDispatchTool model policy (LIA-429)', () => {
     const tool = buildNestedDispatchTool(
       { resolveModel },
       {
-        resolveEffectiveModelId: (agentId) =>
-          agentId === 'researcher' ? 'claude-sonnet-4-6' : 'claude-opus-4-8',
+        modelPolicy: {
+          resolveEffectiveModelId: (agentId: string) =>
+            agentId === 'researcher' ? 'claude-sonnet-4-6' : 'claude-opus-4-8',
+        },
       },
     );
     const result = await tool.invoke(input, {
@@ -420,6 +423,245 @@ describe('buildNestedDispatchTool model policy (LIA-429)', () => {
   });
 });
 
+describe('buildNestedDispatchTool catalog mode (LIA-444)', () => {
+  function fixtureSpec(
+    overrides: Partial<LoadedAgentSpec> = {},
+  ): LoadedAgentSpec {
+    return {
+      name: 'researcher',
+      description: 'Test researcher role for catalog-mode dispatch tests.',
+      model: 'sonnet',
+      systemPrompt:
+        'You are a meticulous Researcher. Follow the scope-decomposition ' +
+        'and evidence-grading methodology exactly.',
+      sourcePath: '/fake/.claude/agents/researcher.md',
+      frontmatter: { description: 'Test researcher role' } as never,
+      ...overrides,
+    };
+  }
+
+  // The dispatch tool's schema always requires model/outputContract (LIA-444
+  // design correction: ONE unified schema serves both the catalog path and
+  // the original generic path — see nested-dispatch-tool.ts's module doc
+  // comment for why two mutually-exclusive schemas regressed LIA-411's
+  // existing arbitrary-role dispatches). These placeholder values are
+  // supplied only to satisfy LangChain's own schema validation at
+  // `.invoke()` time; the catalog branch never reads them.
+  const IGNORED_PLACEHOLDER_FIELDS = {
+    model: 'placeholder-ignored-model',
+    outputContract: {
+      name: 'placeholder',
+      schema: { type: 'object', properties: {}, additionalProperties: true },
+    },
+  };
+
+  it('resolves a catalog role to its real system prompt, assigned task, and response envelope', async () => {
+    const resolveModel = vi.fn(() =>
+      modelReturning('{"content":"the researcher answer"}'),
+    );
+    const agentSpecs = new Map([['researcher', fixtureSpec()]]);
+    const tool = buildNestedDispatchTool(
+      { resolveModel },
+      {
+        modelPolicy: { resolveEffectiveModelId: () => 'claude-sonnet-4-6' },
+        agentSpecs,
+      },
+    );
+    const result = await tool.invoke(
+      {
+        agentId: 'researcher',
+        prompt: 'Compare X and Y.',
+        ...IGNORED_PLACEHOLDER_FIELDS,
+      },
+      { toolCallId: 'call-catalog' } as never,
+    );
+    expect(resolveModel).toHaveBeenCalledWith('claude-sonnet-4-6');
+    expect(String(result)).toContain('the researcher answer');
+  });
+
+  it('validates the child output against the loader-owned {content} contract, not the placeholder outputContract argument', async () => {
+    const resolveModel = vi.fn(() => modelReturning('{"wrongKey":"nope"}'));
+    const agentSpecs = new Map([['researcher', fixtureSpec()]]);
+    const tool = buildNestedDispatchTool(
+      { resolveModel },
+      {
+        modelPolicy: { resolveEffectiveModelId: () => 'claude-sonnet-4-6' },
+        agentSpecs,
+      },
+    );
+    const result = await tool.invoke(
+      {
+        agentId: 'researcher',
+        prompt: 'Compare X and Y.',
+        ...IGNORED_PLACEHOLDER_FIELDS,
+      },
+      { toolCallId: 'call-bad-contract' } as never,
+    );
+    expect(result).toBeInstanceOf(ToolMessage);
+    expect((result as ToolMessage).status).toBe('error');
+    expect(String((result as ToolMessage).content)).toContain(
+      'subagent_output_contract_failed',
+    );
+  });
+
+  it('lets the configured role-model override win over the checked-in frontmatter model AND the placeholder model argument', async () => {
+    const resolveModel = vi.fn(() => modelReturning('{"content":"ok"}'));
+    const agentSpecs = new Map([
+      ['researcher', fixtureSpec({ model: 'checked-in-alias' })],
+    ]);
+    const tool = buildNestedDispatchTool(
+      { resolveModel },
+      {
+        modelPolicy: { resolveEffectiveModelId: () => 'claude-opus-4-8' },
+        agentSpecs,
+      },
+    );
+    await tool.invoke(
+      {
+        agentId: 'researcher',
+        prompt: 'Compare X and Y.',
+        ...IGNORED_PLACEHOLDER_FIELDS,
+      },
+      { toolCallId: 'call-override' } as never,
+    );
+    expect(resolveModel).toHaveBeenCalledWith('claude-opus-4-8');
+    expect(resolveModel).not.toHaveBeenCalledWith('placeholder-ignored-model');
+  });
+
+  it('an agentId not in the catalog falls through to the original generic path (LIA-411 arbitrary-role dispatch), not a rejection', async () => {
+    // This is the corrected LIA-444 behavior: a role absent from the
+    // caller-supplied catalog (whether truly unknown or an allowlist
+    // exclusion like "code-reviewer") is NOT rejected outright — it falls
+    // through to the pre-existing generic dispatch path unchanged, exactly
+    // as it behaved before LIA-444. Only a catalog-MATCHED role gets the
+    // real checked-in prompt/model/contract substitution.
+    const resolveModel = vi.fn(() =>
+      modelReturning('{"summary":"generic path ran"}'),
+    );
+    const agentSpecs = new Map([['researcher', fixtureSpec()]]);
+    const tool = buildNestedDispatchTool(
+      { resolveModel },
+      {
+        modelPolicy: {
+          resolveEffectiveModelId: (agentId) =>
+            agentId === 'plan-reviewer'
+              ? 'claude-opus-4-8'
+              : 'claude-sonnet-4-6',
+        },
+        agentSpecs,
+      },
+    );
+    const result = await tool.invoke(
+      {
+        agentId: 'plan-reviewer',
+        prompt: 'Review this plan.',
+        model: 'parent-guessed-model',
+        outputContract: {
+          name: 'verdict',
+          schema: {
+            type: 'object',
+            properties: { summary: { type: 'string' } },
+            required: ['summary'],
+            additionalProperties: false,
+          },
+        },
+      },
+      { toolCallId: 'call-fallthrough' } as never,
+    );
+    // Resolved via the generic path's modelPolicy call, not the placeholder
+    // model, and definitely not rejected as "unknown role".
+    expect(resolveModel).toHaveBeenCalledWith('claude-opus-4-8');
+    expect(String(result)).toContain('generic path ran');
+    expect(String(result)).not.toContain(
+      'Unknown or unavailable subagent role',
+    );
+  });
+
+  it('exposes a sorted, bounded catalog in the tool schema description, including researcher', () => {
+    const agentSpecs = new Map([
+      ['researcher', fixtureSpec()],
+      [
+        'zeta-role',
+        fixtureSpec({ name: 'zeta-role', description: 'A second test role.' }),
+      ],
+    ]);
+    const tool = buildNestedDispatchTool(
+      { resolveModel: () => modelReturning('{"content":"ok"}') },
+      { agentSpecs },
+    );
+    const schema = (
+      tool as unknown as {
+        schema: { properties: { agentId: { description: string } } };
+      }
+    ).schema;
+    const description = schema.properties.agentId.description;
+    expect(description).toContain('researcher');
+    expect(description).toContain('zeta-role');
+    // Sorted: "researcher" must appear before "zeta-role".
+    expect(description.indexOf('researcher')).toBeLessThan(
+      description.indexOf('zeta-role'),
+    );
+  });
+
+  it('rejects a whitespace-only prompt for a catalog-matched role before constructing the dispatch request', async () => {
+    const resolveModel = vi.fn(() => modelReturning('{"content":"ok"}'));
+    const agentSpecs = new Map([['researcher', fixtureSpec()]]);
+    const tool = buildNestedDispatchTool(
+      { resolveModel },
+      {
+        modelPolicy: { resolveEffectiveModelId: () => 'claude-sonnet-4-6' },
+        agentSpecs,
+      },
+    );
+    const result = await tool.invoke(
+      {
+        agentId: 'researcher',
+        prompt: '   ',
+        ...IGNORED_PLACEHOLDER_FIELDS,
+      },
+      { toolCallId: 'call-whitespace' } as never,
+    );
+    expect(resolveModel).not.toHaveBeenCalled();
+    expect((result as ToolMessage).status).toBe('error');
+    expect(String((result as ToolMessage).content)).toContain(
+      'missing a non-empty',
+    );
+  });
+
+  it('an empty catalog does not throw during tool construction, and every agentId falls through to the generic path', async () => {
+    const resolveModel = vi.fn(() =>
+      modelReturning('{"summary":"generic path ran"}'),
+    );
+    const agentSpecs = new Map<string, LoadedAgentSpec>();
+    expect(() =>
+      buildNestedDispatchTool({ resolveModel }, { agentSpecs }),
+    ).not.toThrow();
+    const tool = buildNestedDispatchTool({ resolveModel }, { agentSpecs });
+    const result = await tool.invoke(
+      {
+        agentId: 'researcher',
+        prompt: 'Compare X and Y.',
+        model: 'parent-guessed-model',
+        outputContract: {
+          name: 'answer',
+          schema: {
+            type: 'object',
+            properties: { summary: { type: 'string' } },
+            required: ['summary'],
+            additionalProperties: false,
+          },
+        },
+      },
+      { toolCallId: 'call-empty-catalog' } as never,
+    );
+    // Empty catalog means NOTHING can ever match, so every dispatch falls
+    // through to the generic path — resolveModel IS called (unlike a
+    // catalog-mode rejection), using the parent-supplied model since no
+    // modelPolicy was supplied here.
+    expect(resolveModel).toHaveBeenCalledWith('parent-guessed-model');
+    expect(String(result)).toContain('generic path ran');
+  });
+});
 describe('createNestedDispatcher — fresh per-dispatch tool/middleware factories', () => {
   it('calls buildChildTools and buildChildMiddleware fresh on every dispatch, and the child receives no dispatch tool or checkpointer', async () => {
     const buildChildTools = vi.fn(() => []);
