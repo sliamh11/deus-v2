@@ -24,6 +24,7 @@ const {
   buildMiddlewareStackSpy,
   buildNestedDispatchToolMock,
   appendTranscriptMock,
+  loadAgentSpecsSpy,
 } = vi.hoisted(() => ({
   createAgentMock: vi.fn(),
   invokeMock: vi.fn(),
@@ -40,10 +41,17 @@ const {
   // call `buildChildMiddleware()` directly and inspect the REAL wardens
   // middleware it returns, proving `wardenCwd` reaches nested-dispatch
   // children too.
-  buildNestedDispatchToolMock: vi.fn((_deps?: unknown) => ({
+  buildNestedDispatchToolMock: vi.fn((_deps?: unknown, _options?: unknown) => ({
     name: 'dispatch_nested_agent',
   })),
   appendTranscriptMock: vi.fn(),
+  // LIA-444: a pass-through SPY over the REAL loadAgentSpecs (assigned in
+  // the module mock below) — every test gets the genuine `.claude/agents/`
+  // read (same convention as `buildMiddlewareStackSpy` and the unmocked
+  // `warden-role-models.js`), except the one dedicated resilience test that
+  // overrides it with `.mockImplementationOnce(() => { throw ... })` to
+  // prove a malformed unrelated role spec doesn't crash the constructor.
+  loadAgentSpecsSpy: vi.fn(),
 }));
 
 vi.mock('langchain', async (importOriginal) => {
@@ -145,6 +153,17 @@ vi.mock('node:child_process', async () => {
 vi.mock('./nested-dispatch-tool.js', () => ({
   buildNestedDispatchTool: buildNestedDispatchToolMock,
 }));
+
+// LIA-444: keep the real module (genuine .claude/agents/*.md reads, same
+// convention as buildMiddlewareStackSpy above) and swap ONLY loadAgentSpecs
+// for a delegating spy, so the one resilience test can override it for a
+// single call without affecting any other test in this file.
+vi.mock('./agent-spec-loader.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('./agent-spec-loader.js')>();
+  loadAgentSpecsSpy.mockImplementation(actual.loadAgentSpecs);
+  return { ...actual, loadAgentSpecs: loadAgentSpecsSpy };
+});
 
 vi.mock('./transcript-store.js', () => ({
   appendDeusNativeTranscriptTurn: appendTranscriptMock,
@@ -983,6 +1002,35 @@ describe('DeusNativeBackend — permission profile wiring (B7/LIA-407)', () => {
     );
     expect(createAgentMock).not.toHaveBeenCalled();
   });
+
+  it('LIA-444 regression: read-only profile denies dispatch_nested_agent before any nested handler/model resolver is reached — fail-closed default deny, since the tool is not in either the allow or deny list', async () => {
+    const result = await runTurnWith({ permissionProfile: 'read-only' });
+    expect(result.status).toBe('success');
+
+    const permissions = capturedPermissionsMiddleware();
+    const nestedHandler = vi.fn(
+      () => new ToolMessage({ content: 'ran', tool_call_id: 'call_wiring_1' }),
+    );
+    const denial = (await invokeWrapToolCall(
+      permissions,
+      makeToolCallRequest('dispatch_nested_agent', {
+        agentId: 'researcher',
+        prompt: 'do something',
+      }),
+      nestedHandler,
+    )) as ToolMessage;
+    // The handler stands in for the real nested-dispatch tool (which itself
+    // resolves the model and role); it must never be invoked when the
+    // permissions layer denies the call first.
+    expect(nestedHandler).not.toHaveBeenCalled();
+    expect(denial).toBeInstanceOf(ToolMessage);
+    expect(denial.status).toBe('error');
+    const content =
+      typeof denial.content === 'string'
+        ? denial.content
+        : JSON.stringify(denial.content);
+    expect(content).toContain('permission_denied');
+  });
 });
 
 // ── D1 (LIA-415): memory retrieval wiring at the PRODUCTION call site ─────
@@ -1327,5 +1375,82 @@ describe('DeusNativeBackend — wardens cwd wiring (C1/LIA-409)', () => {
     const event = JSON.parse(capturedStdin) as { cwd: string };
     expect(event.cwd).toBe(worktreePath);
     expect(event.cwd).not.toBe('/definitely/not/the/worktree/path');
+  });
+});
+
+describe('DeusNativeRuntime — SubAgent chat-dispatch role catalog (LIA-444)', () => {
+  beforeEach(() => {
+    createAgentMock.mockReset();
+    invokeMock.mockReset();
+    detectAuthModeMock.mockReturnValue('api-key');
+    getOrCreateGroupTokenMock.mockReset();
+    getOrCreateGroupTokenMock.mockReturnValue('fake-proxy-token');
+    buildNestedDispatchToolMock.mockClear();
+    loadAgentSpecsSpy.mockClear();
+  });
+
+  it('production-boundary regression: the tool builder receives an agentSpecs map with EXACTLY the allowlisted keys — "researcher" present, "code-reviewer"/"plan-reviewer" absent — never the raw, unfiltered loadAgentSpecs() catalog', async () => {
+    const backend = createDeusNativeRuntime(stubDeps);
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMockEcho({ content: 'ok' });
+
+    const result = await backend.runTurn(
+      {
+        prompt: 'test',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: '' },
+      () => {},
+    );
+    expect(result.status).toBe('success');
+
+    expect(buildNestedDispatchToolMock).toHaveBeenCalledTimes(1);
+    const options = buildNestedDispatchToolMock.mock.calls[0]?.[1] as {
+      agentSpecs?: ReadonlyMap<string, unknown>;
+    };
+    expect(options.agentSpecs).toBeDefined();
+    const keys = [...(options.agentSpecs?.keys() ?? [])];
+    // This is the actual production-boundary assertion (round-2 review
+    // finding): a nested-dispatch-tool-level test alone cannot prove the
+    // BACKEND passes the filtered map rather than the raw 28-role one.
+    expect(keys).toEqual(['researcher']);
+    expect(keys).not.toContain('code-reviewer');
+    expect(keys).not.toContain('plan-reviewer');
+    expect(keys).not.toContain('ai-eng-warden');
+  });
+
+  it('startup resilience: a malformed unrelated .claude/agents/*.md spec must not crash DeusNativeRuntime construction — falls back to an empty, safe catalog instead', async () => {
+    loadAgentSpecsSpy.mockImplementationOnce(() => {
+      throw new Error(
+        'Invalid agent specifications:\n- unrelated-warden.md: frontmatter.description: required',
+      );
+    });
+
+    // Construction itself must not throw.
+    const backend = createDeusNativeRuntime(stubDeps);
+    expect(backend).toBeDefined();
+
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMockEcho({ content: 'ok' });
+    const result = await backend.runTurn(
+      {
+        prompt: 'test',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: '' },
+      () => {},
+    );
+    // The turn itself still succeeds — the resilience fallback is scoped
+    // entirely to the dispatch catalog, not the whole runtime.
+    expect(result.status).toBe('success');
+
+    const options = buildNestedDispatchToolMock.mock.calls[0]?.[1] as {
+      agentSpecs?: ReadonlyMap<string, unknown>;
+    };
+    expect(options.agentSpecs?.size).toBe(0);
   });
 });

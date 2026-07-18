@@ -77,6 +77,7 @@ import { createAgent, type AgentMiddleware } from 'langchain';
 import { HumanMessage } from '@langchain/core/messages';
 
 import { FatalError } from '../errors/index.js';
+import { logger } from '../logger.js';
 import type {
   AgentRuntime,
   RuntimeCapabilities,
@@ -104,6 +105,7 @@ import { getCheckpointer } from './checkpointer.js';
 import { buildContextCompactionMiddleware } from './context-compaction.js';
 import { createTurnUsageCollector } from './deus-native-usage.js';
 import { buildNestedDispatchTool } from './nested-dispatch-tool.js';
+import { loadAgentSpecs, type LoadedAgentSpec } from './agent-spec-loader.js';
 import {
   buildNativeModelClient,
   parseEffectiveNativeModelConfig,
@@ -152,6 +154,54 @@ const DEUS_NATIVE_CAPABILITIES: RuntimeCapabilities = {
   tool_streaming: false,
 };
 
+/**
+ * Production allowlist (LIA-444) of `.claude/agents/*.md` role names that
+ * `dispatch_nested_agent` may expose to an end chat user as a delegatable
+ * SubAgent role. `loadAgentSpecs()` loads ALL 28+ direct role specs today —
+ * including internal pipeline/gate agents (`code-reviewer`, `plan-reviewer`,
+ * `ai-eng-warden`, `threat-modeler`, `verification-gate`, etc.) whose prompts
+ * assume a diff/plan review context, not arbitrary chat delegation. This
+ * allowlist is the ONLY thing that stands between that full internal roster
+ * and the chat-visible tool catalog — `loadFilteredAgentSpecs()` below never
+ * returns an unfiltered map to any caller. Adding a new chat-dispatchable
+ * role is a deliberate edit to this Set, not an automatic consequence of
+ * adding a new `.claude/agents/*.md` file.
+ */
+const PRODUCTION_CHAT_DISPATCHABLE_ROLES: ReadonlySet<string> = new Set([
+  'researcher',
+]);
+
+/**
+ * Loads the production nested-dispatch role catalog, filtered to
+ * `PRODUCTION_CHAT_DISPATCHABLE_ROLES`. `loadAgentSpecs()` throws
+ * `FatalError` if ANY direct `.claude/agents/*.md` spec is malformed — even
+ * one wholly unrelated to chat dispatch (e.g. a typo in an unrelated
+ * warden's frontmatter) — so a single bad checked-in file must not crash
+ * `DeusNativeRuntime`'s constructor. On failure this logs and falls back to
+ * an empty catalog: chat dispatch becomes unavailable (every `agentId` is
+ * rejected as unknown) rather than the whole runtime failing to construct.
+ */
+function loadFilteredAgentSpecs(): ReadonlyMap<string, LoadedAgentSpec> {
+  let specs: Map<string, LoadedAgentSpec>;
+  try {
+    specs = loadAgentSpecs();
+  } catch (err) {
+    logger.error(
+      { err },
+      'DeusNativeRuntime: loadAgentSpecs() failed — falling back to an ' +
+        'empty nested-dispatch role catalog (chat SubAgent dispatch ' +
+        'unavailable until the malformed .claude/agents/*.md spec is fixed)',
+    );
+    return new Map();
+  }
+  const filtered = new Map<string, LoadedAgentSpec>();
+  for (const name of PRODUCTION_CHAT_DISPATCHABLE_ROLES) {
+    const spec = specs.get(name);
+    if (spec !== undefined) filtered.set(name, spec);
+  }
+  return filtered;
+}
+
 /** Web-fetch host allowlist. Empty by default: opt-in via env, deny-by-default. */
 function resolveAllowedWebFetchHosts(): string[] {
   const raw = process.env.DEUS_NATIVE_WEB_FETCH_ALLOWED_HOSTS;
@@ -185,8 +235,15 @@ export class DeusNativeRuntime implements AgentRuntime {
   // re-invoking `loadWardenRoleModels` itself.
   private readonly wardenRoleModels: Map<string, string>;
 
+  // LIA-444: loaded ONCE at construction, same rationale as
+  // `wardenRoleModels` above — already filtered to
+  // `PRODUCTION_CHAT_DISPATCHABLE_ROLES` by `loadFilteredAgentSpecs()`, so
+  // this field NEVER holds the raw, unfiltered `loadAgentSpecs()` result.
+  private readonly agentSpecs: ReadonlyMap<string, LoadedAgentSpec>;
+
   constructor(private deps: ContainerRuntimeDeps) {
     this.wardenRoleModels = loadWardenRoleModels();
+    this.agentSpecs = loadFilteredAgentSpecs();
   }
 
   name(): 'deus-native' {
@@ -472,31 +529,40 @@ export class DeusNativeRuntime implements AgentRuntime {
           },
         },
         {
-          // LIA-411: explicit user role config (`effectiveModels.roles`,
-          // set via `deus chat model set --role`) always wins first — it
-          // is checked BEFORE the checked-in frontmatter tier, matching
-          // `resolveEffectiveRoleModel`'s own exact-role-first precedence.
-          // Only when the user has NOT configured this exact role is the
-          // dispatched agent's `.claude/agents/<name>.md` `model:`
-          // frontmatter (loaded once at construction, see
-          // `this.wardenRoleModels` above) consulted; a miss there (no
-          // frontmatter entry, or an alias `resolveWardenModelAlias` can't
-          // map) falls through to the same configured main/default the
-          // pre-LIA-411 behavior used. Never throws.
-          resolveEffectiveModelId: (agentId, _requestedModelId) => {
-            if (Object.hasOwn(effectiveModels.roles ?? {}, agentId)) {
-              return resolveEffectiveRoleModel(effectiveModels, agentId).model;
-            }
-            const wardenModel = this.wardenRoleModels.get(agentId);
-            const resolved =
-              wardenModel !== undefined
-                ? resolveWardenModelAlias(wardenModel)
-                : undefined;
-            return (
-              resolved ??
-              resolveEffectiveRoleModel(effectiveModels, agentId).model
-            );
+          modelPolicy: {
+            // LIA-411: explicit user role config (`effectiveModels.roles`,
+            // set via `deus chat model set --role`) always wins first — it
+            // is checked BEFORE the checked-in frontmatter tier, matching
+            // `resolveEffectiveRoleModel`'s own exact-role-first precedence.
+            // Only when the user has NOT configured this exact role is the
+            // dispatched agent's `.claude/agents/<name>.md` `model:`
+            // frontmatter (loaded once at construction, see
+            // `this.wardenRoleModels` above) consulted; a miss there (no
+            // frontmatter entry, or an alias `resolveWardenModelAlias` can't
+            // map) falls through to the same configured main/default the
+            // pre-LIA-411 behavior used. Never throws.
+            resolveEffectiveModelId: (agentId, _requestedModelId) => {
+              if (Object.hasOwn(effectiveModels.roles ?? {}, agentId)) {
+                return resolveEffectiveRoleModel(effectiveModels, agentId)
+                  .model;
+              }
+              const wardenModel = this.wardenRoleModels.get(agentId);
+              const resolved =
+                wardenModel !== undefined
+                  ? resolveWardenModelAlias(wardenModel)
+                  : undefined;
+              return (
+                resolved ??
+                resolveEffectiveRoleModel(effectiveModels, agentId).model
+              );
+            },
           },
+          // LIA-444: the production, chat-reachable dispatch catalog — see
+          // `PRODUCTION_CHAT_DISPATCHABLE_ROLES`/`loadFilteredAgentSpecs()`
+          // above. Already allowlist-filtered; `buildNestedDispatchTool`
+          // exposes every key it's given, so this is the ONLY thing gating
+          // which roles a chat user can dispatch.
+          agentSpecs: this.agentSpecs,
         },
       );
 
