@@ -14,40 +14,15 @@ CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
 echo "Building Deus agent container image..."
 echo "Image: ${IMAGE_NAME}:${TAG}"
 
-# Stage skill agent files for the container build.
-# Each skill with an agent.ts gets its own directory under container/skill-agents/.
-# This staging step runs on every build so the container always has current skills.
+# Stage skill files for the container build: agent.ts (executable MCP-tool
+# skills) and SKILL.md instruction packs (LIA-426/F4 follow-up — baked into
+# /home/node/.claude/skills/ by the Dockerfile so skills are discoverable in
+# the default no-project chat case, not just when a project mounts its own
+# .claude/skills/). This staging step runs on every build so the container
+# always has current skills. See container/stage-skills.sh for the full
+# staging contract (git-tracked-only, .local-skills exclusion).
 STAGING_DIR="container/skill-agents"
-rm -rf "$STAGING_DIR"
-mkdir -p "$STAGING_DIR"
-
-if [ -d ".claude/skills" ]; then
-  # Read local-only skills from .local-skills (one skill name per line)
-  # Falls back to .git/info/exclude for backwards compatibility
-  LOCAL_ONLY_SKILLS=""
-  if [ -f ".local-skills" ]; then
-    LOCAL_ONLY_SKILLS=$(grep -v '^#' .local-skills 2>/dev/null | grep -v '^$' || true)
-  elif [ -f ".git/info/exclude" ]; then
-    LOCAL_ONLY_SKILLS=$(grep -oP '\.claude/skills/\K[^/]+' .git/info/exclude 2>/dev/null || true)
-  fi
-
-  for skill_dir in .claude/skills/*/; do
-    [ -d "$skill_dir" ] || continue
-    skill_name=$(basename "$skill_dir")
-
-    # Skip local-only skills (not committed, would break container build)
-    if echo "$LOCAL_ONLY_SKILLS" | grep -qx "$skill_name" 2>/dev/null; then
-      echo "  Skipped local-only skill: $skill_name"
-      continue
-    fi
-
-    if [ -f "$skill_dir/agent.ts" ]; then
-      mkdir -p "$STAGING_DIR/$skill_name"
-      cp "$skill_dir/agent.ts" "$STAGING_DIR/$skill_name/"
-      echo "  Staged skill agent: $skill_name"
-    fi
-  done
-fi
+"$SCRIPT_DIR/stage-skills.sh" ".claude/skills" "$STAGING_DIR"
 
 # Build from project root so Dockerfile can access staged files
 ${CONTAINER_RUNTIME} build -t "${IMAGE_NAME}:${TAG}" -f container/Dockerfile .

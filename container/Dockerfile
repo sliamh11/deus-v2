@@ -46,17 +46,34 @@ RUN npm install
 COPY container/agent-runner/ ./
 
 # Copy skill agent-side definitions (community templates + local skills)
-# The build script stages skill agent files into container/skill-agents/
-# before building. This directory may be empty if no skills have agent.ts.
+# and SKILL.md instruction packs. The build script (container/stage-skills.sh)
+# stages every git-tracked, non-excluded skill directory into
+# container/skill-agents/ before building — this directory may be empty if
+# staging found nothing to include.
+#
+# Two outputs per staged skill, consumed here:
+#   - agent.ts -> /app/src/skills/<name>/ (executable MCP-tool mechanism,
+#     skill-mcp-registry.ts's loadSkillMcpTools()).
+#   - SKILL.md/skill.md + companion files -> /home/node/.claude/skills/<name>/
+#     (instruction-pack mechanism, skill-context-loader.ts's
+#     discoverSkillRoots() personal root — LIA-426/F4 follow-up: this is what
+#     makes skills discoverable in the default no-project chat case, since
+#     that root was previously never populated).
 COPY container/skill-agents/ /tmp/skill-agents/
-RUN mkdir -p /app/src/skills && \
+RUN mkdir -p /app/src/skills /home/node/.claude/skills && \
     for dir in /tmp/skill-agents/*/; do \
       [ -d "$dir" ] || continue; \
       name=$(basename "$dir"); \
       if [ -f "$dir/agent.ts" ]; then \
         mkdir -p "/app/src/skills/$name"; \
         cp "$dir/agent.ts" "/app/src/skills/$name/"; \
-        echo "[skills] Copied: $name"; \
+        echo "[skills] Copied agent tools: $name"; \
+      fi; \
+      if [ -f "$dir/SKILL.md" ] || [ -f "$dir/skill.md" ]; then \
+        mkdir -p "/home/node/.claude/skills/$name" && \
+        cp -r "$dir." "/home/node/.claude/skills/$name/" && \
+        rm -f "/home/node/.claude/skills/$name/agent.ts" && \
+        echo "[skills] Baked instruction pack: $name"; \
       fi; \
     done && \
     rm -rf /tmp/skill-agents
@@ -76,7 +93,7 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 RUN printf '#!/bin/bash\nset -e\ncd /app && ./node_modules/.bin/tsc --outDir /tmp/dist 1>&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
-RUN chown -R node:node /workspace && chmod 777 /home/node
+RUN chown -R node:node /workspace /home/node/.claude && chmod 777 /home/node
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node
