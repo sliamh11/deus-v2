@@ -48,6 +48,7 @@ export const EVENT_LABELS: Record<string, string> = {
   agent_completed: 'Agent completed',
   agent_failed: 'Agent failed',
   agent_timeout: 'Container timed out (infra)',
+  agent_capability_blocked: 'Runtime capability blocked',
   pr_created: 'PR created',
   automerge_pending: 'Auto-merge pending',
   automerge_done: 'Auto-merged → Done',
