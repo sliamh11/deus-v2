@@ -817,6 +817,8 @@ export function formatWhyReason(issue: {
       return 'State changed';
     case 'gate_blocked':
       return 'Blocked';
+    case 'agent_capability_blocked':
+      return 'Capability blocked';
     default:
       break;
   }

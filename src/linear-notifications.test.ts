@@ -49,4 +49,17 @@ describe('buildPipelineCommentBody', () => {
     const body = buildPipelineCommentBody(events);
     expect(body).toContain('custom_event');
   });
+
+  it('renders the LIA-422/E3 capability-blocked event with its friendly label', () => {
+    const events = [
+      {
+        event_type: 'agent_capability_blocked',
+        detail: 'workspace_mutation_unavailable, commit_execution_unavailable',
+        created_at: '2026-07-18T00:00:00.000Z',
+      },
+    ];
+    const body = buildPipelineCommentBody(events);
+    expect(body).toContain('Runtime capability blocked');
+    expect(body).toContain('workspace_mutation_unavailable');
+  });
 });

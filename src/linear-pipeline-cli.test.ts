@@ -211,6 +211,14 @@ describe('formatWhyReason', () => {
       formatWhyReason(mkIssue('Some State', [{ event_type: 'unknown_event' }])),
     ).toBe('In progress');
   });
+
+  it('returns Capability blocked for agent_capability_blocked event (LIA-422/E3)', () => {
+    expect(
+      formatWhyReason(
+        mkIssue('Backlog', [{ event_type: 'agent_capability_blocked' }]),
+      ),
+    ).toBe('Capability blocked');
+  });
 });
 
 // ── renderThroughputFooter ────────────────────────────────────────────────────

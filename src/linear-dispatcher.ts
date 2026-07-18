@@ -46,6 +46,11 @@ import type {
 import type { RuntimeRegistry } from './agent-runtimes/registry.js';
 import type { GroupQueue } from './group-queue.js';
 import type { RegisteredGroup } from './types.js';
+import {
+  assessDeusNativeCapabilityReadiness,
+  type PipelineReadiness,
+} from './agent-runtimes/deus-native-pipeline-readiness.js';
+import { resolveAgentRuntime } from './agent-runtimes/resolve.js';
 import type { EventBus } from './events/bus.js';
 
 const execFileAsync = promisify(execFile);
@@ -148,6 +153,7 @@ export interface GateLabels {
   bouncedStale?: string;
   bouncedNoContext?: string;
   conflict?: string;
+  capabilityBlocked?: string;
   effort: Record<number, string>;
   complexity: Record<number, string>;
 }
@@ -1139,6 +1145,112 @@ async function triageIssue(
   return 'dispatch';
 }
 
+/** Shared narrowing for a label-node id check (the SDK's `IssueLabel` node
+ *  type here doesn't expose `id` directly at this call shape). Centralizes
+ *  the one inline `as` cast this file previously duplicated at two call
+ *  sites (bounced:unscoped detection, capability-blocked label detection). */
+function nodesHaveLabelId(nodes: unknown[], labelId: string): boolean {
+  return nodes.some((l) => (l as { id?: string }).id === labelId);
+}
+
+interface LinearDispatchReadiness {
+  backendName: string;
+  readiness: PipelineReadiness;
+}
+
+/**
+ * Resolves the pipeline's dispatch backend NAME and, only when it is
+ * `deus-native`, assesses whether that runtime's tool surface actually
+ * supports Linear pipeline coding work (LIA-422/E3). Container/Claude
+ * backends are never gated here — this guard exists solely for
+ * `deus-native`'s SAFE_TOOL_NAMES-restricted tool surface; every other
+ * backend keeps its existing, unaffected dispatch behavior.
+ *
+ * Deliberately uses the pure `resolveAgentRuntime()` name resolver, NOT
+ * `ctx.deps.registry.resolve(...)` (which `executeAgentRun` uses once an
+ * issue is actually queued): `RuntimeRegistry.get()` throws for an
+ * unregistered backend name, and this check runs synchronously for EVERY
+ * candidate issue on every poll — a much hotter, earlier path than
+ * `executeAgentRun`'s call, which only fires inside an already-enqueued
+ * task. Requiring every dispatch-group's default backend to be registered
+ * just to evaluate readiness (rather than only when actually dispatching)
+ * would be a needless new failure mode for configurations that never
+ * select `deus-native`.
+ */
+function resolveLinearDispatchReadiness(
+  ctx: LinearContext,
+): LinearDispatchReadiness {
+  const backendName = resolveAgentRuntime(ctx.dispatchGroup);
+  if (backendName !== 'deus-native') {
+    return { backendName, readiness: { ready: true, failures: [] } };
+  }
+  return {
+    backendName,
+    readiness: assessDeusNativeCapabilityReadiness(),
+  };
+}
+
+/**
+ * Refuses a Linear pipeline issue whose resolved backend cannot actually
+ * satisfy it (LIA-422/E3 AC5) — parks it for human attention instead of
+ * silently running a no-op agent turn that could misreport success. Mirrors
+ * the existing `agent_timeout` parking precedent (see the infra-timeout
+ * branch above): Manual Review Required (falling back to Backlog), a
+ * distinct non-failure event, and explicit avoidance of `agent_failed`/
+ * circuit-breaker accounting. Caller must not have created a worktree or
+ * enqueued a task for this issue.
+ */
+async function refuseCapabilityBlockedIssue(
+  ctx: LinearContext,
+  issue: { id: string; identifier: string },
+  backendName: string,
+  readiness: PipelineReadiness,
+): Promise<void> {
+  const manualReviewState = ctx.stateByName.get('Manual Review Required');
+  const parkState = manualReviewState ?? ctx.stateByName.get('Backlog')!;
+  await ctx.client.updateIssue(issue.id, { stateId: parkState.id });
+
+  const capabilityBlockedId = ctx.gateLabels.capabilityBlocked;
+  if (capabilityBlockedId) {
+    await ctx.client
+      .updateIssue(issue.id, { addedLabelIds: [capabilityBlockedId] })
+      .catch((err) =>
+        logger.warn(
+          { issueId: issue.id, err },
+          'linear-dispatcher: failed to apply runtime:capability-blocked label',
+        ),
+      );
+  }
+
+  const codes = readiness.failures.join(', ');
+  await ctx.client.createComment({
+    issueId: issue.id,
+    body:
+      `**Runtime capability blocked** — the resolved backend (\`${backendName}\`) ` +
+      `cannot satisfy this issue's requirements today.\n\n` +
+      `Missing capabilities: \`${codes}\`\n\n` +
+      `This is **not** counted as an agent failure. Moved to **${parkState.name}** ` +
+      `for inspection.\n\n` +
+      `---\n*To retry: select a different backend, or move back to **Ready for Agent** once the missing capability lands.*`,
+  });
+
+  fireAndForget(
+    notifyPipelineStep(
+      ctx,
+      issue.id,
+      issue.identifier,
+      'agent_capability_blocked',
+      codes,
+    ),
+    { name: 'linear-dispatcher.notify-pipeline' },
+  );
+
+  logger.warn(
+    { issueId: issue.id, backendName, failures: readiness.failures },
+    'linear-dispatcher: backend capability blocked — parked in Manual Review Required, not counted as agent failure',
+  );
+}
+
 async function ensureIssueWorktree(
   identifier: string,
 ): Promise<{ worktreePath: string; branchName: string } | null> {
@@ -1530,8 +1642,7 @@ async function pollLinear(): Promise<void> {
       // Linear UI. Guard against re-applying every poll cycle.
       const bouncedId = ctx.gateLabels.bouncedUnscoped;
       const alreadyBounced =
-        bouncedId !== undefined &&
-        labels.nodes.some((l) => (l as { id?: string }).id === bouncedId);
+        bouncedId !== undefined && nodesHaveLabelId(labels.nodes, bouncedId);
       if (bouncedId && !alreadyBounced) {
         ctx.client
           .updateIssue(issue.id, {
@@ -1572,6 +1683,51 @@ async function pollLinear(): Promise<void> {
       continue;
     }
 
+    // LIA-422/E3: refuse before consuming a worktree or a queue slot when
+    // the resolved backend cannot actually satisfy this issue (today, only
+    // `deus-native` is ever gated here — see resolveLinearDispatchReadiness).
+    const dispatchReadiness = resolveLinearDispatchReadiness(ctx);
+    if (!dispatchReadiness.readiness.ready) {
+      // try/finally: a thrown Linear API call inside the refusal helper must
+      // not leave this issue stuck in inFlightDispatch forever — unlike the
+      // existing agent_timeout precedent (which fires inside an already-
+      // queued task with its own retry semantics), this branch runs directly
+      // in the poll loop, so a stuck marker here would silently block every
+      // future poll from ever reconsidering the issue.
+      try {
+        await refuseCapabilityBlockedIssue(
+          ctx,
+          { id: issue.id, identifier: issue.identifier },
+          dispatchReadiness.backendName,
+          dispatchReadiness.readiness,
+        );
+      } finally {
+        ctx.inFlightDispatch.delete(issue.id);
+      }
+      continue;
+    }
+    // A prior poll may have parked this issue with the capability-blocked
+    // label (e.g. before the tool surface was widened, or the label was
+    // applied under a different backend selection). Clear it now that
+    // dispatch is proceeding, so the label reflects current reality. Reuses
+    // `labels` (already fetched above, before inFlightDispatch.add) rather
+    // than a second `issue.labels()` call — avoids both a redundant network
+    // round-trip and an unguarded post-marker await that could otherwise
+    // strand this issue in inFlightDispatch forever if it rejected.
+    const capabilityBlockedId = ctx.gateLabels.capabilityBlocked;
+    if (capabilityBlockedId) {
+      if (nodesHaveLabelId(labels.nodes, capabilityBlockedId)) {
+        await ctx.client
+          .updateIssue(issue.id, { removedLabelIds: [capabilityBlockedId] })
+          .catch((err) =>
+            logger.warn(
+              { issueId: issue.id, err },
+              'linear-dispatcher: failed to clear stale runtime:capability-blocked label',
+            ),
+          );
+      }
+    }
+
     const failureDossier = buildFailureDossier(issue.id);
     let prompt: string;
     if (roleSpec) {
@@ -1604,6 +1760,26 @@ async function pollLinear(): Promise<void> {
         'linear-dispatcher: failed to create worktree, dispatching without isolation',
       );
     }
+
+    // LIA-422/E3: unlike container/Claude backends (which tolerate the
+    // fail-open dispatch-without-isolation path above), `deus-native` must
+    // refuse rather than proceed without a worktree — C2's workspaceRoot
+    // wiring (deus-native-backend.ts) has no fallback of its own beyond the
+    // daemon cwd, which would store verdicts under the wrong bucket.
+    if (dispatchReadiness.backendName === 'deus-native' && !worktreePath) {
+      try {
+        await refuseCapabilityBlockedIssue(
+          ctx,
+          { id: issue.id, identifier: issue.identifier },
+          dispatchReadiness.backendName,
+          { ready: false, failures: ['workspace_root_unavailable'] },
+        );
+      } finally {
+        ctx.inFlightDispatch.delete(issue.id);
+      }
+      continue;
+    }
+
     const runContext: RunContext = {
       prompt,
       groupFolder: DISPATCH_GROUP_JID,
@@ -1864,7 +2040,12 @@ export async function initLinearContext(
     }
 
     const bouncedDefs: Array<{
-      key: 'blocked' | 'bouncedUnscoped' | 'bouncedStale' | 'bouncedNoContext';
+      key:
+        | 'blocked'
+        | 'bouncedUnscoped'
+        | 'bouncedStale'
+        | 'bouncedNoContext'
+        | 'capabilityBlocked';
       name: string;
       color: string;
     }> = [
@@ -1875,6 +2056,11 @@ export async function initLinearContext(
         key: 'bouncedNoContext',
         name: 'bounced:no-context',
         color: '#f97316',
+      },
+      {
+        key: 'capabilityBlocked',
+        name: 'runtime:capability-blocked',
+        color: '#dc2626',
       },
     ];
     for (const def of bouncedDefs) {

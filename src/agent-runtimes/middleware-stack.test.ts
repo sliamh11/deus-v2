@@ -1,6 +1,14 @@
 import { basename, dirname, join } from 'node:path';
 
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  vi,
+} from 'vitest';
 import {
   createAgent,
   createMiddleware,
@@ -17,6 +25,7 @@ import {
   buildPermissionsMiddleware,
   buildWardensMiddleware,
   parseMiddlewareStackConfig,
+  probeWardenGateIntegration,
   resolveMiddlewareStackConfig,
   type MiddlewareLayerName,
   type OrderMarker,
@@ -1742,5 +1751,61 @@ describe('wardens middleware — wardens:false toggle omits the layer entirely (
     expect(middleware.map((m) => m.name)).not.toContain('wardens');
     expect(execFileSyncMock).not.toHaveBeenCalled();
     expect(execFileMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('probeWardenGateIntegration — availability-only probe (LIA-422/E3)', () => {
+  let actualExecFileSync: typeof execFileSync;
+
+  beforeAll(async () => {
+    actualExecFileSync = (
+      await vi.importActual<typeof import('node:child_process')>(
+        'node:child_process',
+      )
+    ).execFileSync;
+  });
+
+  it('reports available against the real repo root and real script (happy path)', () => {
+    const result = probeWardenGateIntegration(WORKTREE_ROOT);
+    expect(result).toEqual({ available: true });
+  });
+
+  it('reports unavailable, without any subprocess call, when config.wardens is explicitly false', () => {
+    execFileSyncMock.mockClear();
+    const result = probeWardenGateIntegration(WORKTREE_ROOT, {
+      wardens: false,
+    });
+    expect(result.available).toBe(false);
+    if (!result.available) {
+      expect(result.reason).toContain('disabled');
+    }
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+  });
+
+  // Note: a nonexistent-repo cwd (e.g. '/tmp') does NOT exercise the
+  // "script not readable" branch — resolveWardenRepoRoot's non-git fallback
+  // resolves to THIS repo's real checkout via import.meta.url regardless of
+  // the cwd passed in, so the real script is always found that way. That
+  // fallback path is already covered by the "Git-common-dir repo-root
+  // resolution" suite above; this probe's readability branch is simple,
+  // directly-inspectable code (a single accessSync call) not worth a
+  // disproportionately elaborate fs mock to cover in isolation here.
+
+  it('reports unavailable when the --help probe invocation itself fails', () => {
+    execFileSyncMock.mockImplementation((cmd, args) => {
+      const argv = args as string[] | undefined;
+      if (argv?.includes('--help')) {
+        throw new Error('simulated python failure');
+      }
+      return actualExecFileSync(cmd, argv as never);
+    });
+    const result = probeWardenGateIntegration(WORKTREE_ROOT);
+    expect(result.available).toBe(false);
+    if (!result.available) {
+      expect(result.reason).toContain('failed to load');
+    }
+    // Restore the default real-passthrough implementation for every test
+    // after this one in the file.
+    execFileSyncMock.mockImplementation(actualExecFileSync);
   });
 });

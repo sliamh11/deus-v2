@@ -25,6 +25,18 @@ Deus now has a backend-neutral host runtime with per-group and per-task backend 
 
 The long-term goal is full tool/session parity across adapters. Until then, treat Claude as the stable path and OpenAI as the first backend-neutral implementation target.
 
+**Linear pipeline on `deus-native`:** `deus-native` is selectable as the Linear
+pipeline dispatcher's backend (`containerConfig.agentBackend: 'deus-native'`
+on the `linear-dispatch` group, or globally via `DEUS_AGENT_BACKEND`), but
+real coding/commit dispatch through it is intentionally blocked today — its
+tool surface (`DEUS_NATIVE_SAFE_TOOL_NAMES`) exposes only
+`web_search`/`web_fetch`, no mutation or commit tools. A capability-readiness
+guard refuses any Linear issue routed to `deus-native` (parked in Manual
+Review Required, labeled `runtime:capability-blocked`) rather than silently
+running a no-op agent turn. See
+[linear-pipeline-deus-native-capability-boundary.md](decisions/linear-pipeline-deus-native-capability-boundary.md)
+and `AAG-017`.
+
 Tracked open-ended follow-up work lives in
 [agent-agnostic-debt.md](agent-agnostic-debt.md).
 
