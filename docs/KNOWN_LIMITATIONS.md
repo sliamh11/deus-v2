@@ -1,5 +1,12 @@
 # Known Limitations
 
+> **v2.0.0 release status:** Claude remains the default backend. `deus-native`
+> is available as an opt-in backend (`DEUS_AGENT_BACKEND=deus-native`). The
+> default flip is tracked by H2/LIA-434, blocked on H1/LIA-433's
+> evidence-based NO-GO — see
+> [h1-parity-signoff-lia433.md](decisions/h1-parity-signoff-lia433.md) and the
+> [Deus-Native Opt-In Readiness Matrix](decisions/backend-neutral-agent-runtime.md#deus-native-opt-in-readiness-matrix).
+
 ## Backend Parity Is In Progress
 
 Deus now has a backend-neutral host runtime with per-group and per-task backend selection, but Claude remains the compatibility baseline and default backend. The new OpenAI backend is opt-in and still chasing full parity with the long-established Claude path.
@@ -29,8 +36,11 @@ The long-term goal is full tool/session parity across adapters. Until then, trea
 pipeline dispatcher's backend (`containerConfig.agentBackend: 'deus-native'`
 on the `linear-dispatch` group, or globally via `DEUS_AGENT_BACKEND`), but
 real coding/commit dispatch through it is intentionally blocked today — its
-tool surface (`DEUS_NATIVE_SAFE_TOOL_NAMES`) exposes only
-`web_search`/`web_fetch`, no mutation or commit tools. A capability-readiness
+`DEUS_NATIVE_SAFE_TOOL_NAMES` broker allowlist exposes only
+`web_search`/`web_fetch` (deus-native's complete tool surface also includes
+`dispatch_nested_agent`, added separately outside that broker allowlist, but
+it isn't a mutation or commit tool either) — no mutation or commit tools
+exist on this backend today. A capability-readiness
 guard refuses any Linear issue routed to `deus-native` (parked in Manual
 Review Required, labeled `runtime:capability-blocked`) rather than silently
 running a no-op agent turn. See

@@ -19,7 +19,34 @@ Agents execute in containers (lightweight Linux VMs), providing:
 - **Non-root execution** - Runs as unprivileged `node` user (uid 1000)
 - **Ephemeral containers** - Fresh environment per invocation (`--rm`)
 
-This is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
+This is the primary security boundary for the three containerized backends
+(Claude, OpenAI, llama.cpp). Rather than relying on application-level
+permission checks, the attack surface is limited by what's mounted.
+
+### 1a. Deus-native Boundary (opt-in, non-container)
+
+`deus-native` is an opt-in, host-side backend (`DEUS_AGENT_BACKEND=deus-native`)
+that runs in-process on the host rather than in a container, so it does not
+get the Container Isolation boundary above. Its boundary is different in kind:
+
+- **Declarative permission-rules middleware** — a first-match-wins allow/deny
+  rule evaluator at the outermost `wrapToolCall` layer, with named profiles
+  (`default`, `read-only`); denial returns an error `ToolMessage` without ever
+  invoking the tool handler or exposing arguments. See
+  [deus-v2-permission-rules.md](decisions/deus-v2-permission-rules.md).
+- **Restricted tool surface** — `web_search`, `web_fetch` (the
+  `DEUS_NATIVE_SAFE_TOOL_NAMES` broker allowlist), plus `dispatch_nested_agent`
+  (added separately, outside that allowlist, for one-shot subagent dispatch).
+  No shell or filesystem access exists today.
+- **Credential-proxy-routed model calls** — the same credential proxy the
+  containerized backends use; `deus-native` never holds raw provider
+  credentials itself.
+- **Dormant-but-wired warden interception** — a `wrapToolCall` middleware
+  layer shells out to the same unchanged `scripts/codex_warden_hooks.py` gate
+  logic the dev-CLI hook path uses, but its protected branch (guarding
+  `apply_patch`/commit-shaped `Bash` calls) is currently dormant because
+  neither tool is exposed on this backend's surface yet. See
+  [hook-dispatch-facade-correction.md](decisions/hook-dispatch-facade-correction.md).
 
 ### 2. Mount Security
 
@@ -110,6 +137,9 @@ operator action.
 
 ## Privilege Comparison
 
+This table describes the three containerized backends (Claude, OpenAI,
+llama.cpp); deus-native's privilege model is described in §1a above.
+
 | Capability | Main Group | Non-Main Group |
 |------------|------------|----------------|
 | Project root access | `/workspace/project` (ro) | None |
@@ -124,6 +154,9 @@ operator action.
 Report security vulnerabilities privately via [GitHub Security Advisories](https://github.com/sliamh11/Deus/security/advisories/new). Do not open a public issue for security bugs.
 
 ## Security Architecture Diagram
+
+This diagram depicts the containerized-backend path. See §1a above for
+`deus-native`'s distinct, non-container boundary.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐

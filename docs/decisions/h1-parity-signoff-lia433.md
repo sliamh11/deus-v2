@@ -182,3 +182,6 @@ revised GO verdict.
 **E2/AAG-012 gap:** explicitly NOT counted as a blocker for this
 verdict, per the ticket's own instruction — it is accepted, documented
 here, and tracked as LIA-444.
+
+**Cross-ticket consequence (2026-07-18, H3/LIA-435):** H2/LIA-434 remains
+blocked; Claude stays default until a later H1 evidence update records a GO.

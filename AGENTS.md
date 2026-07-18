@@ -68,10 +68,15 @@ Single Node.js host process. No microservices.
   unit-tested but not yet proven end-to-end against live Azure Bot Framework /
   Microsoft Graph — planned, not ready for production traffic without that
   verification (LIA-392).
-- Each conversation group runs in its own isolated container.
+- Each conversation group runs in its own isolated container (the three
+  containerized backends: Claude, OpenAI, llama.cpp).
 - Deus owns the runtime/session/tool/context contract.
 - Claude is the default compatibility backend.
 - OpenAI/Codex is the first opt-in backend on the same runtime contract.
+- `deus-native` (LangChain/LangGraph host-side runtime) is also opt-in via
+  `DEUS_AGENT_BACKEND=deus-native` or a per-group/task override, running
+  in-process rather than in a container; the default flip is tracked by
+  H2/LIA-434, blocked on H1/LIA-433.
 - Sessions are backend-scoped. Never resume across backend mismatch.
 - Real credentials never enter containers; adapters use the credential proxy.
 - Provider integrations follow the **Backend strategy trait** pattern: each

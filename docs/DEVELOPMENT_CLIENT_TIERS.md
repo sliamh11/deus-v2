@@ -4,7 +4,10 @@ Deus distinguishes between the **product runtime** that executes Deus itself
 and the **interactive development clients** contributors may use to work on
 this repository. This document defines that boundary, explains how the
 optional guardrails kit applies to each development client, and states what
-each client does and does not guarantee.
+each client does and does not guarantee. "Tier 1" describes the product-owned
+execution boundary itself, not which backend is currently selected by
+default — Claude remains the default product backend, and `deus-native` is
+opt-in pending H2/LIA-434.
 
 ## 1. Two-tier model
 
@@ -28,10 +31,15 @@ Telegram, Slack, Discord, Gmail, Teams, Outlook), isolated containers, the web U
 scheduled tasks. The product contract for all of this is defined in
 [`AGENTS.md`](../AGENTS.md).
 
-Warden review gates are **not** a Tier 1 product-runtime guarantee. The gate
-*logic* (`scripts/codex_warden_hooks.py`) is backend-neutral, but its
-*invocation* is coupled to a development CLI's hook engine — nothing in the
-product runtime fires it. This distinction is recorded in
+Development-CLI hook invocation of the warden gate logic
+(`scripts/codex_warden_hooks.py`) is not a Tier 1 product-runtime guarantee —
+that invocation path is coupled to a development CLI's hook engine.
+`deus-native` has a separate, independent invocation path: its own production
+`wrapToolCall` middleware (C1/LIA-409) shells out to the same unchanged gate
+logic directly. Its protected branch (guarding `apply_patch` and
+commit-shaped `Bash` calls) is currently dormant — not because the product
+runtime doesn't fire it, but because `deus-native`'s tool surface doesn't
+expose either tool yet. This distinction is recorded in
 [`hook-dispatch-facade-correction.md`](./decisions/hook-dispatch-facade-correction.md):
 enforcement is logic-decoupled but trigger-coupled, and that ADR is the
 source of truth for the gap.

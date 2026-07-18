@@ -22,7 +22,7 @@ A personal AI that understands you - not just recalls things you've said. It lea
 
 4. **Lives where you already are** - WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook. Add only the ones you need. Your memory follows you across all of them.
 
-5. **Private by default** - Runs on your machine in isolated containers. No cloud sync, no tracking, no data leaving your computer.
+5. **Private by default** - Runs on your machine — no Deus-operated cloud sync, no tracking, no third-party analytics. Your configured model provider (unless running fully local via llama.cpp) and any tools you enable (web search, calendar, etc.) do receive request data as part of normal operation.
 
 6. **Works on your code too** - Run `deus` in any project directory for a coding assistant that already knows your preferences and past work. `deus init` indexes a repo for code intelligence (codegraph + semantic search), and `deus arch` opens an interactive 3D map of its architecture.
 
@@ -108,6 +108,20 @@ See [AGENTS.md](AGENTS.md#commands-and-skills) for all available skills.
 
 ---
 
+## Deus V2 runtime (opt-in)
+
+Deus V2 includes `deus-native`, a Deus-owned, host-side agent runtime built on
+LangChain. Claude remains the current default and compatibility baseline;
+`deus-native` is available by explicit opt-in through
+`DEUS_AGENT_BACKEND=deus-native` or a per-group/task backend override. The
+default flip remains tracked by H2/LIA-434 and is blocked on H1/LIA-433's
+reliability evidence.
+
+See [Using different AI backends](docs/MULTI_BACKEND.md) for configuration,
+rollback, and current capability gaps.
+
+---
+
 ## CLI
 
 | Command | What it does |
@@ -123,6 +137,7 @@ See [AGENTS.md](AGENTS.md#commands-and-skills) for all available skills.
 | `deus model <name>` | Switch proxy model (auto-prefixes active provider) |
 | `deus model dashboard` | Open proxy admin UI in browser |
 | `deus auth` | Rebuild and restart background services |
+| `deus build` | Build without the Claude-OAuth credential check `deus auth` performs; restarts automatically on macOS, Linux requires a manual `systemctl --user restart deus` afterward, see [Using different AI backends](docs/MULTI_BACKEND.md) for the Windows gap |
 | `deus gcal` | Google Calendar token management (`status`, `auth`, `ping`) |
 | `deus listen` | Record from mic, transcribe locally, copy to clipboard |
 | `deus chat` | Interactive terminal chat over the daemon-owned `deus-native` runtime; `deus chat model set\|show` for model selection, `/plan on\|off` in-chat for read-only mode |
@@ -289,8 +304,8 @@ Select review wardens (`plan-reviewer`, `code-reviewer`, `ai-eng-warden`) can ru
 | **Memory** | Understands you - indexes facts by meaning, recalls in context | Markdown files | Via OpenClaw | Full-text search + preference profiling | Conversation only |
 | **Learning** | Adapts at the personality level - tone, judgment, suggestions | No | No | Auto-creates & refines skills | No |
 | **Channels** | 7 (WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook) | 10+ | Via OpenClaw | 15+ (WhatsApp, Telegram, Signal, Matrix...) | None |
-| **Isolation** | Container per conversation | Opt-in Docker | Landlock + seccomp | Per-session | None |
-| **LLM support** | Claude default, OpenAI/llama.cpp opt-in | Any provider | Any (via OpenClaw) | Any (10+ providers) | Claude only |
+| **Isolation** | Container per conversation (Claude, OpenAI, llama.cpp; deus-native runs in-process) | Opt-in Docker | Landlock + seccomp | Per-session | None |
+| **LLM support** | Claude default; deus-native, OpenAI, and llama.cpp opt-in | Any provider | Any (via OpenClaw) | Any (10+ providers) | Claude only |
 | **Setup** | ~5 min | ~15 min | ~20 min | ~10 min | N/A |
 | **Repo size** | ~13 MB | ~592 MB | ~22 MB | ~147 MB | N/A |
 
@@ -312,6 +327,8 @@ Deus goes deep on understanding you and adapting over time. Hermes goes wide on 
 | Environment variables | [Environment](docs/ENVIRONMENT.md) |
 | Using different AI backends | [Multi-backend](docs/MULTI_BACKEND.md) |
 | Local backend (llama.cpp) | [Multi-backend — llama.cpp](docs/MULTI_BACKEND.md#llamacpp-local-backend) |
+| Product runtime vs optional development clients | [Development Client Tiers](docs/DEVELOPMENT_CLIENT_TIERS.md) |
+| v2.0.0 release notes | [Deus v2.0.0](docs/releases/v2.0.0.md) |
 | Use Deus in your editor (Zed, ACP/MCP) | [Editor integration](docs/EDITOR_INTEGRATION.md) |
 | Backend quality benchmark | [Claude vs Codex parity report](docs/research/backend-quality-benchmark-2026-04-26.md) |
 | Cross-model review co-gate | [Warden co-gate](docs/WARDEN_CO_GATE.md) |
