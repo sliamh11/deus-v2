@@ -8,9 +8,12 @@
  * adapters deliberately operate under different, non-transferable trust
  * boundaries.
  *
- * This createAgent instance binds only tools derived from this package's
- * broker definitions and MCP bridge. It never binds a LangChain built-in
- * shell, Python, retriever, HTTP, or other native tool.
+ * This createAgent instance binds tools derived from this package's broker
+ * definitions and MCP bridge, PLUS exactly one non-broker tool (LIA-426/F4):
+ * `load_skill`, a local, read-only instruction-pack resolver
+ * (skill-context-loader.ts). It never executes skill code, never grants new
+ * tools, and never binds a LangChain built-in shell, Python, retriever,
+ * HTTP, or other native tool.
  */
 
 import { randomUUID } from 'crypto';
@@ -32,6 +35,10 @@ import { createAgent } from 'langchain';
 import { loadRegisteredContextFiles } from './context-registry.js';
 import { DoomLoopDetector, normalizeArgs } from './doom-loop-detector.js';
 import { fetchMemoryContext } from './memory-retrieval-hook.js';
+import {
+  createSkillLoaderTool,
+  loadRuntimeSkillRegistry,
+} from './skill-context-loader.js';
 import type {
   ContainerInput,
   ContainerOutput,
@@ -64,10 +71,27 @@ function isControlGroup(containerInput: ContainerInput): boolean {
   return containerInput.isControlGroup ?? containerInput.isMain ?? false;
 }
 
-function runtimeContext(containerInput: ContainerInput): {
+function discoverExtraSkillDirectories(): string[] {
+  const extraBase = '/workspace/extra';
+  if (!fs.existsSync(extraBase)) return [];
+  try {
+    return fs
+      .readdirSync(extraBase, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(extraBase, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function runtimeContext(
+  containerInput: ContainerInput,
+  log: (message: string) => void,
+): {
   cwd: string;
   hasProject: boolean;
   systemInstructions: string;
+  skillRegistry: ReturnType<typeof loadRuntimeSkillRegistry>;
 } {
   const projectDir = '/workspace/project';
   let cwd = '/workspace/group';
@@ -88,6 +112,15 @@ function runtimeContext(containerInput: ContainerInput): {
     // No project mount — use group workspace.
   }
 
+  // LIA-426/F4: one registry per container conversation, discovering skill
+  // instruction packs from the same personal/project/extra roots
+  // loadRegisteredContextFiles already reads AGENTS.md/CLAUDE.md from.
+  const skillRegistry = loadRuntimeSkillRegistry({
+    cwd,
+    additionalDirectories: discoverExtraSkillDirectories(),
+    log,
+  });
+
   const systemInstructions = [
     'You are running inside the Deus backend-neutral deus-native container adapter.',
     'Preserve the same Deus user experience as the Claude backend: same tone, memory, privacy boundaries, chat commands, and long-term personal context.',
@@ -97,12 +130,13 @@ function runtimeContext(containerInput: ContainerInput): {
       isControlGroup: isControlGroup(containerInput),
       hasProject,
     }),
+    skillRegistry.catalogContext(),
     containerInput.projectHint || '',
   ]
     .filter(Boolean)
     .join('\n\n');
 
-  return { cwd, hasProject, systemInstructions };
+  return { cwd, hasProject, systemInstructions, skillRegistry };
 }
 
 function mcpServerConfigs(
@@ -366,8 +400,8 @@ export async function runDeusNativeConversation(
   let mcpBridge: OpenAIMcpToolBridge | undefined;
 
   try {
-    const { cwd, hasProject, systemInstructions } =
-      runtimeContext(containerInput);
+    const { cwd, hasProject, systemInstructions, skillRegistry } =
+      runtimeContext(containerInput, log);
     mcpBridge = await createOpenAIMcpToolBridge(
       mcpServerConfigs(containerInput).filter(
         (config) => config.serverName !== 'gcal' || hasProject,
@@ -375,27 +409,44 @@ export async function runDeusNativeConversation(
       log,
     );
     const definitions = getOpenAIToolDefinitions(mcpBridge.definitions);
-    const tools = buildBrokerDerivedTools(
-      definitions,
-      mcpBridge,
-      cwd,
-      containerInput,
-      new DoomLoopDetector(),
-    );
+    const tools = [
+      ...buildBrokerDerivedTools(
+        definitions,
+        mcpBridge,
+        cwd,
+        containerInput,
+        new DoomLoopDetector(),
+      ),
+      // LIA-426/F4: the sole permitted non-broker tool — a local, read-only
+      // instruction-pack resolver. Never executes code, never grants tools.
+      createSkillLoaderTool(skillRegistry),
+    ];
     const agent = createAgent({
       model: buildProxyRoutedModel(),
       tools,
       systemPrompt: systemInstructions,
     });
 
+    // LIA-426/F4: kept UNPREFIXED (unlike the pre-F4 code, which prepended
+    // the scheduled-task banner here) so /compact and direct skill
+    // invocation can still match a scheduled task whose literal configured
+    // body IS a command (e.g. a nightly "/compress" cron entry) — the
+    // banner is prepended only when actually building the agent's input,
+    // not when deciding what kind of turn this is. isScheduledTask is only
+    // ever true for the very first turn (the loop breaks right after), so
+    // this distinction never needs to persist across iterations.
     let prompt = containerInput.prompt;
-    if (containerInput.isScheduledTask) {
-      prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
-    }
+    let isFirstTurn = true;
     const pending = drainIpcInput();
     if (pending.length > 0) prompt += `\n${pending.join('\n')}`;
 
     while (!shouldClose()) {
+      const scheduledTaskBanner =
+        isFirstTurn && containerInput.isScheduledTask
+          ? '[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]'
+          : '';
+      isFirstTurn = false;
+
       if (prompt.trim() === '/compact') {
         if (messages.length > COMPACT_KEEP_MESSAGES) {
           messages.splice(0, messages.length - COMPACT_KEEP_MESSAGES);
@@ -407,31 +458,52 @@ export async function runDeusNativeConversation(
           newSessionRef: currentSessionRef,
         });
       } else {
-        const memoryContext = await fetchMemoryContext(
-          prompt,
-          'container-deus-native',
-        );
-        const enrichedPrompt = memoryContext
-          ? `${memoryContext}\n\n${prompt}`
-          : prompt;
-        const inputMessage = userMessage(
-          enrichedPrompt,
-          containerInput.imageAttachments,
-        );
-        const response = await agent.invoke(
-          { messages: [...messages, inputMessage] },
-          { recursionLimit: DEUS_NATIVE_RECURSION_LIMIT },
-        );
-        if (!response || !Array.isArray(response.messages)) {
-          throw new Error('deus-native agent returned invalid message state');
+        // LIA-426/F4: a direct /skill-name invocation is resolved BEFORE the
+        // agent turn. A failure (missing/invalid/unsupported/not-user-
+        // invocable) is a handled, actionable result — never a transport-
+        // level error, which would make the host roll back the cursor and
+        // retry the same bad command. Model-driven selection instead goes
+        // through the load_skill tool bound above, mid-turn.
+        const directSkill = skillRegistry.resolvePrompt(prompt);
+        if (directSkill && !directSkill.ok) {
+          writeOutput({
+            status: 'success',
+            result: directSkill.message,
+            newSessionId: sessionId,
+            newSessionRef: currentSessionRef,
+          });
+        } else {
+          const memoryContext = await fetchMemoryContext(
+            prompt,
+            'container-deus-native',
+          );
+          const enrichedPrompt = [
+            memoryContext,
+            directSkill?.ok ? directSkill.contextBlock : '',
+            scheduledTaskBanner,
+            prompt,
+          ]
+            .filter(Boolean)
+            .join('\n\n');
+          const inputMessage = userMessage(
+            enrichedPrompt,
+            containerInput.imageAttachments,
+          );
+          const response = await agent.invoke(
+            { messages: [...messages, inputMessage] },
+            { recursionLimit: DEUS_NATIVE_RECURSION_LIMIT },
+          );
+          if (!response || !Array.isArray(response.messages)) {
+            throw new Error('deus-native agent returned invalid message state');
+          }
+          messages.splice(0, messages.length, ...response.messages);
+          writeOutput({
+            status: 'success',
+            result: assistantText(messages),
+            newSessionId: sessionId,
+            newSessionRef: currentSessionRef,
+          });
         }
-        messages.splice(0, messages.length, ...response.messages);
-        writeOutput({
-          status: 'success',
-          result: assistantText(messages),
-          newSessionId: sessionId,
-          newSessionRef: currentSessionRef,
-        });
       }
 
       writeOutput({

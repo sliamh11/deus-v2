@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -159,5 +161,105 @@ describe('Claude/deus-native container protocol parity', () => {
     expect(
       nativeFrames.map((frame) => ContainerOutputSchema.parse(frame)),
     ).toHaveLength(2);
+  });
+
+  // LIA-426/F4: uses the REAL container/skills/status/SKILL.md content (read
+  // from the repo, not a fixture string) — /status is the best representative
+  // skill because it is container-native, read-only, deterministic, needs no
+  // external credentials, and exercises real instruction-pack discovery +
+  // rendering end to end. The production personal skill root
+  // (/home/node/.claude/skills) only exists inside the built container image,
+  // so fs is spied here to simulate that mount pointing at this real file,
+  // rather than requiring the actual container filesystem to run this test.
+  it('injects the real /status skill body into the turn for a deus-native direct invocation', async () => {
+    const realStatusSkill = fs.readFileSync(
+      path.join(
+        import.meta.dirname,
+        '..',
+        '..',
+        'skills',
+        'status',
+        'SKILL.md',
+      ),
+      'utf-8',
+    );
+    const personalRoot = '/home/node/.claude/skills';
+    const statusDir = path.join(personalRoot, 'status');
+    const statusFile = path.join(statusDir, 'SKILL.md');
+
+    const existsSpy = vi
+      .spyOn(fs, 'existsSync')
+      .mockImplementation((p) => p === personalRoot || p === statusFile);
+    const readdirSpy = vi
+      .spyOn(fs, 'readdirSync')
+      .mockImplementation(
+        (p) => (p === personalRoot ? ['status'] : []) as never,
+      );
+    const statSpy = vi
+      .spyOn(fs, 'statSync')
+      .mockImplementation(
+        () => ({ isDirectory: () => true }) as unknown as fs.Stats,
+      );
+    const readFileSpy = vi
+      .spyOn(fs, 'readFileSync')
+      .mockImplementation((p, enc) => {
+        if (p === statusFile) return realStatusSkill;
+        throw new Error(`unexpected readFileSync call in test: ${String(p)}`);
+      });
+
+    let capturedMessages: unknown[] = [];
+    mocks.agentInvoke.mockImplementation(async ({ messages }) => {
+      capturedMessages = messages;
+      return { messages: [...messages, new AIMessage('status report')] };
+    });
+
+    try {
+      const lines: string[] = [];
+      const stdout = vi
+        .spyOn(console, 'log')
+        .mockImplementation((value) => lines.push(String(value)));
+
+      // isScheduledTask: true — proves direct skill invocation also matches
+      // a scheduled task whose literal configured body IS a command (e.g. a
+      // nightly "/compress" cron entry). The scheduled-task banner is
+      // decoupled from command detection precisely so this case works.
+      await runDeusNativeConversation({
+        containerInput: {
+          prompt: '/status',
+          backend: 'deus-native',
+          groupFolder: 'test-group',
+          chatJid: 'chat@test',
+          isScheduledTask: true,
+        },
+        log: vi.fn(),
+        writeOutput,
+        drainIpcInput: () => [],
+        waitForIpcMessage: async () => null,
+        shouldClose: () => false,
+      });
+      const frames = capturedFrames(lines);
+      stdout.mockRestore();
+
+      const terminal = ContainerOutputSchema.parse(frames[0]);
+      expect(terminal.status).toBe('success');
+
+      const lastMessage = capturedMessages[capturedMessages.length - 1] as {
+        content: Array<{ type: string; text?: string }>;
+      };
+      const text = lastMessage.content
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text)
+        .join('');
+      // Real content from the actual SKILL.md's own "Report format" section
+      // (not its gather-instructions text) — proves the real file's body
+      // drove this turn, not a generic fallback.
+      expect(text).toContain('Deus Status');
+      expect(text).toContain('/status');
+    } finally {
+      existsSpy.mockRestore();
+      readdirSpy.mockRestore();
+      statSpy.mockRestore();
+      readFileSpy.mockRestore();
+    }
   });
 });
