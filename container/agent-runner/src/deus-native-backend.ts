@@ -177,6 +177,7 @@ export function buildProxyRoutedModel(): ChatAnthropic {
   const apiKeyMode = Boolean(process.env.ANTHROPIC_API_KEY);
 
   return new ChatAnthropic({
+    // DEUS_NATIVE_MODEL: tracking issue LIA-423 (this ticket).
     model: process.env.DEUS_NATIVE_MODEL || DEFAULT_MODEL,
     createClient: (options) =>
       apiKeyMode
