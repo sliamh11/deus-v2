@@ -42,6 +42,56 @@ Set `agent_backend: 'openai'` when creating the task. The rest of the group stay
 
 Remove `DEUS_AGENT_BACKEND` from `.env` (or set it to `claude`) and restart.
 
+### Try Deus-native
+
+Claude remains the default. To opt into the host-side Deus-native runtime
+globally, set this in the project-root `.env` and restart Deus:
+
+```bash
+DEUS_AGENT_BACKEND=deus-native
+```
+
+Restart Deus to pick up the change:
+
+- **macOS:** `deus build` rebuilds AND restarts automatically (via
+  `launchctl kickstart`), without validating credentials — `deus auth`
+  specifically checks for a Claude OAuth token in
+  `~/.claude/.credentials.json`/Keychain and errors for users on the
+  credential-proxy's alternate `ANTHROPIC_API_KEY` mode, even though that
+  mode works fine for deus-native too.
+- **Linux:** `deus build` rebuilds but does NOT auto-restart. After
+  `deus build`, also run `systemctl --user restart deus` (or
+  `systemctl restart deus` for a system-level install).
+- **Windows:** `deus-cmd.ps1` has no credential-neutral equivalent today —
+  its only rebuild/restart command is `deus auth`, which has the same
+  Claude-OAuth check. Windows users on `ANTHROPIC_API_KEY` mode should run
+  `npm run build` and restart the Deus service manually (NSSM/Servy restart,
+  or `deus status`/`deus logs` to confirm it picked up the change).
+
+For one group, leave the global default unchanged and send:
+
+```text
+/settings backend=deus-native
+```
+
+A scheduled task can set `agent_backend: deus-native`, but its end-to-end
+scheduled-task path remains an H1 release blocker and should be treated as
+unverified.
+
+After the next message, send `/context` in that group and confirm it reports
+`Backend: deus-native`.
+
+To return to Claude globally, set `DEUS_AGENT_BACKEND=claude` (or remove the
+override), restart Deus the same OS-appropriate way as above, and verify
+`/context` reports `Backend: claude`. For a group override, use
+`/settings backend=default` when the global default is Claude, or
+`/settings backend=claude` to force Claude regardless of the global setting.
+
+Host-side shell/filesystem tools, public-ingress support, and full
+non-control-group memory parity are not available on deus-native today. This
+documents rollback from today's opt-in state only — a future default flip
+(H2/LIA-434) will need its own rollback wording if and when it lands.
+
 ## Resolution Order
 
 When Deus decides which backend to use for a message or task:
@@ -55,10 +105,10 @@ When Deus decides which backend to use for a message or task:
 Regardless of backend, Deus preserves:
 
 - Same tone across backends; broader persona and memory-recall parity for Deus-native is phased (`docs/decisions/deus-v2-langchain-runtime.md` explicitly declines full persona/memory parity for now) — Deus-native currently serves per-turn memory recall for control-group turns only (non-control-group recall is tracked as `AAG-014`) — see [agent-agnostic-debt.md](agent-agnostic-debt.md) and `docs/decisions/deus-v2-langchain-runtime.md`.
-- Same tool access (shell, filesystem, web, browser, IPC) for the containerized backends (Claude, OpenAI, llama.cpp); Deus-native (host-side) currently wires only web tools — see the [Deus-Native Opt-In Readiness Matrix](decisions/backend-neutral-agent-runtime.md#deus-native-opt-in-readiness-matrix) for the full per-surface status.
+- Same tool access (shell, filesystem, web, browser, IPC) for the containerized backends (Claude, OpenAI, llama.cpp); Deus-native (host-side) currently wires `web_search`, `web_fetch`, and `dispatch_nested_agent` — no shell/filesystem access — see the [Deus-Native Opt-In Readiness Matrix](decisions/backend-neutral-agent-runtime.md#deus-native-opt-in-readiness-matrix) for the full per-surface status.
 - Same chat commands (/compact, /settings, etc.)
 - Same session management and idle reset
-- Same scheduled task execution
+- Same scheduled task execution for the containerized backends; deus-native's scheduled-task path is unverified and gated by H1/LIA-433 — see [Try Deus-native](#try-deus-native) above
 - Same channel support (WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook — Teams/Outlook wired and unit-tested, not yet E2E-proven; see AGENTS.md, LIA-392)
 - Same context loading (CLAUDE.md, group config, registered context files)
 

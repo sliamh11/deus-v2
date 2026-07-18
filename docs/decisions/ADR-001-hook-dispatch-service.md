@@ -12,7 +12,7 @@
 > — the implementation chose blocking. See the
 > [F2/LIA-424 update](hook-dispatch-facade-correction.md#update-f2lia-424--2026-07-16).
 
-**Status:** Accepted
+**Status:** Accepted — retired from active production enforcement; retained as dormant manual compatibility
 **Date:** 2026-05-23
 **Scope:** `container/agent-runner/src/hook-dispatch-service.ts`, `container/agent-runner/src/pre-tool-use-hook.ts`, `container/agent-runner/src/post-tool-use-observer.ts`, `container/agent-runner/src/index.ts`
 **Deciders:** Deus Engineering

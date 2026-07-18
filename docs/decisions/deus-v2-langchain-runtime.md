@@ -119,8 +119,12 @@ runTurn` mirrors the same rule directly (returns a `status: 'error'`
    is Not superseded. This record names the two tiers; it does not resolve
    the open question (flagged under "Backend, provider, and CLI selection"
    above) of what `deus`/`deus claude`/`deus codex` mean after
-   `deus-native` becomes the default — that remains G1's (LIA-428) to
-   answer.
+   `deus-native` becomes the default. **Update (2026-07-18, H3/LIA-435):** G1
+   (LIA-428, `deus chat`) has since landed and did not need to answer this —
+   it added a new, separate command rather than redefining `deus`/`deus
+   claude`/`deus codex`. The open question now belongs to H2/LIA-434 (the
+   eventual default-flip ticket, itself blocked on H1/LIA-433's evidence
+   gate), not G1.
 8. **Repository and rollout strategy (LIA-388 M0.1 record).** The
    2026-07-13 research report's migration-style note states explicitly:
    **"No new repo needed for the runtime... V2 lands as a long-lived
@@ -174,8 +178,9 @@ runTurn` mirrors the same rule directly (returns a `status: 'error'`
   tracing concepts, the other two placement rejections) stands unchanged. The
   independent tool-isolation concern embedded in that rejection is addressed
   separately by this ADR's conservative tool scope, not by the supersession.
-- The container backends (`claude`/`openai`/`llama-cpp`) remain registered,
-  default, and unchanged. `deus-native` is reachable only by explicit
+- Claude remains the default; all three container backends
+  (`claude`/`openai`/`llama-cpp`) remain registered and unchanged.
+  `deus-native` is reachable only by explicit
   `DEUS_AGENT_BACKEND=deus-native` (or group/task override).
 - `langchain`, `@langchain/core`, `@langchain/anthropic`, and
   `@anthropic-ai/sdk` move from `devDependencies` to `dependencies`: the
@@ -310,6 +315,20 @@ MCP registration, `add-ollama-tool`'s hardcoded MCP server list) are
 explicitly preserved as recorded limitations, both excluded from the
 model-invocation catalog and returning their documented disposition on
 direct invocation. See `docs/KNOWN_LIMITATIONS.md`.
+
+## Addendum: H1/H2 cutover status and v2.0.0 publication (2026-07-18, H3/LIA-435)
+
+H1/LIA-433 recorded a real, evidence-based **NO-GO** on flipping
+`deus-native` to the default backend (Claude and GPT tool-loop reliability
+benchmarks both blocked on external account-level rate-limit/quota issues,
+not a code defect — see `h1-parity-signoff-lia433.md`). H2/LIA-434 (the
+ticket that would perform the actual default flip) therefore remains
+**blocked** and has not run. Publishing the deus-v2 `v2.0.0` release
+(H3/LIA-435, this ADR's own documentation update) is a publication of the
+shipped V2 *architecture* — the runtime, its middleware, its tooling — and
+does **not** constitute or imply the default-backend cutover this ADR's own
+"container backends remain registered, default, and unchanged" line already
+states. Claude remains default in v2.0.0 exactly as it was before it.
 
 ## References
 

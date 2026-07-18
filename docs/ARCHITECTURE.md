@@ -23,14 +23,16 @@ graph TB
         DB[(SQLite)]
         MO[Message Orchestrator]
         GQ[Group Queue]
+        REG[Runtime Registry/Resolver<br/>task › group › global › Claude default]
         CP[Credential Proxy :3001]
         TP[Tool Proxy :3003]
         TS[Task Scheduler]
         IPC[IPC Watcher]
         SG[Startup Gate]
+        DN[deus-native AgentRuntime<br/>in-process, opt-in]
     end
 
-    subgraph Containers["Container per Group · Linux VM"]
+    subgraph Containers["Container per Group · Linux VM (Claude · OpenAI · llama.cpp)"]
         AR[Agent Runner]
         RT[Backend Adapter<br/>Claude · OpenAI · llama.cpp]
         MCP_D[MCP: deus]
@@ -56,9 +58,11 @@ graph TB
     CR -->|store| DB
     DB -->|poll| MO
     MO -->|serialize| GQ
-    GQ -->|spawn| AR
+    GQ -->|resolve backend| REG
+    REG -->|claude/openai/llama-cpp: spawn| AR
+    REG -->|deus-native: invoke in-process| DN
     AR --> RT
-    RT -->|API calls| CP
+    RT -->|API calls: Claude/OpenAI| CP
     RT -->|CLI calls| TP
     CP -->|inject creds| API[Provider APIs]
     TP -->|exec| HCLI[Host CLI Binaries]
@@ -69,6 +73,8 @@ graph TB
     IPC -->|route| CR
     TS -->|scheduled tasks| GQ
     AR -->|response| MO
+    DN -->|proxy-routed model calls| CP
+    DN -->|response| MO
     MO -->|send| CR
     CR -->|deliver| Users
     AR -->|log| ILOG
@@ -82,7 +88,7 @@ graph TB
     MT --> VEC
 ```
 
-Deus is a single Node.js process on the host. No microservices. Each conversation group runs in its own container with an isolated filesystem. The host never exposes API keys to containers — all API calls route through a credential proxy.
+Deus is a single Node.js process on the host. No microservices. Four `AgentRuntime`s are registered: `claude` (default), `openai`, `llama-cpp`, and the opt-in `deus-native`. The runtime registry resolves task → group → global → Claude precedence for every turn. The three containerized backends (Claude, OpenAI, llama.cpp) each run in an isolated per-group container with its own filesystem; the host never exposes API keys to them. Claude and OpenAI route all API calls through a credential proxy; llama.cpp is the one exception — it calls a local `llama-server` HTTP service directly, with no proxy hop, no API key, and no per-turn cost. `deus-native` runs in-process on the host instead of in a container, with its own credential-proxy-routed model calls and a restricted, currently non-mutating tool surface (`web_search`, `web_fetch`, `dispatch_nested_agent`) — see [MULTI_BACKEND.md](MULTI_BACKEND.md) and the [Deus-Native Opt-In Readiness Matrix](decisions/backend-neutral-agent-runtime.md#deus-native-opt-in-readiness-matrix) for the current parity detail rather than duplicating it here.
 
 ---
 
@@ -96,8 +102,10 @@ sequenceDiagram
     participant DB as SQLite
     participant MO as Message Orchestrator
     participant GQ as Group Queue
+    participant REG as Runtime Registry/Resolver
     participant CR as Container Runner
     participant AG as Agent (in container)
+    participant DN as deus-native (in-process)
     participant CP as Credential Proxy
 
     U->>CH: Send message
@@ -106,23 +114,37 @@ sequenceDiagram
     MO->>DB: poll getNewMessages() every 2s
     MO->>MO: Trigger check + allowlist
     MO->>GQ: enqueueMessageCheck()
-    GQ->>CR: spawn container (if slot free)
-    CR->>CR: buildVolumeMounts()
-    CR->>AG: docker run + stdin JSON
-    AG->>CP: API calls (provider proxy route)
-    CP->>CP: Inject real credentials
-    AG->>AG: Selected backend adapter turn
-    AG->>CR: stdout markers (OUTPUT_START/END)
-    CR->>CH: sendMessage()
+    GQ->>REG: resolve backend (task › group › global › claude)
+    alt claude / openai / llama-cpp
+        REG->>CR: spawn container (if slot free)
+        CR->>CR: buildVolumeMounts()
+        CR->>AG: docker run + stdin JSON
+        alt claude / openai
+            AG->>CP: API calls (provider proxy route)
+            CP->>CP: Inject real credentials
+        else llama-cpp
+            AG->>AG: Direct call to local llama-server (no proxy, no API key)
+        end
+        AG->>AG: Selected backend adapter turn
+        AG->>CR: stdout markers (OUTPUT_START/END)
+        CR->>CH: sendMessage()
+        CR->>CR: logInteraction() fire-and-forget
+    else deus-native (opt-in)
+        REG->>DN: invoke in-process (no container spawn)
+        DN->>CP: proxy-routed model calls
+        CP->>CP: Inject real credentials
+        DN->>DN: LangChain/LangGraph turn (restricted tool surface)
+        DN->>CH: sendMessage()
+    end
     CH->>U: Deliver response
-    CR->>CR: logInteraction() fire-and-forget
 ```
 
 Key details:
 - **Channels are MCP servers** — each runs as a child process, communicating via JSON-RPC over stdio.
 - **Message loop polls SQLite**, not the channels directly. This decouples channel connectivity from message processing.
-- **Group queue** enforces one container per group. Follow-up messages pipe to the active container via IPC files; they don't spawn a new one.
+- **Group queue** enforces one container per group for the containerized backends. Follow-up messages pipe to the active container via IPC files; they don't spawn a new one.
 - **Containers never see credentials** — backend adapters use provider-specific proxy routes (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, etc.), and the host injects real tokens at request time.
+- **`deus-native` (opt-in) never spawns a container** — it runs the LangChain/LangGraph agent loop in-process on the host and routes model calls through the same credential proxy.
 
 ---
 
@@ -523,7 +545,7 @@ Core modules in `src/`:
 | `auth-providers/` | AuthProvider interface + Anthropic provider (API key + OAuth) |
 | `channels/` | Channel registry + MCP adapter factories |
 | `skills/` | Host-side skill IPC handler loader |
-| `agent-runtimes/` | Backend registry + `AgentRuntime` interface; concrete backends: claude, openai, llama-cpp; resolution precedence in `resolve.ts` |
+| `agent-runtimes/` | Backend registry + `AgentRuntime` interface; four registered runtimes: claude (default), openai, llama-cpp, and the opt-in `deus-native` (host-side LangChain/LangGraph runtime); resolution precedence in `resolve.ts` |
 | `tool-proxy.ts` | HTTP proxy (:3003) executing allowlisted host CLIs for container agents; credentials injected at spawn time |
 | `tool-registry.ts` | Allowlist at `~/.deus/tool-registry.json`; guards which CLIs tool-proxy may execute |
 | `multi-agent/` | Multi-agent orchestration: topological task sort, parallel read fan-out, DONE/BLOCKED result contract |
