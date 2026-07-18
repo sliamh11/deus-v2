@@ -1,5 +1,12 @@
 # TUI Visual Verification Checklist
 
+**ARCHIVED (LIA-389, 2026-07-17):** the Rust TUI was archived and removed
+from main — see `docs/decisions/tui-archival.md`. The build command below no
+longer works against main; the implementation is preserved on
+`legacy/tui-phase1` for anyone who needs to reconstruct or reference these
+checks. Kept as a historical record of what was manually verified while the
+TUI was live, not as an active checklist.
+
 One-time checklist to verify TUI visual states that automated tests cannot
 cover. Created to close the chronic deferral from RETRO-2026-05-16-03.
 Source line numbers are snapshots from 2026-05-16; see the commit for exact

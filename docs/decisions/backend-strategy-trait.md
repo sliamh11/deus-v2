@@ -1,8 +1,9 @@
 # Backend Strategy Trait
 
-**Status:** Accepted
+**Status:** Superseded (2026-07-17) — its scope, `tui/src/backend/`, was removed from main by [tui-archival.md](tui-archival.md) (LIA-389) and preserved on the `legacy/tui-phase1` branch. This Rust `Backend` trait applied only to the archived TUI's own provider abstraction and was never shared with the Node.js/`deus-native` runtime; it must not be confused with that active architecture. See `backend-neutral-agent-runtime.md` / `deus-v2-langchain-runtime.md` for the current provider-abstraction ADRs.
 **Date:** 2026-05-02
-**Scope:** `tui/src/backend/`, `AGENTS.md`, all future provider integrations
+**Scope:** `tui/src/backend/`, `AGENTS.md`, all future provider integrations (archived; historical record below)
+**Related:** [tui-archival.md](tui-archival.md)
 
 ## Context
 

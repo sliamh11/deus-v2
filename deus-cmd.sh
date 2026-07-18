@@ -3,6 +3,13 @@ PLIST="$HOME/Library/LaunchAgents/com.deus.plist"
 DEUS_PROJECTS_DIR="$HOME/.config/deus/projects"
 readonly DEUS_SKILLS_DIR="$HOME/.claude/skills"
 
+# Rust TUI archival (LIA-389, docs/decisions/tui-archival.md). The implementation
+# was removed from main and preserved on the `legacy/tui-phase1` branch/tag.
+# This exact string is the frozen test oracle for
+# scripts/tests/test_deus_cmd_print_identity.py — do not edit either side
+# without updating the other.
+readonly DEUS_TUI_ARCHIVED_MSG="The Rust TUI was archived (LIA-389). Use 'deus chat' for terminal chat."
+
 # Resolve symlinks so SCRIPT_DIR always points to the repo, even when
 # called via /usr/local/bin/deus → ~/deus/deus-cmd.sh symlink.
 # Seed from $ZSH_ARGZERO, not $0: inside a zsh function $0 is the function name
@@ -786,18 +793,16 @@ sys.exit(1)
     ( sleep 1; python3 -m webbrowser "$WEBUI_URL" >/dev/null 2>&1 ) &
     ;;
   home|""|--print-identity)
-    # Bare `deus` / `deus home`. Optional --chrome / TUI via config keys.
+    # Bare `deus` / `deus home`. Optional --chrome via config key.
     # `--print-identity` runs the same launch branch but prints the exact
     # --append-system-prompt payload instead of launching (GH #1004).
+    # The Rust TUI (and its `tui_default` config key) was archived — see
+    # DEUS_TUI_ARCHIVED_MSG above (LIA-389).
     CHROME_FLAG=""
-    TUI_DEFAULT="false"
     AGENTS_MODE="false"
     PRINT_IDENTITY="false"
     if [ "$(_read_config_key chrome_default)" = "true" ]; then
       CHROME_FLAG="--chrome"
-    fi
-    if [ "$(_read_config_key tui_default)" = "true" ]; then
-      TUI_DEFAULT="true"
     fi
     for _arg in "$@"; do
       if [ "$_arg" = "--agents" ]; then
@@ -807,6 +812,12 @@ sys.exit(1)
         PRINT_IDENTITY="true"
       fi
     done
+    # Stale tui_default nudge: skip in print mode so a VS Code panel calling
+    # --print-identity on every session open doesn't get noise on every call.
+    if [ "$PRINT_IDENTITY" != "true" ] && [ "$(_read_config_key tui_default)" = "true" ]; then
+      # Stale tui_default nudge (LIA-389): TUI archived, terminal chat is the replacement.
+      echo "$DEUS_TUI_ARCHIVED_MSG" >&2
+    fi
     # Print mode must never exec an interactive UI — the query flag wins.
     if [ "$AGENTS_MODE" = "true" ] && [ "$PRINT_IDENTITY" != "true" ]; then
       exec claude agents
@@ -817,28 +828,6 @@ sys.exit(1)
       exec 3>&1 1>&2
     fi
 
-    _launch_tui_with_context() {
-      local ctx_content="$1"
-      local initial_prompt="$2"
-      local mode="$3"
-      local tui_bin="$SCRIPT_DIR/tui/target/release/deus-tui"
-      if [ ! -x "$tui_bin" ]; then
-        printf "  Building TUI...\r"
-        (cd "$SCRIPT_DIR/tui" && cargo build --release) || { echo "TUI build failed."; exit 1; }
-      fi
-      local ctx_file=""
-      if [ -n "$ctx_content" ]; then
-        ctx_file=$(mktemp "${TMPDIR:-/tmp}/deus-tui-ctx.XXXXXX")
-        chmod 0600 "$ctx_file"
-        printf '%s' "$ctx_content" > "$ctx_file"
-        export DEUS_TUI_CONTEXT_FILE="$ctx_file"
-      fi
-      [ -n "$initial_prompt" ] && export DEUS_TUI_INITIAL_PROMPT="$initial_prompt"
-      export DEUS_TUI_BYPASS="${PREFS_BYPASS:-true}"
-      export DEUS_TUI_MODE="$mode"
-      export DEUS_TUI_BACKEND="$CLI_AGENT"
-      exec "$tui_bin"
-    }
     # Print mode is a pure query: no credential access, no service restart —
     # a VS Code panel may call --print-identity on every session open.
     if [ "$PRINT_IDENTITY" != "true" ]; then
@@ -1243,14 +1232,10 @@ $STARTUP_INSTRUCTION"
         FULL_PROMPT="$STARTUP_INSTRUCTION"
       fi
 
-      # Print mode exits here — before the TUI check, which is therefore
-      # unreachable when PRINT_IDENTITY=true.
+      # Print mode exits here.
       if [ "$PRINT_IDENTITY" = "true" ]; then
         printf '%s' "$FULL_PROMPT" >&3
         exit 0
-      fi
-      if [ "$TUI_DEFAULT" = "true" ]; then
-        cd "$CURRENT_DIR" && _launch_tui_with_context "$FULL_PROMPT" "" "external"
       fi
       launch_agent --append-system-prompt "$FULL_PROMPT"
       exit $?
@@ -1295,15 +1280,12 @@ $STARTUP_INSTRUCTION"
       INITIAL_MSG="Catch me up."
     fi
 
-    # Print mode exits here — before the TUI check (unreachable in print
-    # mode). Home FULL_PROMPT may be empty (no vault context): printed as-is;
-    # the consuming wrapper fails open to plain claude on empty output.
+    # Print mode exits here. Home FULL_PROMPT may be empty (no vault
+    # context): printed as-is; the consuming wrapper fails open to plain
+    # claude on empty output.
     if [ "$PRINT_IDENTITY" = "true" ]; then
       printf '%s' "$FULL_PROMPT" >&3
       exit 0
-    fi
-    if [ "$TUI_DEFAULT" = "true" ]; then
-      cd "$HOME/deus" && _launch_tui_with_context "$FULL_PROMPT" "$INITIAL_MSG" "home"
     fi
 
     if [ -n "$FULL_PROMPT" ] && [ -n "$INITIAL_MSG" ]; then
@@ -1529,13 +1511,9 @@ $STARTUP_INSTRUCTION"
     exec python3 "$SCRIPT_DIR/scripts/memory_tree.py" calibrate-sweep "$bench_file" --json
     ;;
   tui)
-    shift
-    local tui_bin="$SCRIPT_DIR/tui/target/release/deus-tui"
-    if [[ ! -x "$tui_bin" ]]; then
-      echo "TUI binary not found. Building..."
-      (cd "$SCRIPT_DIR/tui" && cargo build --release) || { echo "Build failed. Install Rust: https://rustup.rs"; exit 1; }
-    fi
-    exec "$tui_bin" "$@"
+    # `deus tui` archived (LIA-389): the Rust TUI is gone, `deus chat` replaces it.
+    echo "$DEUS_TUI_ARCHIVED_MSG" >&2
+    exit 1
     ;;
   build)
     shift
@@ -1736,7 +1714,7 @@ $STARTUP_INSTRUCTION"
     esac
     ;;
   *)
-    echo "Usage: deus [claude|codex] [home|init|arch|auth|build|chat|web|backend|gcal|listen|logs|model|provider|pipeline|preflight|solution|sweep|tui] [--agents] [--print-identity]"
+    echo "Usage: deus [claude|codex] [home|init|arch|auth|build|chat|web|backend|gcal|listen|logs|model|provider|pipeline|preflight|solution|sweep] [--agents] [--print-identity]"
     echo ""
     echo "  deus            Launch in current directory (external project mode if not ~/deus)"
     echo "  deus codex      Launch with Codex (OpenAI) for this session"
@@ -1766,7 +1744,6 @@ $STARTUP_INSTRUCTION"
     echo "  deus preflight  Check if another live session is working this git tree (read-only; exit 6 on collision)"
     echo "  deus solution   Manage solution atoms (list|search|add)"
     echo "  deus sweep      Run threshold calibration sweep against benchmark queries"
-    echo "  deus tui        Interactive terminal UI (set tui_default=true in config to use by default)"
     echo "  deus chat       Terminal chat; use 'deus chat model set|show' for model selection"
     echo ""
     echo "Flags:"

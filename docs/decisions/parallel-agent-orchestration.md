@@ -1,8 +1,9 @@
 # Parallel Agent Orchestration (TUI Sidechains)
 
-**Status:** Accepted  
+**Status:** Archived (2026-07-17) — implementation removed from main by [tui-archival.md](tui-archival.md) (LIA-389) and preserved on the `legacy/tui-phase1` branch. The multi-session Ctrl+B picker design described below is explicitly NOT replaced by `deus chat` — see tui-archival.md's residual-gaps list.  
 **Date:** 2026-05-03  
-**Scope:** `tui/src/app.rs`, `tui/src/backend/`, `tui/src/panels/`, `tui/src/ui.rs`, `tui/src/main.rs`
+**Scope:** `tui/src/app.rs`, `tui/src/backend/`, `tui/src/panels/`, `tui/src/ui.rs`, `tui/src/main.rs` (archived; historical record below)  
+**Related:** [tui-archival.md](tui-archival.md)
 
 ## Context
 

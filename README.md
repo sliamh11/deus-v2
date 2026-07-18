@@ -125,7 +125,7 @@ See [AGENTS.md](AGENTS.md#commands-and-skills) for all available skills.
 | `deus auth` | Rebuild and restart background services |
 | `deus gcal` | Google Calendar token management (`status`, `auth`, `ping`) |
 | `deus listen` | Record from mic, transcribe locally, copy to clipboard |
-| `deus tui` | Full-screen terminal UI for chat, wardens, services, and channels |
+| `deus chat` | Interactive terminal chat over the daemon-owned `deus-native` runtime; `deus chat model set\|show` for model selection, `/plan on\|off` in-chat for read-only mode |
 | `deus pipeline` | Live pipeline monitor (default), or one-shot audit (`PROJ-123`, `--failed`, `--active`) |
 | `deus usage` | Token-efficiency + cost report across all projects (`--since`, `--project`, `--pricing`, `--json`) |
 | `deus backend` | Show active agent backend (`claude`, `codex`, `llama-cpp`) |

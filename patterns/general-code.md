@@ -38,7 +38,7 @@ Scope required (e.g. `evolution`, `container`, `skills`, `startup-gate`).
 
 ## ADR gate
 
-**Before modifying `eval/`, `evolution/`, `src/startup-gate.ts`, `src/checks.ts`, `setup/`, `tui/src/backend/`, or `scripts/memory_indexer.py`**: read `docs/decisions/INDEX.md` first. Past decisions have non-obvious permanent constraints. Skipping the index has caused regressions.
+**Before modifying `eval/`, `evolution/`, `src/startup-gate.ts`, `src/checks.ts`, `setup/`, or `scripts/memory_indexer.py`**: read `docs/decisions/INDEX.md` first. Past decisions have non-obvious permanent constraints. Skipping the index has caused regressions. (`tui/src/backend/` was archived — LIA-389, `docs/decisions/tui-archival.md`.)
 
 **Before changing session-log consolidation** (`src/consolidation-core.ts`, `src/auto-compress.ts`, `src/webui-consolidation.ts`, `src/memory-session-log.ts`): follow `docs/consolidation-contract.md`. The bytes handed to `memory_indexer.py --add` must stay stable — `src/consolidation-golden.test.ts` pins them as `@oracle` snapshots.
 

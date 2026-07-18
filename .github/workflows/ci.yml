@@ -157,26 +157,6 @@ jobs:
             echo "::endgroup::"
           done
 
-  test-tui:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - name: Build
-        working-directory: tui
-        run: cargo build --release
-      - name: Clippy
-        working-directory: tui
-        run: cargo clippy -- -D warnings
-      - name: Format check
-        working-directory: tui
-        run: cargo fmt -- --check
-      - name: Tests
-        working-directory: tui
-        run: cargo test
-
   test-windows:
     # Pinned: windows-latest moved to a VS 18 image that node-gyp 10.x cannot
     # detect, breaking the better-sqlite3 native build at `npm ci`. windows-2022
