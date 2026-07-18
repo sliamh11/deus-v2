@@ -84,6 +84,7 @@ export const KNOWN_UNSUPPORTED_SKILL_DISPOSITIONS: Record<string, string> = {
 
 const DEFAULT_SKILL_MAX_CHARS = 20_000;
 
+// DEUS_SKILL_MAX_CHARS: tracking issue LIA-426 (this ticket).
 function skillMaxChars(): number {
   const parsed = Number.parseInt(process.env.DEUS_SKILL_MAX_CHARS || '', 10);
   return Number.isFinite(parsed) && parsed > 0
