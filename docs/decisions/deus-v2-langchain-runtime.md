@@ -281,6 +281,36 @@ parity remain explicitly deferred as `AAG-016`. The new path does not consult
 or enable the legacy `HOOK_DISPATCH_ENABLED`/`:3002` gate, so
 `hook-dispatch-facade-correction.md` requires no corresponding update.
 
+## Addendum: F4/LIA-426 Skill Instruction-Pack Loading (2026-07-18)
+
+F4 adds `container/agent-runner/src/skill-context-loader.ts`, a lazy
+discovery/injection module for `SKILL.md` instruction packs inside F1's
+`deus-native` container driver, plus one bound tool: `load_skill`, a local,
+read-only instruction resolver. This does not widen F1's tool-parity license
+described above — `load_skill` is not a broker/MCP tool, executes no code,
+and grants no new capability; `deus-native-backend.ts`'s bound-tools
+invariant test now explicitly pins it as the sole permitted non-broker name.
+
+Skill discovery is a Registry (`RuntimeSkillRegistry`) built once per
+container conversation from the same personal/project/extra roots
+`context-registry.ts` already reads `AGENTS.md`/`CLAUDE.md` from. Instruction
+bodies are injected UNWRAPPED (no untrusted-content sentinel), matching that
+existing precedent — this is parity with an accepted trust posture (and with
+Claude Code's own baseline auto-invoked project/user skills), not a new
+attack surface. A discriminated-union result (`ok: true | false`) reports
+missing/invalid/unsupported/not-invocable skills as an actionable, HANDLED
+turn result (`status: 'success'`), never a transport-level error — the same
+discipline the container IPC protocol already requires elsewhere.
+
+This is a strictly separate mechanism from `skill-mcp-registry.ts`'s
+executable MCP tool registration (skills shipping real code via
+`agent.js`/`agent.ts`, e.g. `x-integration`) — F4 does not touch that path,
+and the two pre-existing breaks it does not repair (`x-integration`'s broken
+MCP registration, `add-ollama-tool`'s hardcoded MCP server list) are
+explicitly preserved as recorded limitations, both excluded from the
+model-invocation catalog and returning their documented disposition on
+direct invocation. See `docs/KNOWN_LIMITATIONS.md`.
+
 ## References
 
 - Deep-research report (vault): `Research/2026-07-13-deus-v2-base-harness-selection.md`

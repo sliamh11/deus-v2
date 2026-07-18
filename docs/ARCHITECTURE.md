@@ -230,6 +230,7 @@ graph TB
 - **MessageStream**: push-based async iterable that feeds follow-up messages (from IPC polling) to the backend adapter without closing the session.
 - **IPC MCP Server**: exposes `send_message`, `schedule_task`, `list_tasks`, and other tools to the agent. All IPC goes through files in `/workspace/ipc/`.
 - **Container skills**: compiled from `.claude/skills/*/agent.ts` at build time; loaded dynamically by `skill-mcp-registry.ts`.
+- **`deus-native` skill loading (LIA-426/F4)**: two parallel, unrelated paths — `SKILL.md` instruction packs are discovered lazily and injected as context by `skill-context-loader.ts` (the common case, no code execution); `agent.ts`/`agent.js` skills that ship executable code still go through `skill-mcp-registry.ts`'s MCP tool registration above, untouched by F4.
 
 ### Volume mount rules
 
