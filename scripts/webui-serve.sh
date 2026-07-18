@@ -19,20 +19,26 @@
 #        deus web                          (backgrounds this + opens the browser)
 set -euo pipefail
 
-DEUS_ROOT="${DEUS_ROOT:-$HOME/deus}"
+# LIA-451: default resolves from this script's own checkout (SCRIPT_DIR), not
+# a hardcoded $HOME/deus — so it works when this checkout lives at ~/deus-v2
+# (or any other install path), not just v1's ~/deus. Same pattern already used
+# elsewhere for install-path independence (docs/decisions/live-command-freshness.md).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEUS_ROOT="${DEUS_ROOT:-$SCRIPT_DIR}"
 ENV_FILE="$DEUS_ROOT/.env"
 SECRET_FILE="$DEUS_ROOT/.webui_secret_key"
-WEBUI_PORT="${WEBUI_PORT:-8090}"
+# LIA-451: 8190, distinct from v1's 8090 default.
+WEBUI_PORT="${WEBUI_PORT:-8190}"
 WEBUI_HOST="${WEBUI_HOST:-127.0.0.1}"
 
 # Deus endpoint token + port (from the gitignored .env; never hard-coded).
 # Port resolution: caller-provided $DEUS_PORT (e.g. `deus web` passes the
-# plist-aware value) → .env ODYSSEUS_HTTP_PORT → 3005 (the .env.example /
-# config.ts default; user-agnostic, never a host-specific value).
+# plist-aware value) → .env ODYSSEUS_HTTP_PORT → 3105 (LIA-451's config.ts
+# default for this instance; user-agnostic, never a host-specific value).
 [ -f "$ENV_FILE" ] || { echo "FATAL: $ENV_FILE not found" >&2; exit 1; }
 DEUS_TOKEN="$(grep -E '^ODYSSEUS_HTTP_TOKEN=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
 DEUS_PORT="${DEUS_PORT:-$(grep -E '^ODYSSEUS_HTTP_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)}"
-DEUS_PORT="${DEUS_PORT:-3005}"
+DEUS_PORT="${DEUS_PORT:-3105}"
 [ -n "$DEUS_TOKEN" ] || { echo "FATAL: ODYSSEUS_HTTP_TOKEN missing in $ENV_FILE" >&2; exit 1; }
 
 # Stable signing key so sessions survive restarts (generated once, gitignored).
@@ -40,7 +46,8 @@ if [ ! -f "$SECRET_FILE" ]; then
   head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32 > "$SECRET_FILE"
 fi
 
-export DATA_DIR="${DATA_DIR:-$HOME/.deus/owui}"
+# LIA-451: ~/.deus-v2 runtime-state root, distinct from v1's ~/.deus.
+export DATA_DIR="${DATA_DIR:-$HOME/.deus-v2/owui}"
 mkdir -p "$DATA_DIR"
 
 # ── Backend: Deus only ──────────────────────────────────────────────────────

@@ -56,11 +56,11 @@ def test_print_identity_redirects_progress_noise_to_stderr():
 def test_print_identity_skips_oauth_and_kickstart():
     script = _script()
     # The OAuth token resolution + kickstart block is guarded so print mode
-    # never touches credentials or restarts the com.deus service.
+    # never touches credentials or restarts the com.deus-v2 service (LIA-451).
     guard = script.index('if [ "$PRINT_IDENTITY" != "true" ]; then\n    TOKEN=$(python3')
     token = script.index("TOKEN=$(python3", guard)
     kick = script.index(
-        'launchctl kickstart -k "gui/$(id -u)/com.deus" 2>/dev/null', token
+        'launchctl kickstart -k "gui/$(id -u)/com.deus-v2" 2>/dev/null', token
     )
     assert guard < token < kick
 

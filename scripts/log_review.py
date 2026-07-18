@@ -44,7 +44,7 @@ from _time import local_now, utc_now  # noqa: E402
 PROJECT_ROOT = Path(__file__).parent.parent
 LOGS_DIR = PROJECT_ROOT / 'logs'
 GROUPS_DIR = PROJECT_ROOT / 'groups'
-DEUS_DIR = Path.home() / '.deus'
+DEUS_DIR = Path.home() / '.deus-v2'  # LIA-451: namespaced away from v1's ~/.deus
 STATE_FILE = DEUS_DIR / 'log_review_state.json'
 REPORTS_DIR = DEUS_DIR / 'reviews'
 PINNED_FILE = REPORTS_DIR / 'pinned.md'
@@ -65,7 +65,7 @@ MAX_ENTRIES_PER_REVIEW = 150   # cap to avoid huge Ollama prompts
 # activity window: a healthy low-traffic day still logs within the window, so it only
 # fires on a sustained >=48h of dispatch activity with zero logged interactions.
 EVOLUTION_DB = Path(
-    os.environ.get('DEUS_EVOLUTION_DB', '~/.deus/evolution.db')
+    os.environ.get('DEUS_EVOLUTION_DB', '~/.deus-v2/evolution.db')
 ).expanduser()
 HEARTBEAT_ACTIVITY_WINDOW_H = float(
     os.environ.get('EVOLUTION_HEARTBEAT_ACTIVITY_WINDOW_H', '48')
@@ -587,7 +587,7 @@ def _pin_issue(date: str, analysis: str, report_path: Path) -> None:
         subprocess.run([
             'osascript', '-e',
             f'display notification "Health: {health}" with title "Deus Log Review" '
-            f'subtitle "Issues pinned — check ~/.deus/reviews/pinned.md"'
+            f'subtitle "Issues pinned — check ~/.deus-v2/reviews/pinned.md"'
         ], timeout=5, capture_output=True)
     except Exception:
         pass

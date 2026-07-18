@@ -34,9 +34,9 @@ export async function run(_args: string[]): Promise<void> {
   if (mgr === 'launchd') {
     try {
       const output = execSync('launchctl list', { encoding: 'utf-8' });
-      if (output.includes('com.deus')) {
+      if (output.includes('com.deus-v2')) {
         // Check if it has a PID (actually running)
-        const line = output.split('\n').find((l) => l.includes('com.deus'));
+        const line = output.split('\n').find((l) => l.includes('com.deus-v2'));
         if (line) {
           const pidField = line.trim().split(/\s+/)[0];
           service = pidField !== '-' && pidField ? 'running' : 'stopped';
@@ -48,14 +48,14 @@ export async function run(_args: string[]): Promise<void> {
   } else if (mgr === 'systemd') {
     const prefix = isRoot() ? 'systemctl' : 'systemctl --user';
     try {
-      execSync(`${prefix} is-active deus`, { stdio: 'ignore' });
+      execSync(`${prefix} is-active deus-v2`, { stdio: 'ignore' });
       service = 'running';
     } catch {
       try {
         const output = execSync(`${prefix} list-unit-files`, {
           encoding: 'utf-8',
         });
-        if (output.includes('deus')) {
+        if (output.includes('deus-v2')) {
           service = 'stopped';
         }
       } catch {
@@ -64,7 +64,7 @@ export async function run(_args: string[]): Promise<void> {
     }
   } else if (mgr === 'nssm') {
     try {
-      const out = execSync('nssm status deus', {
+      const out = execSync('nssm status deus-v2', {
         encoding: 'utf-8',
         stdio: 'pipe',
       });
@@ -74,7 +74,7 @@ export async function run(_args: string[]): Promise<void> {
     }
   } else if (mgr === 'servy') {
     try {
-      const out = execSync('servy-cli status --name="deus"', {
+      const out = execSync('servy-cli status --name="deus-v2"', {
         encoding: 'utf-8',
         stdio: 'pipe',
       });

@@ -24,7 +24,8 @@ param(
 
 # Resolve DeusHome from script location (works regardless of clone path)
 $DeusHome = if ($env:DEUS_HOME) { $env:DEUS_HOME } else { Split-Path -Parent $PSCommandPath }
-$ServiceName = "deus"
+# LIA-451: "deus-v2", namespaced away from v1's "deus" service name.
+$ServiceName = "deus-v2"
 $LogFile = "$DeusHome\logs\deus.log"
 $ErrorLog = "$DeusHome\logs\deus.error.log"
 
@@ -45,7 +46,7 @@ function Invoke-Claude {
 
 function Read-ConfigKey {
     param([string]$Key)
-    $configPath = "$env:USERPROFILE\.config\deus\config.json"
+    $configPath = "$env:USERPROFILE\.config\deus-v2\config.json"
     if (-not (Test-Path $configPath)) { return "" }
     try {
         $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -56,7 +57,7 @@ function Read-ConfigKey {
 
 function Write-ConfigKey {
     param([string]$Key, [string]$Value)
-    $configPath = "$env:USERPROFILE\.config\deus\config.json"
+    $configPath = "$env:USERPROFILE\.config\deus-v2\config.json"
     $configDir = Split-Path -Parent $configPath
     if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
     $cfg = @{}
@@ -183,8 +184,10 @@ function Get-DeusServiceStatus {
         }
         "none" {
             # Fall back to checking if the process is running
+            # LIA-451: match this v2 checkout's own process path, not v1's
+            # "*\deus\*" -- otherwise a v1 process would false-positive here.
             $proc = Get-Process -Name "node" -ErrorAction SilentlyContinue |
-                Where-Object { $_.MainModule.FileName -like "*\deus\*" }
+                Where-Object { $_.MainModule.FileName -like "*\deus-v2\*" }
             if ($proc) {
                 Write-Host "Deus is running (PID $($proc.Id))" -ForegroundColor Green
             } else {
@@ -219,7 +222,7 @@ function Read-VaultFile {
 function Get-VaultPath {
     $envVault = $env:DEUS_VAULT_PATH
     if ($envVault) { return $envVault }
-    $configPath = "$env:USERPROFILE\.config\deus\config.json"
+    $configPath = "$env:USERPROFILE\.config\deus-v2\config.json"
     if (Test-Path $configPath) {
         try {
             $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -256,7 +259,7 @@ This repo (~/deus) is the infrastructure that powers you. See README.md for phil
 }
 
 function Get-DeusPreferences {
-    $configPath = "$env:USERPROFILE\.config\deus\config.json"
+    $configPath = "$env:USERPROFILE\.config\deus-v2\config.json"
     $defaults = @{
         name = ""
         catch_me_up = $true
@@ -286,7 +289,7 @@ function Get-ProjectMemorySettings {
         $md5 = [System.Security.Cryptography.MD5]::Create()
         $hashBytes = $md5.ComputeHash($bytes)
         $hash = -join ($hashBytes | ForEach-Object { $_.ToString("x2") })
-        $projectConfigPath = Join-Path $env:USERPROFILE ".config\deus\projects\$hash.json"
+        $projectConfigPath = Join-Path $env:USERPROFILE ".config\deus-v2\projects\$hash.json"
         if (-not (Test-Path $projectConfigPath)) { return $defaults }
 
         $cfg = Get-Content $projectConfigPath -Raw | ConvertFrom-Json

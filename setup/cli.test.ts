@@ -84,7 +84,7 @@ describe('setup/cli', () => {
 
     // Create an existing dead symlink
     const binDir = path.join(os.homedir(), '.local', 'bin');
-    const linkPath = path.join(binDir, 'deus');
+    const linkPath = path.join(binDir, 'deus-v2');
     fs.mkdirSync(binDir, { recursive: true });
     try {
       fs.unlinkSync(linkPath);
@@ -108,7 +108,7 @@ describe('setup/cli', () => {
     vi.mocked(getPlatform).mockReturnValue('macos');
 
     const binDir = path.join(os.homedir(), '.local', 'bin');
-    const linkPath = path.join(binDir, 'deus');
+    const linkPath = path.join(binDir, 'deus-v2');
     fs.mkdirSync(binDir, { recursive: true });
     try {
       fs.unlinkSync(linkPath);
@@ -130,7 +130,7 @@ describe('setup/cli', () => {
     vi.mocked(getPlatform).mockReturnValue('macos');
 
     const binDir = path.join(os.homedir(), '.local', 'bin');
-    const linkPath = path.join(binDir, 'deus');
+    const linkPath = path.join(binDir, 'deus-v2');
     fs.mkdirSync(binDir, { recursive: true });
     try {
       fs.unlinkSync(linkPath);

@@ -39,7 +39,10 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 // Absolute paths needed for container mounts
 export const PROJECT_ROOT = path.resolve(process.cwd());
 export const HOME_DIR = homeDir;
-export const CONFIG_DIR = path.join(HOME_DIR, '.config', 'deus');
+// LIA-451: deus-v2 namespaced away from v1's ~/.config/deus so the two
+// installs never share config/state (mount-allowlist, sender-allowlist,
+// webhook sources, ingress audit).
+export const CONFIG_DIR = path.join(HOME_DIR, '.config', 'deus-v2');
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
@@ -54,8 +57,11 @@ export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
+// LIA-451: no hyphen after "deus" -- v1's orphan-cleanup filter
+// (container-runtime.ts, `docker ps --filter name=deus-`) is a substring
+// match; "deusv2-..." doesn't contain "deus-" so v1's sweep never touches it.
 export const CONTAINER_IMAGE =
-  process.env.CONTAINER_IMAGE || 'deus-agent:latest';
+  process.env.CONTAINER_IMAGE || 'deusv2-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
   10,
@@ -64,12 +70,15 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
   10,
 ); // 10MB default
+// LIA-451: 3101/3103/3105/3109 (below) are v2's collision-free port set
+// against v1's 3001/3003/3005/3009 defaults, so both instances can bind
+// concurrently.
 export const CREDENTIAL_PROXY_PORT = parseInt(
-  process.env.CREDENTIAL_PROXY_PORT || '3001',
+  process.env.CREDENTIAL_PROXY_PORT || '3101',
   10,
 );
 export const TOOL_PROXY_PORT = parseInt(
-  process.env.TOOL_PROXY_PORT || '3003',
+  process.env.TOOL_PROXY_PORT || '3103',
   10,
 );
 // Odysseus `/v1/chat/completions` web channel (path-(a) GUI). Off by default.
@@ -79,7 +88,7 @@ export const ODYSSEUS_HTTP_ENABLED =
   process.env.ODYSSEUS_HTTP_ENABLED === '1' ||
   process.env.ODYSSEUS_HTTP_ENABLED === 'true';
 export const ODYSSEUS_HTTP_PORT = parseInt(
-  process.env.ODYSSEUS_HTTP_PORT || '3005',
+  process.env.ODYSSEUS_HTTP_PORT || '3105',
   10,
 );
 
@@ -93,12 +102,13 @@ export const INGRESS_GATEWAY_ENABLED =
   process.env.INGRESS_GATEWAY_ENABLED === 'true';
 export const INGRESS_GATEWAY_HOST =
   process.env.INGRESS_GATEWAY_HOST || '127.0.0.1';
-// Default 3009: collision-free against every other service default
-// (cred-proxy 3001, tool-proxy 3003, Odysseus 3005) and against the common
-// Odysseus deployment port 3007. A shared port would EADDRINUSE deep in startup
-// — detectPortCollision() (checks.ts) guards against it as a fatal startup check.
+// Default 3109 (LIA-451): collision-free against every other v2 service
+// default (cred-proxy 3101, tool-proxy 3103, Odysseus 3105) and against v1's
+// entire 3001/3003/3005/3009 set, so both instances can bind concurrently.
+// A shared port would EADDRINUSE deep in startup — detectPortCollision()
+// (checks.ts) guards against it as a fatal startup check.
 export const INGRESS_GATEWAY_PORT = parseInt(
-  process.env.INGRESS_GATEWAY_PORT || '3009',
+  process.env.INGRESS_GATEWAY_PORT || '3109',
   10,
 );
 export const INGRESS_MAX_BODY_BYTES = parseInt(

@@ -27,10 +27,14 @@ from pathlib import Path
 
 EVOLUTION_DIR = Path(__file__).parent
 ARTIFACTS_DIR = EVOLUTION_DIR / "artifacts"
-DB_PATH = Path(os.environ.get("DEUS_DB", "~/.deus/memory.db")).expanduser()
-EVOLUTION_DB_PATH = Path(os.environ.get("DEUS_EVOLUTION_DB", "~/.deus/evolution.db")).expanduser()
+# LIA-451: namespaced to ~/.deus-v2 / ~/.config/deus-v2 -- this is the
+# upstream constant memory_indexer.py's EVOLUTION_DB_PATH import resolves to,
+# so leaving it on v1's path would silently write this instance's evolution
+# data into v1's database.
+DB_PATH = Path(os.environ.get("DEUS_DB", "~/.deus-v2/memory.db")).expanduser()
+EVOLUTION_DB_PATH = Path(os.environ.get("DEUS_EVOLUTION_DB", "~/.deus-v2/evolution.db")).expanduser()
 CONFIG_ENV = Path(__file__).resolve().parent.parent / ".env"
-USER_CONFIG_ENV = Path("~/.config/deus/.env").expanduser()
+USER_CONFIG_ENV = Path("~/.config/deus-v2/.env").expanduser()
 _ENV_SEARCH_PATHS: list[Path] = [CONFIG_ENV, USER_CONFIG_ENV]
 
 # ── Ollama ────────────────────────────────────────────────────────────────────

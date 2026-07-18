@@ -7,7 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-IMAGE_NAME="deus-agent"
+# LIA-451: "deusv2-agent" (no hyphen after "deus") -- v1's orphan-cleanup
+# filter (container-runtime.ts, `docker ps --filter name=deus-`) is a
+# substring match that would otherwise still catch "deus-v2-agent"-tagged
+# containers.
+IMAGE_NAME="deusv2-agent"
 TAG="${1:-latest}"
 CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
 

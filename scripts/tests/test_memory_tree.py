@@ -2489,7 +2489,7 @@ class TestResolveVaultPath:
         original_expanduser = Path.expanduser
 
         def fake_expand(self):
-            if str(self) == "~/.config/deus/config.json":
+            if str(self) == "~/.config/deus-v2/config.json":
                 return cfg_path
             return original_expanduser(self)
 

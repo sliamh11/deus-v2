@@ -41,7 +41,7 @@ describe('scheduled python jobs (LIA-254 generic refactor)', () => {
       '/home/user',
       '/usr/bin/python3',
     );
-    expect(plist).toContain('<string>com.deus.maintenance</string>');
+    expect(plist).toContain('<string>com.deus-v2.maintenance</string>');
     expect(plist).toContain('/home/user/deus/scripts/maintenance.py');
     expect(plist).toContain('<integer>4</integer>'); // hour
     expect(plist).toContain('<integer>30</integer>'); // minute
@@ -55,7 +55,7 @@ describe('scheduled python jobs (LIA-254 generic refactor)', () => {
       '/home/user',
       '/usr/bin/python3',
     );
-    expect(plist).toContain('<string>com.deus.morning-report</string>');
+    expect(plist).toContain('<string>com.deus-v2.morning-report</string>');
     expect(plist).toContain(
       '/home/user/deus/scripts/maintenance/morning_report.py',
     );
@@ -76,7 +76,7 @@ function generatePlist(
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.deus</string>
+    <string>com.deus-v2</string>
     <key>ProgramArguments</key>
     <array>
         <string>${nodePath}</string>
@@ -136,7 +136,7 @@ describe('plist generation', () => {
       '/home/user/deus',
       '/home/user',
     );
-    expect(plist).toContain('<string>com.deus</string>');
+    expect(plist).toContain('<string>com.deus-v2</string>');
   });
 
   it('uses the correct node path', () => {
@@ -234,7 +234,7 @@ describe('Windows NSSM command generation', () => {
   it('builds correct install command', () => {
     const nodePath = 'C:\\Program Files\\nodejs\\node.exe';
     const projectRoot = 'C:\\Users\\user\\deus';
-    const svc = 'deus';
+    const svc = 'deus-v2';
     const distEntry = path.join(projectRoot, 'dist', 'index.js');
     const cmd = `nssm install ${svc} "${nodePath}" "${distEntry}"`;
     expect(cmd).toContain('nssm install deus');
@@ -264,7 +264,7 @@ describe('Windows NSSM command generation', () => {
 
 describe('Windows Servy command generation', () => {
   it('uses servy-cli binary (not servy)', () => {
-    const cmd = 'servy-cli install --name="deus"';
+    const cmd = 'servy-cli install --name="deus-v2"';
     expect(cmd).toContain('servy-cli');
     expect(cmd).not.toContain('"servy"');
   });
@@ -276,7 +276,7 @@ describe('Windows Servy command generation', () => {
   });
 
   it('uses Automatic startupType for boot persistence', () => {
-    const cmd = 'servy-cli install --name="deus" --startupType="Automatic"';
+    const cmd = 'servy-cli install --name="deus-v2" --startupType="Automatic"';
     expect(cmd).toContain('Automatic');
   });
 });
@@ -328,7 +328,7 @@ describe('Maintenance service generation', () => {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.deus.maintenance</string>
+    <string>com.deus-v2.maintenance</string>
     <key>ProgramArguments</key>
     <array>
         <string>${pythonPath}</string>
@@ -396,7 +396,7 @@ WantedBy=timers.target`;
       '/Users/test/deus',
       '/Users/test',
     );
-    expect(plist).toContain('com.deus.maintenance');
+    expect(plist).toContain('com.deus-v2.maintenance');
     expect(plist).toContain('scripts/maintenance.py');
     expect(plist).toContain('<integer>4</integer>');
     expect(plist).toContain('<integer>30</integer>');

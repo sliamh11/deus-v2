@@ -88,7 +88,7 @@ function setupLaunchd(
     homeDir,
     'Library',
     'LaunchAgents',
-    'com.deus.plist',
+    'com.deus-v2.plist',
   );
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
 
@@ -97,7 +97,7 @@ function setupLaunchd(
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.deus</string>
+    <string>com.deus-v2</string>
     <key>ProgramArguments</key>
     <array>
         <string>${nodePath}</string>
@@ -139,7 +139,7 @@ function setupLaunchd(
   let serviceLoaded = false;
   try {
     const output = execSync('launchctl list', { encoding: 'utf-8' });
-    serviceLoaded = output.includes('com.deus');
+    serviceLoaded = output.includes('com.deus-v2');
   } catch {
     // launchctl list failed
   }
@@ -206,7 +206,7 @@ function setupLogReviewLaunchd(projectRoot: string, homeDir: string): void {
     homeDir,
     'Library',
     'LaunchAgents',
-    'com.deus.log-review.plist',
+    'com.deus-v2.log-review.plist',
   );
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -214,7 +214,7 @@ function setupLogReviewLaunchd(projectRoot: string, homeDir: string): void {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.deus.log-review</string>
+    <string>com.deus-v2.log-review</string>
     <key>ProgramArguments</key>
     <array>
         <string>${pythonPath}</string>
@@ -272,13 +272,13 @@ function setupOAuthRefreshLaunchd(
     homeDir,
     'Library',
     'LaunchAgents',
-    'com.deus.oauth-refresh.plist',
+    'com.deus-v2.oauth-refresh.plist',
   );
   const logPath = path.join(
     homeDir,
     'Library',
     'Logs',
-    'com.deus.oauth-refresh.log',
+    'com.deus-v2.oauth-refresh.log',
   );
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
 
@@ -287,7 +287,7 @@ function setupOAuthRefreshLaunchd(
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.deus.oauth-refresh</string>
+    <string>com.deus-v2.oauth-refresh</string>
     <key>ProgramArguments</key>
     <array>
         <string>${nodePath}</string>
@@ -427,7 +427,7 @@ function setupSystemd(
   let systemctlPrefix: string;
 
   if (runningAsRoot) {
-    unitPath = '/etc/systemd/system/deus.service';
+    unitPath = '/etc/systemd/system/deus-v2.service';
     systemctlPrefix = 'systemctl';
     logger.info('Running as root — installing system-level systemd unit');
   } else {
@@ -443,7 +443,7 @@ function setupSystemd(
     }
     const unitDir = path.join(homeDir, '.config', 'systemd', 'user');
     fs.mkdirSync(unitDir, { recursive: true });
-    unitPath = path.join(unitDir, 'deus.service');
+    unitPath = path.join(unitDir, 'deus-v2.service');
     systemctlPrefix = 'systemctl --user';
   }
 
@@ -577,7 +577,7 @@ function setupNssm(
   nodePath: string,
   _homeDir: string,
 ): void {
-  const svc = 'deus';
+  const svc = 'deus-v2';
   const logOut = path.join(projectRoot, 'logs', 'deus.log');
   const logErr = path.join(projectRoot, 'logs', 'deus.error.log');
 
@@ -640,7 +640,7 @@ function setupServy(
   nodePath: string,
   _homeDir: string,
 ): void {
-  const svc = 'deus';
+  const svc = 'deus-v2';
   const logOut = path.join(projectRoot, 'logs', 'deus.log');
   const logErr = path.join(projectRoot, 'logs', 'deus.error.log');
 
@@ -841,8 +841,8 @@ function getWindowsPythonPath(): string {
 // setupMaintenance* functions). A new daily job = one more SCHEDULED_JOBS entry.
 
 export interface ScheduledJobSpec {
-  /** Canonical id: macOS label `com.deus.<id>`, linux unit `deus-<id>`,
-   *  windows task `Deus<PascalCase>`, log `logs/<id>.log`. */
+  /** Canonical id: macOS label `com.deus-v2.<id>`, linux unit `deus-v2-<id>`,
+   *  windows task `DeusV2<PascalCase>`, log `logs/<id>.log`. (LIA-451) */
   id: string;
   scriptRelPath: string; // POSIX-style relative path from the project root
   hour: number;
@@ -868,8 +868,9 @@ export const SCHEDULED_JOBS: ScheduledJobSpec[] = [
 ];
 
 function jobTaskName(id: string): string {
+  // LIA-451: "DeusV2<PascalCase>", namespaced away from v1's "Deus<PascalCase>".
   return (
-    'Deus' +
+    'DeusV2' +
     id
       .split('-')
       .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
@@ -885,7 +886,7 @@ export function buildScheduledJobPlist(
   homeDir: string,
   pythonPath: string,
 ): string {
-  const label = `com.deus.${spec.id}`;
+  const label = `com.deus-v2.${spec.id}`;
   const logPath = `${projectRoot}/logs/${spec.id}.log`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -930,7 +931,7 @@ function installScheduledJobLaunchd(
   spec: ScheduledJobSpec,
 ): void {
   const pythonPath = getPythonPath();
-  const label = `com.deus.${spec.id}`;
+  const label = `com.deus-v2.${spec.id}`;
   const plistPath = path.join(
     homeDir,
     'Library',
@@ -972,7 +973,8 @@ function installScheduledJobLinux(
     ? '/etc/systemd/system'
     : path.join(homeDir, '.config', 'systemd', 'user');
   const systemctlPrefix = runningAsRoot ? 'systemctl' : 'systemctl --user';
-  const unitBase = `deus-${spec.id}`;
+  // LIA-451: "deus-v2-<id>", namespaced away from v1's "deus-<id>" timer units.
+  const unitBase = `deus-v2-${spec.id}`;
   const logPath = `${projectRoot}/logs/${spec.id}.log`;
   const when = `${String(spec.hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}`;
 

@@ -49,10 +49,10 @@ from evolution.providers.embeddings import warmup_embedding_provider
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-CONFIG_PATH = Path("~/.config/deus/config.json").expanduser()
-DB_PATH = Path(os.environ.get("DEUS_DB", "~/.deus/memory.db")).expanduser()
-LAST_RESUME_LEARNINGS = Path("~/.deus/last_resume_learnings.txt").expanduser()
-HEALTH_LOG_PATH = Path("~/.deus/memory_health.jsonl").expanduser()
+CONFIG_PATH = Path("~/.config/deus-v2/config.json").expanduser()
+DB_PATH = Path(os.environ.get("DEUS_DB", "~/.deus-v2/memory.db")).expanduser()
+LAST_RESUME_LEARNINGS = Path("~/.deus-v2/last_resume_learnings.txt").expanduser()
+HEALTH_LOG_PATH = Path("~/.deus-v2/memory_health.jsonl").expanduser()
 
 # Entity extraction provider: "auto" tries Ollama (Gemma4) first, falls back to Gemini cascade.
 # "ollama" uses Ollama only.  "gemini" skips Ollama entirely.
@@ -70,7 +70,7 @@ def _load_vault_path() -> Path:
     Resolution order (highest priority first):
       1. DEUS_VAULT_PATH env var
       2. ./.deus/config.json in the current working directory (instance-local)
-      3. ~/.config/deus/config.json (global fallback)
+      3. ~/.config/deus-v2/config.json (global fallback)
 
     The cwd-local config (tier 2) makes each Deus instance self-contained: when
     several instances run on one machine and share the global config, this keeps
@@ -117,7 +117,7 @@ def _load_vault_path() -> Path:
     print(
         "ERROR: Memory vault not configured.\n"
         "Set DEUS_VAULT_PATH, add vault_path to ./.deus/config.json (per-instance),\n"
-        "or add vault_path to ~/.config/deus/config.json (global).\n"
+        "or add vault_path to ~/.config/deus-v2/config.json (global).\n"
         "Run `deus setup` or /setup in Claude Code to configure.",
         file=sys.stderr,
     )
@@ -315,7 +315,7 @@ def open_db() -> sqlite3.Connection:
     # change that takes a lock) waits rather than raising on a contended open.
     # 30s absorbs the long writers (e.g. reenrich_embeddings holds a txn across
     # many embed calls). Mirrors scripts/code_search.py (post-LIA-189).
-    # Safe here: DB lives under ~/.deus/ (local fs). WAL needs shared memory and
+    # Safe here: DB lives under ~/.deus-v2/ (local fs). WAL needs shared memory and
     # would fail on a network mount. (LIA-242)
     db.execute("PRAGMA busy_timeout=30000")
     db.execute("PRAGMA journal_mode=WAL")
@@ -1039,7 +1039,7 @@ def cmd_recent(n: int = 3, days: bool = False, compact: bool = False):
 def cmd_learnings(since_days: int = 7, max_items: int = 3):
     """Surface recently strengthened or new high-confidence atoms since last /resume.
 
-    Delta tracking: compares against ~/.deus/last_resume_learnings.txt to avoid
+    Delta tracking: compares against ~/.deus-v2/last_resume_learnings.txt to avoid
     showing the same learnings twice. Outputs nothing if no new learnings exist.
     """
     atom_count = len(list(_vault_atoms().glob("*.md"))) if _vault_atoms().exists() else 0
@@ -3943,7 +3943,7 @@ def cmd_health(save: bool = True) -> None:
       categories     — diversity of fact types extracted
       velocity       — atoms/day and corroboration rate between snapshots
 
-    Snapshots persisted to ~/.deus/memory_health.jsonl (append-only JSONL).
+    Snapshots persisted to ~/.deus-v2/memory_health.jsonl (append-only JSONL).
     One snapshot per calendar day — idempotent within a day.
     """
     db = open_db()
@@ -4436,7 +4436,7 @@ def main() -> int:
                        help="Surface recently strengthened/new atoms since last /resume (no API call)")
     group.add_argument("--health", action="store_true",
                        help="Print memory health report (atom quality, confidence, coverage trends) "
-                            "and save a daily snapshot to ~/.deus/memory_health.jsonl (no API call)")
+                            "and save a daily snapshot to ~/.deus-v2/memory_health.jsonl (no API call)")
     group.add_argument("--prune", action="store_true",
                        help="Enforce TTL expiry + clean orphan DB rows (no API call)")
     group.add_argument("--invalidate", metavar="PATH",
