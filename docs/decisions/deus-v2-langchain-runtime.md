@@ -247,6 +247,40 @@ web_fetch}` and remains the operative boundary; B7 added an authorization
   pass through the existing allowlist validator. This closes only the three
   instruction-file gaps; persona and broader memory surfaces remain separate.
 
+## Addendum: F1/LIA-423 Container Protocol Portability (2026-07-17)
+
+F1 adds a `deus-native` driver inside `container/agent-runner` as an additive,
+non-default protocol-portability proof. A caller that directly supplies
+`ContainerInput.backend: 'deus-native'` can now run a LangChain `createAgent`
+turn through the existing stdin-JSON, stdout-marker, IPC follow-up, session-ref,
+credential-proxy, and container-isolation contract. The driver explicitly pins
+`agent.invoke(..., { recursionLimit: 25 })` to bound each agent/tool graph run.
+
+This does **not** reverse this ADR's decision that production `deus-native`
+execution is host-owned. `DEUS_AGENT_BACKEND=deus-native` and ordinary
+group/task resolution continue to select the host-native `DeusNativeRuntime`;
+`ContainerBackendId` still excludes `deus-native`, and the production registry
+contains no `ContainerRuntime('deus-native', ...)` registration. Moving the
+production runtime into a container would still require an explicit new
+decision covering middleware, hooks, checkpointing, context ownership, and
+per-turn control. F1 supplies no such caller or migration.
+
+The container driver binds the full existing broker/MCP tool catalog because
+those tools execute behind the same container boundary already relied on by
+the Claude, OpenAI, and llama.cpp drivers. That license is non-transferable:
+it does **not** authorize widening the host adapter's `SAFE_TOOL_NAMES` in
+`src/agent-runtimes/tool-broker-langchain-adapter.ts`. The host remains
+web-only because it has no equivalent OS sandbox around tool execution. The
+container driver also refuses `DEUS_TOOL_PROFILE=webhook` before model or tool
+initialization, preserving the Claude-only curated public-ingress boundary.
+
+F1 preserves session identity and metadata across the container IPC follow-up
+loop, but its conversation messages are process-local, like the existing
+llama.cpp driver; durable cross-container resume and host middleware/checkpoint
+parity remain explicitly deferred as `AAG-016`. The new path does not consult
+or enable the legacy `HOOK_DISPATCH_ENABLED`/`:3002` gate, so
+`hook-dispatch-facade-correction.md` requires no corresponding update.
+
 ## References
 
 - Deep-research report (vault): `Research/2026-07-13-deus-v2-base-harness-selection.md`

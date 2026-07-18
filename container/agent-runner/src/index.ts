@@ -26,12 +26,13 @@ import fs from 'fs';
 import path from 'path';
 import {
   query,
-  HookCallback,
-  PreCompactHookInput,
-  PostCompactHookInput,
-  PostToolUseHookInput,
-  SDKResultMessage,
-  SDKCompactBoundaryMessage,
+  type HookCallback,
+  type PreCompactHookInput,
+  type PostCompactHookInput,
+  type PostToolUseHookInput,
+  type SDKResultMessage,
+  type SDKCompactBoundaryMessage,
+  type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
@@ -41,6 +42,7 @@ import { measureToolResponse } from './tool-size-measure.js';
 import { createMemoryRetrievalHook } from './memory-retrieval-hook.js';
 import { runOpenAIConversation } from './openai-backend.js';
 import { runLlamaCppConversation } from './llama-cpp-backend.js';
+import { runDeusNativeConversation } from './deus-native-backend.js';
 import { DoomLoopDetector, createDoomLoopHook } from './doom-loop-detector.js';
 import { isAuditedTool, writeAuditEntry } from './tool-audit.js';
 import { createToolCallLogHook } from './tool-call-log.js';
@@ -53,15 +55,18 @@ import {
   createReadOversizeNudgeHook,
   readOversizeMaxNudges,
 } from './read-oversize-nudge.js';
-import type { AgentRuntimeId } from './tool-broker.js';
 import { resolveGroupAttachmentPath } from './tool-broker.js';
+import {
+  isContainerDispatchBackend,
+  type ContainerDispatchBackendId,
+} from './runtime-types.js';
 import { HookDispatchService } from './hook-dispatch-service.js';
 import { createPreToolUseHook, dispatchHost } from './pre-tool-use-hook.js';
 import { createBlockingPreToolUseObserver } from './pre-tool-use-gate-observer.js';
 import { createPostToolUseObserverHook } from './post-tool-use-observer.js';
 
 interface RuntimeSession {
-  backend: AgentRuntimeId;
+  backend: ContainerDispatchBackendId;
   session_id: string;
   resume_cursor?: string;
   metadata_json?: string;
@@ -69,7 +74,7 @@ interface RuntimeSession {
 
 interface ContainerInput {
   prompt: string;
-  backend?: AgentRuntimeId;
+  backend?: ContainerDispatchBackendId;
   sessionId?: string;
   sessionRef?: RuntimeSession;
   groupFolder: string;
@@ -89,7 +94,11 @@ interface ContainerInput {
 
 interface ImageContentBlock {
   type: 'image';
-  source: { type: 'base64'; media_type: string; data: string };
+  source: {
+    type: 'base64';
+    media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    data: string;
+  };
 }
 interface TextContentBlock {
   type: 'text';
@@ -143,13 +152,6 @@ interface SessionEntry {
 
 interface SessionsIndex {
   entries: SessionEntry[];
-}
-
-interface SDKUserMessage {
-  type: 'user';
-  message: { role: 'user'; content: string | ContentBlock[] };
-  parent_tool_use_id: null;
-  session_id: string;
 }
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
@@ -243,14 +245,14 @@ async function readStdin(): Promise<string> {
 
 // SYNC-REQUIRED: Duplicated in src/container-runner.ts (host side).
 // Cannot be shared via import — this package runs inside an isolated container.
-const OUTPUT_START_MARKER = '---DEUS_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---DEUS_OUTPUT_END---';
+export const OUTPUT_START_MARKER = '---DEUS_OUTPUT_START---';
+export const OUTPUT_END_MARKER = '---DEUS_OUTPUT_END---';
 
 // Counter for IPC output files (written in addition to stdout for eval harness).
 let _outputSeq = 0;
 const IPC_OUTPUT_DIR = '/workspace/ipc/output';
 
-function writeOutput(output: ContainerOutput): void {
+export function writeOutput(output: ContainerOutput): void {
   // Write to stdout (buffered in pipe mode, but kept for compatibility).
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
@@ -277,7 +279,7 @@ function log(message: string): void {
 
 function defaultSession(
   sessionId: string | undefined,
-  backend: AgentRuntimeId = 'claude',
+  backend: ContainerDispatchBackendId = 'claude',
 ): RuntimeSession | undefined {
   if (!sessionId) return undefined;
   return {
@@ -407,7 +409,7 @@ function logUsage(msg: SDKResultMessage): void {
   const firstModel = Object.values(msg.modelUsage)[0];
   const contextWindow = firstModel?.contextWindow ?? 0;
   if (contextWindow > 0) {
-    const tokens = msg.usage.inputTokens + msg.usage.outputTokens;
+    const tokens = msg.usage.input_tokens + msg.usage.output_tokens;
     const pct = Math.round((tokens / contextWindow) * 100);
     const stats: ContextStats = { tokens, limit: contextWindow, pct };
     if (pct >= WARN_PCT && !_contextAlertShown) {
@@ -432,10 +434,10 @@ function logUsage(msg: SDKResultMessage): void {
       duration_ms: msg.duration_ms,
       duration_api_ms: msg.duration_api_ms,
       total_cost_usd: msg.total_cost_usd,
-      input_tokens: msg.usage.inputTokens,
-      output_tokens: msg.usage.outputTokens,
-      cache_read_input_tokens: msg.usage.cacheReadInputTokens,
-      cache_creation_input_tokens: msg.usage.cacheCreationInputTokens,
+      input_tokens: msg.usage.input_tokens,
+      output_tokens: msg.usage.output_tokens,
+      cache_read_input_tokens: msg.usage.cache_read_input_tokens,
+      cache_creation_input_tokens: msg.usage.cache_creation_input_tokens,
       model_usage: msg.modelUsage,
     };
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -663,7 +665,7 @@ function waitForIpcMessage(): Promise<string | null> {
  * allowing agent teams subagents to run to completion.
  * Also pipes IPC messages into the stream during the query.
  */
-async function runQuery(
+export async function runQuery(
   prompt: string,
   sessionId: string | undefined,
   mcpServerPath: string,
@@ -690,10 +692,19 @@ async function runQuery(
         // run continues (any group member could otherwise wedge a query).
         const imgPath = resolveGroupAttachmentPath(img.relativePath);
         const data = fs.readFileSync(imgPath).toString('base64');
-        blocks.push({
-          type: 'image',
-          source: { type: 'base64', media_type: img.mediaType, data },
-        });
+        if (
+          img.mediaType === 'image/jpeg' ||
+          img.mediaType === 'image/png' ||
+          img.mediaType === 'image/gif' ||
+          img.mediaType === 'image/webp'
+        ) {
+          blocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: img.mediaType, data },
+          });
+        } else {
+          log(`Unsupported image media type: ${img.mediaType}`);
+        }
       } catch (err) {
         log(`Failed to load image: ${img.relativePath}`);
       }
@@ -1082,7 +1093,8 @@ async function runQuery(
         // The SDKMessage union types `event` as the broad BetaRawMessageStreamEvent;
         // its content_block_delta/start members aren't narrowed on the union, so we
         // structurally probe the fields we need rather than import the beta subtypes.
-        const ev = (message as { event?: Record<string, unknown> }).event;
+        const ev = (message as unknown as { event?: Record<string, unknown> })
+          .event;
         const evType = ev?.type as string | undefined;
         if (evType === 'content_block_delta') {
           const delta = ev?.delta as
@@ -1232,8 +1244,17 @@ async function main(): Promise<void> {
     }
   }
 
-  const backend =
+  const requestedBackend: unknown =
     containerInput.backend || containerInput.sessionRef?.backend || 'claude';
+  if (!isContainerDispatchBackend(requestedBackend)) {
+    writeOutput({
+      status: 'error',
+      result: null,
+      error: `Unsupported container backend: ${String(requestedBackend)}`,
+    });
+    return;
+  }
+  const backend = requestedBackend;
   let sessionId =
     containerInput.sessionRef?.session_id || containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
@@ -1265,6 +1286,21 @@ async function main(): Promise<void> {
     // OpenAI chat-completions wire protocol but NOT the Responses API, so
     // we cannot reuse runOpenAIConversation (it calls /v1/responses).
     await runLlamaCppConversation({
+      containerInput: {
+        ...containerInput,
+        backend,
+      },
+      log,
+      writeOutput,
+      drainIpcInput,
+      waitForIpcMessage,
+      shouldClose,
+    });
+    return;
+  }
+
+  if (backend === 'deus-native') {
+    await runDeusNativeConversation({
       containerInput: {
         ...containerInput,
         backend,

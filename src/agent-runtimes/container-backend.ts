@@ -29,15 +29,11 @@ export interface ContainerRuntimeDeps {
   ) => void;
 }
 
-// ContainerRuntime spawns an isolated container and speaks the container IPC
-// protocol (ipc-protocol.ts's RuntimeSessionSchema/ContainerInputSchema),
-// which is intentionally scoped to only the backends that actually run
-// through container/agent-runner. `deus-native` (LIA-401/B1) is NOT a
-// ContainerRuntime wrapper — it runs LangChain's createAgent in-process on
-// the host and never touches this container path (see
-// docs/decisions/deus-v2-langchain-runtime.md) — so it is deliberately
-// excluded here rather than widening the container IPC schema to a value
-// that schema can never actually carry.
+// ContainerRuntime is the production wrapper for the three registered
+// container backends. The IPC wire schema is intentionally broader after
+// LIA-423 so a direct container-agent-runner request can prove deus-native
+// protocol portability, but that does NOT authorize production routing:
+// deus-native remains a host-side runtime and stays excluded here.
 export type ContainerBackendId = Exclude<AgentRuntimeId, 'deus-native'>;
 
 export class ContainerRuntime implements AgentRuntime {
@@ -116,18 +112,10 @@ export class ContainerRuntime implements AgentRuntime {
         prompt: runContext.prompt,
         backend: this.backendName,
         sessionId: hasSession ? sessionRef.session_id : undefined,
-        // Cast: the AgentRuntime interface's runTurn(sessionRef: RuntimeSession, ...)
-        // must accept the broad RuntimeSession (backend: AgentRuntimeId, which now
-        // includes 'deus-native' — LIA-401/B1), but ContainerInput.sessionRef is the
-        // container-IPC-schema-narrow "claude"|"openai"|"llama-cpp" shape. The
-        // orchestrator only ever calls a runtime's runTurn with a session ref for
-        // THAT SAME runtime (db.getSession is keyed by backend), and deus-native is
-        // never a ContainerRuntime instance, so a ContainerRuntime.runTurn call never
-        // actually receives a 'deus-native'-tagged sessionRef — TS just can't prove
-        // that invariant through the shared interface signature.
-        sessionRef: hasSession
-          ? (sessionRef as ContainerInput['sessionRef'])
-          : undefined,
+        // The IPC schema can represent deus-native for LIA-423's direct
+        // portability proof, but this production wrapper is still typed by
+        // ContainerBackendId and never registered for that backend.
+        sessionRef: hasSession ? sessionRef : undefined,
         groupFolder: runContext.groupFolder,
         chatJid: runContext.chatJid,
         isControlGroup: runContext.isControlGroup,

@@ -534,12 +534,9 @@ export async function runContainerAgent(
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
     let newSessionId: string | undefined;
-    // Narrow (container-IPC-schema) type, not the broad RuntimeSession
-    // (backend: AgentRuntimeId, which now includes 'deus-native' —
-    // LIA-401/B1): this value only ever comes from ContainerOutputSchema.parse()
-    // (RuntimeSessionSchema, "claude"|"openai"|"llama-cpp" only), and deus-native
-    // never runs through this container-IPC path. See the cast comments below
-    // for why this narrowing is sound.
+    // Parsed and validated by ContainerOutputSchema. LIA-423 intentionally
+    // permits a direct deus-native container portability result on the wire;
+    // production registry routing remains independently host-native.
     let newSessionRef: ContainerOutput['newSessionRef'];
     let outputChain = Promise.resolve();
 
@@ -774,17 +771,7 @@ export async function runContainerAgent(
               newSessionRef:
                 newSessionRef ??
                 (newSessionId
-                  ? // Cast: defaultSession()'s return type is the broad RuntimeSession
-                    // (backend: AgentRuntimeId, which now includes 'deus-native' —
-                    // LIA-401/B1). input.backend is already the container-IPC-schema-
-                    // narrow "claude"|"openai"|"llama-cpp" (ContainerInputSchema never
-                    // carries 'deus-native' — that adapter never runs a container), so
-                    // this narrowing is sound; TS just can't infer it through
-                    // defaultSession's fixed signature.
-                    (defaultSession(
-                      newSessionId,
-                      input.backend || 'claude',
-                    ) as ContainerOutput['newSessionRef'])
+                  ? defaultSession(newSessionId, input.backend || 'claude')
                   : undefined),
               newSessionId,
             });
@@ -892,17 +879,7 @@ export async function runContainerAgent(
               newSessionRef:
                 newSessionRef ??
                 (newSessionId
-                  ? // Cast: defaultSession()'s return type is the broad RuntimeSession
-                    // (backend: AgentRuntimeId, which now includes 'deus-native' —
-                    // LIA-401/B1). input.backend is already the container-IPC-schema-
-                    // narrow "claude"|"openai"|"llama-cpp" (ContainerInputSchema never
-                    // carries 'deus-native' — that adapter never runs a container), so
-                    // this narrowing is sound; TS just can't infer it through
-                    // defaultSession's fixed signature.
-                    (defaultSession(
-                      newSessionId,
-                      input.backend || 'claude',
-                    ) as ContainerOutput['newSessionRef'])
+                  ? defaultSession(newSessionId, input.backend || 'claude')
                   : undefined),
               newSessionId,
             });
