@@ -13,8 +13,12 @@ date: 2026-07-18
 
 # H1 — Parity Sign-Off (LIA-433)
 
-**Status:** Recorded. **Decision: NO-GO on flipping `deus-native` to the
-default backend today.** See "Final Verdict" below.
+**Status:** Recorded
+**Date:** 2026-07-18
+**Scope:** `docs/decisions/backend-neutral-agent-runtime.md`, `docs/decisions/deus-v2-langchain-runtime.md`, `scripts/spikes/lia400_tool_loop_reliability_benchmark.ts`
+
+**Decision: NO-GO on flipping `deus-native` to the default backend
+today.** See "Final Verdict" below.
 
 ## 1. What this document is
 
