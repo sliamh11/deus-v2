@@ -3,7 +3,7 @@
 
 Platform: Linux/macOS only (sqlite_vec + Ollama). Fails fast on Windows.
 
-Log schema: appends to ~/.deus/memory_retrieval_log.jsonl with a `source` field.
+Log schema: appends to ~/.deus-v2/memory_retrieval_log.jsonl with a `source` field.
 Existing host-hook entries lack this field; per-interface analytics cover only
 entries written by this module until the hook is updated separately.
 """
@@ -32,11 +32,11 @@ from injection_dedup import block_key, load_seen, save_seen  # noqa: E402
 
 LOG_FILE = Path(os.environ.get(
     "DEUS_RETRIEVAL_LOG",
-    "~/.deus/memory_retrieval_log.jsonl",
+    "~/.deus-v2/memory_retrieval_log.jsonl",
 )).expanduser()
 
 # Shared resolver (LIA-341): the same dir memory_tree indexes into and
-# standards_pack reads. The old default `~/.deus/auto-memory` was a dir that
+# standards_pack reads. The old default `~/.deus-v2/auto-memory` was a dir that
 # never exists, so recall returned None for every promoted auto-memory node.
 AUTO_MEM_DIR = resolve_auto_memory_dir()
 

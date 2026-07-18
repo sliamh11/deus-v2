@@ -81,11 +81,11 @@ export function hasApiCredentials(): boolean {
  * Detect a TCP port collision between any two Deus servers that bind a port
  * at startup (LIA-301, extended for the ingress gateway).
  *
- * Covered binders: the Odysseus Web UI (ODYSSEUS_HTTP_PORT, default 3005), the
- * ingress gateway (INGRESS_GATEWAY_PORT, default 3009), and the standalone
- * Linear webhook server (LINEAR_WEBHOOK_PORT, default 3005). Odysseus and the
- * webhook both default to 3005, and the gateway default once collided with the
- * common Odysseus deployment port 3007 — a shared port EADDRINUSEs deep in
+ * Covered binders: the Odysseus Web UI (ODYSSEUS_HTTP_PORT, default 3105), the
+ * ingress gateway (INGRESS_GATEWAY_PORT, default 3109), and the standalone
+ * Linear webhook server (LINEAR_WEBHOOK_PORT, default 3107). LIA-451: these are
+ * deus-v2's namespaced defaults, collision-free against v1's own 3001/3003/
+ * 3005/3009 set as well as each other — a shared port EADDRINUSEs deep in
  * startup. Run as a fatal startup check (startup-gate.ts) BEFORE any server
  * binds so the operator gets an actionable message instead.
  *
@@ -137,7 +137,7 @@ export function detectPortCollision(): {
   if (isOn(resolve('ODYSSEUS_HTTP_ENABLED'))) {
     binders.push({
       service: 'ODYSSEUS_HTTP_PORT',
-      port: parsePort(resolve('ODYSSEUS_HTTP_PORT'), 3005),
+      port: parsePort(resolve('ODYSSEUS_HTTP_PORT'), 3105),
     });
   }
 
@@ -145,7 +145,7 @@ export function detectPortCollision(): {
   if (gatewayEnabled) {
     binders.push({
       service: 'INGRESS_GATEWAY_PORT',
-      port: parsePort(resolve('INGRESS_GATEWAY_PORT'), 3009),
+      port: parsePort(resolve('INGRESS_GATEWAY_PORT'), 3109),
     });
   }
 
@@ -160,7 +160,7 @@ export function detectPortCollision(): {
   if (webhookWillBind) {
     binders.push({
       service: 'LINEAR_WEBHOOK_PORT',
-      port: parsePort(resolve('LINEAR_WEBHOOK_PORT'), 3005),
+      port: parsePort(resolve('LINEAR_WEBHOOK_PORT'), 3107),
     });
   }
 

@@ -3,7 +3,7 @@
 
 Design: the tree is a human/agent-readable map; retrieval is flat-over-all-nodes
 plus 1-hop graph expansion via see_also/alias_of edges. Storage is sqlite-vec at
-~/.deus/memory_tree.db (override via DEUS_MEMORY_TREE_DB). Embeddings reuse the
+~/.deus-v2/memory_tree.db (override via DEUS_MEMORY_TREE_DB). Embeddings reuse the
 evolution provider (Ollama embeddinggemma by default, Gemini fallback).
 
 Subcommands: build | query | reembed | reindex-external | check | graph | calibrate | benchmark
@@ -56,7 +56,7 @@ except ImportError:
 
 EMBED_DIM = 768
 DB_PATH = Path(os.environ.get(
-    "DEUS_MEMORY_TREE_DB", "~/.deus/memory_tree.db"
+    "DEUS_MEMORY_TREE_DB", "~/.deus-v2/memory_tree.db"
 )).expanduser()
 VAULT_PATH_ENV = "DEUS_VAULT_PATH"
 
@@ -66,7 +66,7 @@ def tree_automation_enabled() -> bool:
     drift scan, resume nav-index injection) should run.
 
     Gates on the real precondition — the tree DB existing — rather than a manual
-    enable flag: ON by default once ~/.deus/memory_tree.db is present, OFF only on
+    enable flag: ON by default once ~/.deus-v2/memory_tree.db is present, OFF only on
     explicit opt-out (DEUS_MEMORY_TREE=0) or when no DB exists (a bare clone with
     no Ollama/embeddings configured stays inert). The env var is read at call time
     and DB_PATH is the module constant tests monkeypatch.
@@ -160,11 +160,11 @@ if os.environ.get("DEUS_TREE_PARAMS", "1") != "0":
             sys.path.remove(_project_root)
 
 _LOG_PATH = Path(os.environ.get(
-    "DEUS_TREE_LOG", "~/.deus/memory_tree_queries.jsonl"
+    "DEUS_TREE_LOG", "~/.deus-v2/memory_tree_queries.jsonl"
 )).expanduser()
 
 _AUDIT_PATH = Path(os.environ.get(
-    "DEUS_TREE_AUDIT", "~/.deus/memory_tree_audit.jsonl"
+    "DEUS_TREE_AUDIT", "~/.deus-v2/memory_tree_audit.jsonl"
 )).expanduser()
 
 # Rebuild safety: abort if vault walk would produce fewer than this fraction
@@ -673,7 +673,7 @@ def open_db(db_path: Path = None) -> sqlite3.Connection:
     # (a header change that takes a lock) waits rather than raising on a contended
     # open. 30s absorbs the long writers (e.g. reenrich_embeddings holds a txn
     # across many embed calls). Mirrors scripts/code_search.py (post-LIA-189).
-    # Safe here: DB lives under ~/.deus/ (local fs). WAL needs shared memory and
+    # Safe here: DB lives under ~/.deus-v2/ (local fs). WAL needs shared memory and
     # would fail on a network mount. (LIA-242)
     db.execute("PRAGMA busy_timeout=30000")
     db.execute("PRAGMA journal_mode=WAL")
@@ -893,7 +893,7 @@ def resolve_vault_path() -> Path:
     vault = os.environ.get(VAULT_PATH_ENV)
     if vault:
         return Path(vault).expanduser()
-    cfg_path = Path("~/.config/deus/config.json").expanduser()
+    cfg_path = Path("~/.config/deus-v2/config.json").expanduser()
     if cfg_path.exists():
         try:
             cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
@@ -1705,7 +1705,7 @@ def _emit_audit(record: dict[str, Any]) -> None:
     """Append a structured audit line for rebuild + orphan operations.
 
     Silent on write failures — auditing must never block the caller. The
-    audit trail lives at ~/.deus/memory_tree_audit.jsonl (override via
+    audit trail lives at ~/.deus-v2/memory_tree_audit.jsonl (override via
     DEUS_TREE_AUDIT). Forensic record for incidents like the 2026-04-15
     wipe, where a rebuild with a misconfigured vault path left 13 active
     rows orphaned.

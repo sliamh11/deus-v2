@@ -115,12 +115,16 @@ export function ensureContainerRuntimeRunning(): void {
   });
 }
 
-/** Kill orphaned Deus containers from previous runs. */
+/** Kill orphaned Deus containers from previous runs.
+ * LIA-451: filters on this instance's own "deusv2-" prefix, not v1's "deus-"
+ * -- container-runner.ts names this instance's containers "deusv2-<group>-
+ * <timestamp>" specifically so this filter (and v1's own "deus-" filter)
+ * never cross-match the other instance's containers. */
 export function cleanupOrphans(): void {
   try {
     const output = execFileSync(
       CONTAINER_RUNTIME_BIN,
-      ['ps', '--filter', 'name=deus-', '--format', '{{.Names}}'],
+      ['ps', '--filter', 'name=deusv2-', '--format', '{{.Names}}'],
       { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
     );
     const orphans = output.trim().split('\n').filter(Boolean);

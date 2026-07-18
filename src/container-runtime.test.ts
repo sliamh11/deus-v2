@@ -148,7 +148,7 @@ describe('cleanupOrphans', () => {
     expect(mockExecFileSync).toHaveBeenNthCalledWith(
       1,
       CONTAINER_RUNTIME_BIN,
-      ['ps', '--filter', 'name=deus-', '--format', '{{.Names}}'],
+      ['ps', '--filter', 'name=deusv2-', '--format', '{{.Names}}'],
       { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
     );
     expect(mockExecFileSync).toHaveBeenNthCalledWith(
@@ -207,6 +207,51 @@ describe('cleanupOrphans', () => {
     expect(logger.info).toHaveBeenCalledWith(
       { count: 2, names: ['deus-a-1', 'deus-b-2'] },
       'Stopped orphaned containers',
+    );
+  });
+});
+
+// LIA-451: regression coverage for the exact failure mode this ticket exists
+// to prevent -- v1 and a namespaced v2 instance running side by side must
+// never have one instance's orphan-cleanup sweep stop the other's containers.
+// `docker ps --filter name=X` matches on substring (not prefix-anchored), so
+// this directly encodes the invariant: v1's containers are named
+// `deus-<group>-<timestamp>` and swept via filter `name=deus-`; this
+// instance's containers are named `deusv2-<group>-<timestamp>` (container-
+// runner.ts) and swept via filter `name=deusv2-` (cleanupOrphans above). The
+// two must never cross-match in either direction.
+describe('v1/v2 container-sweep mutual exclusivity', () => {
+  // Mirrors docker's own `--filter name=X` substring semantics.
+  const dockerNameFilterMatches = (containerName: string, filter: string) =>
+    containerName.includes(filter);
+
+  const v1Style = (group: string, ts: number) => `deus-${group}-${ts}`;
+  const v2Style = (group: string, ts: number) => `deusv2-${group}-${ts}`;
+
+  const V1_FILTER = 'deus-';
+  const V2_FILTER = 'deusv2-';
+
+  it("v1's own sweep filter matches its own containers", () => {
+    expect(dockerNameFilterMatches(v1Style('mygroup', 111), V1_FILTER)).toBe(
+      true,
+    );
+  });
+
+  it("this instance's sweep filter matches its own containers", () => {
+    expect(dockerNameFilterMatches(v2Style('mygroup', 222), V2_FILTER)).toBe(
+      true,
+    );
+  });
+
+  it("v1's sweep filter never matches this instance's containers", () => {
+    expect(dockerNameFilterMatches(v2Style('mygroup', 222), V1_FILTER)).toBe(
+      false,
+    );
+  });
+
+  it("this instance's sweep filter never matches v1's containers", () => {
+    expect(dockerNameFilterMatches(v1Style('mygroup', 111), V2_FILTER)).toBe(
+      false,
     );
   });
 });

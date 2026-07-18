@@ -36,7 +36,9 @@ import { RetryableError, UserError, FatalError } from './errors/index.js';
 import { fireAndForget } from './async/index.js';
 import { WEBHOOK_MAX_RETRIES, WEBHOOK_BASE_DELAY_MS } from './config.js';
 
-const DEFAULT_WEBHOOK_PORT = 3005;
+// LIA-451: 3107, distinct from v1's 3005 and from this instance's own
+// Odysseus (3105)/gateway (3109) ports.
+const DEFAULT_WEBHOOK_PORT = 3107;
 const LABEL_RETRY_MAX = 3;
 const LABEL_RETRY_BASE_MS = 5_000;
 const WEBHOOK_MAX_DELAY_MS = 30_000;

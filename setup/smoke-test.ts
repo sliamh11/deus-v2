@@ -46,7 +46,7 @@ function checkServiceRunning(): 'running' | 'stopped' | 'not_found' {
   if (mgr === 'launchd') {
     try {
       const output = execSync('launchctl list', { encoding: 'utf-8' });
-      const line = output.split('\n').find((l) => l.includes('com.deus'));
+      const line = output.split('\n').find((l) => l.includes('com.deus-v2'));
       if (line) {
         const pidField = line.trim().split(/\s+/)[0];
         return pidField !== '-' && pidField ? 'running' : 'stopped';
@@ -57,14 +57,14 @@ function checkServiceRunning(): 'running' | 'stopped' | 'not_found' {
   } else if (mgr === 'systemd') {
     const prefix = isRoot() ? 'systemctl' : 'systemctl --user';
     try {
-      execSync(`${prefix} is-active deus`, { stdio: 'ignore' });
+      execSync(`${prefix} is-active deus-v2`, { stdio: 'ignore' });
       return 'running';
     } catch {
       return 'stopped';
     }
   } else if (mgr === 'nssm') {
     try {
-      const out = execSync('nssm status deus', {
+      const out = execSync('nssm status deus-v2', {
         encoding: 'utf-8',
         stdio: 'pipe',
       });
@@ -74,7 +74,7 @@ function checkServiceRunning(): 'running' | 'stopped' | 'not_found' {
     }
   } else if (mgr === 'servy') {
     try {
-      const out = execSync('servy-cli status --name="deus"', {
+      const out = execSync('servy-cli status --name="deus-v2"', {
         encoding: 'utf-8',
         stdio: 'pipe',
       });
