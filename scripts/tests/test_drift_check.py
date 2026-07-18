@@ -1122,7 +1122,7 @@ class TestCheckBenchLabels:
         original_expanduser = Path.expanduser
 
         def fake_expand(self):
-            if str(self) == "~/.config/deus/config.json":
+            if str(self) == "~/.config/deus-v2/config.json":
                 return cfg_path
             return original_expanduser(self)
 
@@ -1133,7 +1133,7 @@ class TestCheckBenchLabels:
         vault = tmp_path / "vault"
         vault.mkdir()
         (vault / "INFRA.md").write_text("---\ndescription: tools\n---\n")
-        cfg_dir = tmp_path / ".config" / "deus"
+        cfg_dir = tmp_path / ".config" / "deus-v2"
         cfg_dir.mkdir(parents=True)
         cfg_path = cfg_dir / "config.json"
         cfg_path.write_text(json.dumps({"vault_path": str(vault)}))
@@ -1149,7 +1149,7 @@ class TestCheckBenchLabels:
 
     def test_malformed_config_json_falls_back(self, tmp_path, monkeypatch, capsys):
         monkeypatch.delenv("DEUS_VAULT_PATH", raising=False)
-        cfg_dir = tmp_path / ".config" / "deus"
+        cfg_dir = tmp_path / ".config" / "deus-v2"
         cfg_dir.mkdir(parents=True)
         cfg_path = cfg_dir / "config.json"
         cfg_path.write_text("{not valid json")
@@ -1175,7 +1175,7 @@ class TestCheckBenchLabels:
         # Config points at a different, NON-empty vault lacking INFRA.md. If it
         # were wrongly used, validation would find OTHER.md but not INFRA.md →
         # "Stale"/rc 1, distinguishable from the env vault's full-pass "OK".
-        cfg_dir = tmp_path / ".config" / "deus"
+        cfg_dir = tmp_path / ".config" / "deus-v2"
         cfg_dir.mkdir(parents=True)
         cfg_path = cfg_dir / "config.json"
         bad_vault = tmp_path / "cfg_vault"

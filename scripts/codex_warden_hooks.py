@@ -265,7 +265,7 @@ def _debug(message: str) -> None:
     if os.environ.get("DEUS_CODEX_HOOK_DEBUG") != "1":
         return
     try:
-        log_dir = Path(os.environ.get("DEUS_STATE_DIR", Path.home() / ".deus"))
+        log_dir = Path(os.environ.get("DEUS_STATE_DIR", Path.home() / ".deus-v2"))
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = dt.datetime.now(dt.UTC).isoformat()
         with (log_dir / "codex_warden_hooks.log").open("a", encoding="utf-8") as f:
@@ -1012,7 +1012,7 @@ def _sync_atom_kinds_on_init(repo_root: Path) -> None:
         return
 
     db_path = Path(
-        os.environ.get("DEUS_MEMORY_TREE_DB", "~/.deus/memory_tree.db")
+        os.environ.get("DEUS_MEMORY_TREE_DB", "~/.deus-v2/memory_tree.db")
     ).expanduser()
     if not db_path.exists():
         return
@@ -1247,7 +1247,7 @@ def _log_codegraph_availability_failopen(
     """Record an availability fail-open to the warden log, ONCE per session.
 
     Dedup marker is session-keyed (from ``transcript_path``) and lives under the
-    state dir (``~/.deus``), not the repo. A legitimately-fresh instance logs once
+    state dir (``~/.deus-v2``), not the repo. A legitimately-fresh instance logs once
     per session (no per-grep spam); a *misread* on an instance that should enforce
     resurfaces every new session instead of being permanently silenced.
     """
@@ -1256,7 +1256,7 @@ def _log_codegraph_availability_failopen(
         session_id = Path(tp).stem if tp else "unknown"
         if not session_id:
             session_id = "unknown"
-        state_dir = Path(os.environ.get("DEUS_STATE_DIR", Path.home() / ".deus"))
+        state_dir = Path(os.environ.get("DEUS_STATE_DIR", Path.home() / ".deus-v2"))
         marker = state_dir / f".codegraph-avail-logged-{session_id}"
         if marker.exists():
             return
@@ -2285,7 +2285,7 @@ def _additional_context(context: str) -> None:
 
 
 def _deus_config() -> dict[str, Any]:
-    path = Path(os.environ.get("DEUS_CONFIG_PATH", "~/.config/deus/config.json")).expanduser()
+    path = Path(os.environ.get("DEUS_CONFIG_PATH", "~/.config/deus-v2/config.json")).expanduser()
     if not path.exists():
         return {}
     try:
@@ -2390,13 +2390,13 @@ def run_catchup_freshness(event: dict[str, Any], repo_root: Path) -> int:
 
     lines.extend(["", f"--- Session-Logs/{today}/ ---"])
     if vault is None:
-        lines.append("[warn] vault path unknown; set DEUS_VAULT_PATH or ~/.config/deus/config.json")
+        lines.append("[warn] vault path unknown; set DEUS_VAULT_PATH or ~/.config/deus-v2/config.json")
     else:
         names = _list_recent_names(vault / "Session-Logs" / today, 10)
         lines.extend(names or [f"[no entries for {today}]"])
 
     lines.extend(["", "--- Checkpoints (top 3) ---"])
-    checkpoints = (vault / "Checkpoints") if vault is not None else Path("~/.deus/checkpoints").expanduser()
+    checkpoints = (vault / "Checkpoints") if vault is not None else Path("~/.deus-v2/checkpoints").expanduser()
     names = _list_recent_names(checkpoints, 3)
     lines.extend(names or [f"[warn] checkpoints dir empty or missing: {checkpoints}"])
 
@@ -2422,7 +2422,7 @@ def run_catchup_freshness(event: dict[str, Any], repo_root: Path) -> int:
 
 def _memory_log(result: dict[str, Any], prompt: str) -> None:
     try:
-        log_file = Path(os.environ.get("DEUS_STATE_DIR", Path.home() / ".deus"))
+        log_file = Path(os.environ.get("DEUS_STATE_DIR", Path.home() / ".deus-v2"))
         log_file.mkdir(parents=True, exist_ok=True)
         prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
         paths = [

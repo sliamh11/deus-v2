@@ -2268,7 +2268,7 @@ def check_bench_labels(project_root: Path) -> int:
     if vault_env:
         vault = Path(vault_env).expanduser()
     else:
-        cfg_path = Path("~/.config/deus/config.json").expanduser()
+        cfg_path = Path("~/.config/deus-v2/config.json").expanduser()
         vault = None
         if cfg_path.exists():
             try:
@@ -2326,7 +2326,7 @@ def check_bench_snapshot(project_root: Path) -> int:
     exists and current results are below threshold, this fails. If no snapshot
     exists, this is informational only.
 
-    Requires: EMBEDDING_PROVIDER env, Ollama running, ~/.deus/memory_tree.db.
+    Requires: EMBEDDING_PROVIDER env, Ollama running, ~/.deus-v2/memory_tree.db.
     Skips gracefully if any dependency is missing.
     """
     import json
@@ -2350,7 +2350,7 @@ def check_bench_snapshot(project_root: Path) -> int:
         print("memory_tree import failed (sqlite-vec not available?). Skipped.")
         return 0
 
-    db_path = Path("~/.deus/memory_tree.db").expanduser()
+    db_path = Path("~/.deus-v2/memory_tree.db").expanduser()
     if not db_path.exists():
         print("No memory_tree.db found. Skipped.")
         return 0

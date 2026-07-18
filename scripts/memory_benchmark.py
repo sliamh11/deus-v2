@@ -27,7 +27,7 @@ from typing import Optional
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-BENCHMARK_DIR = Path("~/.deus/benchmarks").expanduser()
+BENCHMARK_DIR = Path("~/.deus-v2/benchmarks").expanduser()
 LONGMEMEVAL_CACHE = BENCHMARK_DIR / "longmemeval_s.json"
 RESULTS_LOG = BENCHMARK_DIR / "results.jsonl"
 
@@ -50,14 +50,14 @@ def _run_indexer(
 ) -> subprocess.CompletedProcess:
     """Run memory_indexer.py with an isolated vault so it uses a fresh DB.
 
-    The indexer resolves DB_PATH as ~/.deus/memory.db and VAULT_SESSION_LOGS
+    The indexer resolves DB_PATH as ~/.deus-v2/memory.db and VAULT_SESSION_LOGS
     from DEUS_VAULT_PATH.  For benchmarks we point DEUS_VAULT_PATH to a
     temp directory that has its own Session-Logs layout.  The DB itself lives
-    inside that temp dir as ~/.deus/memory.db — but since we override HOME via
+    inside that temp dir as ~/.deus-v2/memory.db — but since we override HOME via
     DEUS_VAULT_PATH the isolation is at the vault level.
 
     For the benchmark we use a dedicated HOME override so the indexer writes
-    its DB to a temp location instead of ~/.deus/memory.db.
+    its DB to a temp location instead of ~/.deus-v2/memory.db.
     """
     env = {**os.environ}
     if vault_path:
@@ -87,7 +87,7 @@ def _run_indexer_with_home(
     fake_home: str,
     vault_path: str,
 ) -> subprocess.CompletedProcess:
-    """Run indexer with HOME overridden so DB_PATH resolves to fake_home/.deus/memory.db."""
+    """Run indexer with HOME overridden so DB_PATH resolves to fake_home/.deus-v2/memory.db."""
     cmd = [sys.executable, str(_INDEXER)] + args
     env = {**os.environ, "HOME": fake_home, "DEUS_VAULT_PATH": vault_path}
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -269,7 +269,7 @@ def run_outbound(limit: int = 50, ks: list[int] = None) -> dict:
         }
 
         # Each example gets a completely isolated temp directory:
-        #   tmpdir/home/   — overrides HOME so DB_PATH = tmpdir/home/.deus/memory.db
+        #   tmpdir/home/   — overrides HOME so DB_PATH = tmpdir/home/.deus-v2/memory.db
         #   tmpdir/vault/Session-Logs/  — DEUS_VAULT_PATH
         #   tmpdir/vault/Atoms/
         with tempfile.TemporaryDirectory(prefix="deus_bm_") as tmpdir:
@@ -279,7 +279,7 @@ def run_outbound(limit: int = 50, ks: list[int] = None) -> dict:
             session_logs_dir = tmp / "vault" / "Session-Logs"
             (tmp / "vault" / "Atoms").mkdir(parents=True, exist_ok=True)
             session_logs_dir.mkdir(parents=True, exist_ok=True)
-            (tmp / "home" / ".deus").mkdir(parents=True, exist_ok=True)
+            (tmp / "home" / ".deus-v2").mkdir(parents=True, exist_ok=True)
 
             session_stems: list[str] = []
             for s_idx, session in enumerate(haystack):
@@ -380,7 +380,7 @@ def _load_vault_root() -> Optional[Path]:
     env_path = os.environ.get("DEUS_VAULT_PATH")
     if env_path:
         return Path(env_path).expanduser()
-    config_path = Path("~/.config/deus/config.json").expanduser()
+    config_path = Path("~/.config/deus-v2/config.json").expanduser()
     if config_path.exists():
         try:
             cfg = json.loads(config_path.read_text())
@@ -575,7 +575,7 @@ def main() -> None:
     parser.add_argument(
         "--save",
         action="store_true",
-        help="Append results to ~/.deus/benchmarks/results.jsonl",
+        help="Append results to ~/.deus-v2/benchmarks/results.jsonl",
     )
     args = parser.parse_args()
 
