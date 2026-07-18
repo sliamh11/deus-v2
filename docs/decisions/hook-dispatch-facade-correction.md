@@ -114,8 +114,43 @@ code that should exist there.
 
 ### Negative / accepted
 - Until a HookPipeline is built, **non-Claude backends have no guardrails.** This
-  is a known, documented limitation — not a silent one.
+  is a known, documented limitation — not a silent one. **Partially superseded
+  for `deus-native` as of C1/LIA-409 — see "Update (F2/LIA-424 — 2026-07-16)"
+  below — but the enforcement trigger remains DORMANT in production per the
+  same ADR's "Update (C5/LIA-413 — 2026-07-17)": `SAFE_TOOL_NAMES`
+  (`tool-broker-langchain-adapter.ts:131`) excludes `apply_patch`/`Bash`, so
+  no protected call currently reaches the wardens gate on the live
+  deus-native tool surface.** This statement remains fully accurate,
+  undiminished, for the container Claude SDK, OpenAI, and llama-cpp paths.
 - The two prior ADRs now carry a correction banner; readers must follow the link.
+
+**Reconciliation note (LIA-445, 2026-07-18):** A plan-review cycle for
+E3/LIA-422 cited the bullet above verbatim as evidence that `deus-native` runs
+unguarded, without cross-referencing either Update section below it. First-hand
+re-verification: `src/agent-runtimes/middleware-stack.ts`'s `wardens`
+`wrapToolCall` (comment-labeled "Wardens layer — REAL enforcement
+(C1/LIA-409)") genuinely spawns the unchanged `scripts/codex_warden_hooks.py`
+subprocess and fails closed to REVISE on any runner error;
+`src/agent-runtimes/deus-native-backend.ts` genuinely composes it into the
+production `buildMiddlewareStack(...)` call inside `runTurn`
+(permissions → wardens → memory → telemetry) — not a built-but-unwired
+facade; `middleware-stack.warden-gates.oracle.test.ts` pins that a blocked
+`apply_patch`/commit-shaped `Bash` call never invokes the tool handler while
+an allowed call delegates exactly once. **However**, none of that fires today:
+`SAFE_TOOL_NAMES` never exposes `apply_patch`/`Bash` on the live deus-native
+tool surface, so the wardens trigger is real-but-dormant, exactly as the ADR's
+own C5 update already states. **Net effect for E3/LIA-422:** the premise "C1
+built the enforcement mechanism" is TRUE and verified; the premise "so
+deus-native pipeline issues run warden-guarded today" is FALSE until a
+separately-reviewed widening of `SAFE_TOOL_NAMES` (isolation review +
+`docs/decisions/deus-v2-replay-safety.md` contract, per
+`deus-native-backend.ts`'s own documented precondition) lands. E3 does not
+inherit a blanket green light from this reconciliation — its own plan must
+either (a) demonstrate its Linear-pipeline dispatch path does not require
+`apply_patch`/commit-shaped `Bash` at all, or (b) explicitly scope in the
+`SAFE_TOOL_NAMES` widening plus its required isolation/replay-safety review
+as part of E3's own work, and get that scoped plan through its own
+plan-reviewer pass before implementation.
 
 ## Remediation options (deferred — NOT greenlit)
 
