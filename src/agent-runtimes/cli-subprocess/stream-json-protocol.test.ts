@@ -113,6 +113,31 @@ const USER_TOOL_RESULT_FIXTURE: StreamJsonEvent = {
   session_id: 'bdab0915-a604-476d-b38c-efe568ff4b89',
 };
 
+// Real shape observed live for an MCP `isError: true` tool result (LIA-454
+// §3.1 spike, `lia449b_mcp_deny_equivalence_spike.ts` — the CLI represents
+// `content` as a plain string here, not an array of parts, unlike the
+// normal-result fixture above).
+const USER_TOOL_ERROR_RESULT_FIXTURE: StreamJsonEvent = {
+  type: 'user',
+  message: {
+    role: 'user',
+    content: [
+      {
+        tool_use_id: 'toolu_01TacHwD6YXs875tnkpKSCXw',
+        type: 'tool_result',
+        content:
+          'permission_denied: tool "write_file" was blocked by the ' +
+          '"read-only" permission profile (tool "write_file" is ' +
+          'explicitly denied by rule 7 of this policy). The call was not ' +
+          'executed; continue without this tool. (probeId: lia449b-deny)',
+        is_error: true,
+      },
+    ],
+  },
+  parent_tool_use_id: null,
+  session_id: 'bdab0915-a604-476d-b38c-efe568ff4b89',
+};
+
 const RESULT_SUCCESS_FIXTURE: StreamJsonEvent = {
   type: 'result',
   subtype: 'success',
@@ -178,6 +203,22 @@ describe('extraction helpers', () => {
       decision: 'deny',
       source: 'rule',
     });
+  });
+
+  it('extractToolResultText handles a plain-string content payload (isError:true shape)', () => {
+    const blocks = extractToolResultBlocks(
+      USER_TOOL_ERROR_RESULT_FIXTURE as UserEvent,
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].is_error).toBe(true);
+    const text = extractToolResultText(blocks[0]);
+    expect(text).toContain(
+      'permission_denied: tool "write_file" was blocked by the ' +
+        '"read-only" permission profile',
+    );
+    expect(text).toContain(
+      'The call was not executed; continue without this tool.',
+    );
   });
 
   it('type guards accept the fixtures as their narrowed types for TS', () => {

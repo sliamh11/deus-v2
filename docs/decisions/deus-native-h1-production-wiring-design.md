@@ -11,7 +11,10 @@ date: 2026-07-19
 
 # LIA-454 — H1 Production-Wiring Design
 
-**Status:** Design SHIP'd; §0 policy gate cleared (§0.1) — implementation authorized.
+**Status:** Design SHIP'd; §0 policy gate cleared (§0.1); §3.1 verification
+spike CONFIRMED (2026-07-19, see §3.1); §2.7 checkpointing fork RESOLVED
+(2026-07-19, option A, see §2.7) — the real `/plan` implementation session
+(forward-brief item 3) is the next step.
 **Date:** 2026-07-19
 **Scope:** `docs/decisions/` (this document is design/ADR only, touches no
 production code). Eventual implementation would touch
@@ -23,8 +26,10 @@ tool server alongside `src/agent-runtimes/cli-subprocess/`.
 `Handoffs/2026-07-18-23-51-deus-v2-h1-wiring-and-scope-b.md`.
 **Plan-review:** SHIP — native Claude (2 rounds: round 1 REVISE on an
 unverified safety-parity claim and a wrong tool-catalog attribution, both
-fixed and re-verified in round 2) + GPT co-gate SHIP. Implementation may now
-proceed, starting with the §3.1 verification spike this document calls for.
+fixed and re-verified in round 2) + GPT co-gate SHIP. The §3.1 verification
+spike this document called for has run and is CONFIRMED (see §3.1), and the
+§2.7 checkpointing fork is RESOLVED (option A, see §2.7) — next step is the
+real `/plan` implementation session.
 
 ## 0. NEW FINDING — this is a business/policy decision, not only an engineering one
 
@@ -130,10 +135,11 @@ document now. Full verification trail:
 
 Implementation is now authorized to proceed. §3.1's core safety mechanism
 (does an MCP tool-error response reach the CLI's model loop equivalently to
-`wrapToolCall`'s `ToolMessage` substitution) remains flagged as unverified
-in §3 below and still needs its own small spike before implementation
-treats it as settled — that spike is the recommended first step, not this
-policy resolution itself.
+`wrapToolCall`'s `ToolMessage` substitution) has since been verified by a
+dedicated spike — see §3.1's own "CONFIRMED" update and
+`scripts/spikes/lia449b_mcp_deny_equivalence_spike.md`. The §2.7
+checkpointing fork is also resolved (option A — see §2.7). The real
+`/plan` implementation session (forward-brief item 3) is the next step.
 
 ## 1. Why this ticket exists
 
@@ -257,7 +263,23 @@ the same `TranscriptTurnInput` shape can call this function unchanged.
 **No storage-layer redesign needed** — only a small adapter that maps
 `StreamJsonEvent[]` → `TranscriptToolCall[]`/`TranscriptUsageEvent[]`.
 
-### 2.7 Checkpointing is the one genuinely open architectural fork
+### 2.7 Checkpointing — RESOLVED (2026-07-19): option (A)
+
+**Decision: (A), keep LangGraph checkpointing and wrap the CLI's result
+back into it.** The user chose this directly, given the (A) vs (B)
+tradeoff below, after the §3.1 spike confirmed the deny-parity mechanism.
+Rationale: this design is explicitly a strangler-pattern migration (§3.6,
+flag defaults off) — preserving 100% of existing checkpoint-consuming code
+(context compaction) exactly as-is, with zero behavioral gap during the
+strangler period, outweighs the added translation-layer cost. Option (B)'s
+"breaks context compaction, needs its own CLI-native equivalent or an
+accepted gap" was judged too risky to accept for a real production path,
+even temporarily. The real implementation plan (forward-brief item 3)
+should build the CLI-result → LangChain-message → `SqliteSaver.put`
+translation adapter as part of its walking skeleton, and re-verify
+compaction triggers correctly against CLI-turn-derived checkpoint rows
+(the re-verification burden (A) itself flags below) before treating it as
+settled.
 
 `getCheckpointer()` (`checkpointer.ts:62-69`) returns a `SqliteSaver`
 (`@langchain/langgraph-checkpoint-sqlite`), a `BaseCheckpointSaver` — a
@@ -268,11 +290,9 @@ checkpointer's `.put`/`.get` calls (invoked internally by LangGraph, not by
 Deus's own code — confirmed: `checkpointer.ts` itself contains no explicit
 `.put`/`.get` call) would not fire for CLI-subprocess-routed turns.
 
-Two real options, **not resolved by this document** — this is exactly the
-kind of decision that should get its own scrutiny in plan-review rather
-than being silently picked here:
+Two real options were weighed — (A) was chosen, per the resolution above:
 
-- **(A) Keep LangGraph checkpointing, wrap the CLI's result back into it.**
+- **(A) — CHOSEN. Keep LangGraph checkpointing, wrap the CLI's result back into it.**
   After each CLI turn, synthesize the equivalent LangChain messages from
   the CLI's `TurnResult` and write them through the existing checkpointer
   API, preserving `B4`'s conversation-continuity contract exactly.
@@ -280,25 +300,20 @@ than being silently picked here:
   any future code that reads checkpoint history) but adds a translation
   layer and a re-verification burden ("does compaction still trigger
   correctly against CLI-turn-derived checkpoint rows?").
-- **(B) Use the CLI's own native session continuity** (the `claude` CLI
-  already supports resuming a conversation by session id) as the source of
-  truth for continuity, and keep a lightweight Deus-owned mapping
-  (`thread_id` → CLI conversation id) instead of routing through
+- **(B) — NOT CHOSEN. Use the CLI's own native session continuity** (the
+  `claude` CLI already supports resuming a conversation by session id) as
+  the source of truth for continuity, keeping a lightweight Deus-owned
+  mapping (`thread_id` → CLI conversation id) instead of routing through
   `SqliteSaver`. Simpler, avoids a translation layer, but breaks context
-  compaction as currently implemented (it operates on LangGraph checkpoint
-  state specifically) — compaction would need its own CLI-native
-  equivalent, or an accepted gap for the strangler period.
-
-**Recommendation for the plan-review round:** surface both options
-explicitly rather than picking one here; this is exactly the kind of
-"decisive architecture questions get user/plan-reviewer visibility, not
-buried in one section" case `guardrail-extensions.md`'s Deep Verification
-section calls for.
+  compaction as currently implemented — rejected because that gap was
+  judged too risky for a real production path (see resolution above).
 
 ## 3. Proposed design
 
 *(Design accepted per §0.1's GO decision — not yet implemented. §3.1's core
-safety mechanism still needs its own verification spike first, per §0.1.)*
+safety mechanism has since been verified by spike (see §3.1's "CONFIRMED"
+update) and the §2.7 checkpointing fork is resolved (option A). The real
+`/plan` implementation session is the next step.)*
 
 ### 3.1 Tool catalog: a Deus-owned MCP server mirroring `SAFE_TOOL_NAMES`
 
@@ -323,22 +338,27 @@ not through this MCP tool catalog. Each tool handler:
    (`middleware-stack.ts:556-561`).
 3. Only then perform the real action and return its result.
 
-**Unverified — flagged, not assumed:** step 1's "the model sees an
-equivalent denial message either way" is **not yet verified this
-session**, same caveat class as §3.2's `--model` flag below. The one
-existing precedent, `permission-check-mcp-server.ts`'s `check_permission`
-tool (`handleCheckPermission`, `:63-78`), never exercises a real MCP
-`isError`/deny path — it's a read-only probe whose content always reports
-what the decision *would* be, never an actual tool-error response. Whether
-an MCP tool error response reaches the `claude` CLI's own internal model
-loop in a way functionally equivalent to `wrapToolCall` substituting a
-`ToolMessage` is unconfirmed. **This must be settled by a small
-LIA-449-style spike — extending the existing smoke-test harness to probe
-a deliberate MCP-level deny and asserting the model actually receives and
-respects it — before this becomes the stated production mechanism for
-relocating the one enforcement layer (`permissions`) that is live and
-load-bearing today.** Until that spike runs, §3.1 is a proposed mechanism,
-not a verified one.
+**CONFIRMED (2026-07-19)** — step 1's "the model sees an equivalent denial
+message either way" was unverified when this document was first written
+(the one existing precedent, `permission-check-mcp-server.ts`'s
+`check_permission` tool, `handleCheckPermission`:63-78, is a read-only
+probe that never exercises a real MCP `isError`/deny path). The required
+spike has now run: `scripts/spikes/lia449b_mcp_deny_equivalence_spike.md`
+(+ `.ts`, + two independent live-run `.results.json` captures, both
+2026-07-19). Both controlling facts hold — the CLI subprocess's own
+`tool_result` event carries `is_error: true` for a denied call (the raw
+wire-protocol fact), and the model's own final response demonstrates it
+understood the call was blocked and did not fabricate success (the
+behavioral fact) — across two independent live runs, zero rate-limit
+evidence, no retry loop on the denied call. **§3.1's mechanism is
+functionally equivalent to `wrapToolCall` substituting a `ToolMessage`
+today and may now be treated as the stated production mechanism for
+relocating the `permissions` enforcement layer.** One implementation detail
+the spike surfaced: the CLI represents a denied tool result's `content` as
+a plain string, not the array-of-parts shape a normal result uses — any
+code reducing CLI tool-result events (e.g. §2.6's transcript-mapping
+adapter) must handle both shapes; this is now fixed and regression-tested
+in the shared `stream-json-protocol.ts` helper the spike also uses.
 
 ### 3.2 Model tier selection
 
@@ -359,11 +379,13 @@ wiring step, isolated from the parent loop's checkpointing fork (§2.7).
 
 ### 3.4 Parent turn loop, context, and compaction
 
-Deferred to whichever checkpointing option (§2.7) the plan-review round
-picks. If (A): the existing `beforeModel` memory-retrieval and
-context-compaction mechanisms keep working against the synthesized
-checkpoint rows with no redesign. If (B): both need CLI-native equivalents
-designed separately — not attempted in this document.
+Per §2.7's resolution (option A): the existing `beforeModel`
+memory-retrieval and context-compaction mechanisms keep working against
+the synthesized checkpoint rows with no redesign — this document's own
+design for both stands unchanged. The real implementation plan must still
+re-verify compaction actually triggers correctly against CLI-turn-derived
+checkpoint rows (the re-verification burden §2.7 flags), not just assume
+it from this design.
 
 ### 3.5 Process lifecycle / orphan control (production-readiness gap, currently unaddressed)
 
@@ -401,7 +423,7 @@ about.
 | AC | Disposition |
 |---|---|
 | A real design doc/ADR addressing the relocation-of-enforcement question, plan-reviewed with full rigor, before any implementation | **This document** — plan-review SHIP (native Claude, 2 rounds; GPT co-gate SHIP). §0's policy flag was a new, load-bearing input for the user before implementation — **resolved via user GO, see §0.1.** |
-| Production `deus-native` chat turns route through the new transport (behind a flag, strangler pattern) without regressing `wrapToolCall`'s enforcement coverage | Designed in §3.1/§3.6; **not implemented** — §0's policy block is cleared (§0.1), but §3.1's core safety mechanism still needs its verification spike before implementation is ready to start. |
+| Production `deus-native` chat turns route through the new transport (behind a flag, strangler pattern) without regressing `wrapToolCall`'s enforcement coverage | Designed in §3.1/§3.6; **not implemented** — §0's policy block is cleared (§0.1), §3.1's core safety mechanism is verified by spike (see §3.1), and the §2.7 checkpointing fork is resolved (option A). The real `/plan` implementation session is the next step. |
 | A7 tool-loop-reliability benchmark re-run against the new transport | Not attempted — requires a real implementation to benchmark against. |
 | Production-grade process-lifecycle management (280-process/65GB/$183-day precedent avoided) | Designed at a high level in §3.5; the "280-process" figure itself was not found anywhere in the LIA-449 ADR — likely from the LIA-454 Linear ticket's own context, not independently re-verified this session. Real work item regardless of §0's outcome. |
 | Cross-platform story stated explicitly | **Not addressed.** `ClaudeCliSessionPool` is POSIX-only by deliberate design (`deus-native-cli-subprocess-mcp-seam.md`, §6, "Platform scope") — Windows support does not exist in the underlying transport this design builds on. This is an open gap this document surfaces but does not resolve. |
@@ -412,11 +434,12 @@ about.
   separate, explicit user decision on the policy question, independent of
   this design's engineering merit. **That decision is now recorded (§0.1,
   GO)**; implementation may proceed, starting with the §3.1 spike below.
-- **Does not resolve the checkpointing fork (§2.7).** Flagged for user
-  input, not decided here.
-- **Does not verify §3.1's MCP-error-denial-parity mechanism.** Flagged as
-  the concrete pre-implementation spike required before §3.1 is treated as
-  settled.
+- **The checkpointing fork (§2.7) is now resolved** — option A, chosen
+  directly by the user on 2026-07-19. See §2.7's resolution note.
+- **§3.1's MCP-error-denial-parity mechanism is now verified** by
+  `scripts/spikes/lia449b_mcp_deny_equivalence_spike.md` (two independent
+  live runs, both PASS) — see §3.1's "CONFIRMED" update. This was the
+  concrete pre-implementation spike this document originally required.
 - **Does not verify the "280-process/65GB/$183-day" figure** cited in the
   LIA-454 ticket description — not found in any file read this session;
   flagged as an unverified secondhand figure, not restated as settled fact.
@@ -428,6 +451,8 @@ about.
 
 - `Handoffs/2026-07-18-23-51-deus-v2-h1-wiring-and-scope-b.md` (vault, this
   session's starting point)
+- `scripts/spikes/lia449b_mcp_deny_equivalence_spike.md` (§3.1's
+  verification spike, CONFIRMED, 2026-07-19)
 - `docs/decisions/deus-native-cli-subprocess-mcp-seam.md` (LIA-449 ADR)
 - `docs/decisions/h1-parity-signoff-lia433.md` (H1 NO-GO record, 429
   evidence)
