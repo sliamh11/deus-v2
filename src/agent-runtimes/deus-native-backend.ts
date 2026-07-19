@@ -273,11 +273,11 @@ export class DeusNativeRuntime implements AgentRuntime {
     sessionRef: RuntimeSession,
     eventSink: RuntimeEventSink,
   ): Promise<RunResult> {
-    // LIA-454 walking skeleton: only constructed when DEUS_NATIVE_TRANSPORT
-    // === 'cli-subprocess' (default 'raw-http', unchanged behavior). Scoped
-    // to this one runTurn() call — shut down in the `finally` below
-    // regardless of which return path this turn takes, so no subprocess
-    // from this turn ever survives the turn.
+    // LIA-454 EP-002 step 11: only constructed when DEUS_NATIVE_TRANSPORT ===
+    // 'cli-subprocess' (default 'raw-http', unchanged behavior). Scoped to
+    // this one runTurn() call — shut down in the `finally` below regardless
+    // of which return path this turn takes, so no subprocess from this turn
+    // ever survives the turn.
     let cliSubprocessPool: ClaudeCliSessionPool | undefined;
     try {
       // publicIngress fail-closed guard (added after code-review: a real gap
@@ -915,7 +915,7 @@ export class DeusNativeRuntime implements AgentRuntime {
         error: message,
       };
     } finally {
-      // LIA-454 walking skeleton: no CLI-subprocess process from this turn
+      // LIA-454 EP-002 step 11: no CLI-subprocess process from this turn
       // survives the turn, on any return path (success or error above).
       await cliSubprocessPool?.shutdownAll();
     }

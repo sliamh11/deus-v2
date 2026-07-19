@@ -35,6 +35,21 @@
  * verification, which belongs to step 12's credentialed smoke test (the
  * only place a genuine "does the model actually still refuse" question can
  * be answered).
+ *
+ * Boundary-escape hardening (ai-eng-warden finding at EP-002 step 13's
+ * final gate review): `frameUntrustedContent` escapes tag ATTRIBUTES but
+ * never the body — acceptable at the two pre-existing tool-role call sites
+ * (`tool-broker-langchain-adapter.ts`/`nested-dispatch-tool.ts`, already
+ * reviewed/accepted at that lower stakes level), but a real gap here
+ * specifically BECAUSE this content is promoted to system-prompt
+ * authority: historical content literally containing the closing-tag text
+ * (e.g. a fetched page whose body happens to include the string
+ * `</prior-conversation-history>`) could otherwise prematurely close this
+ * module's own boundary and land at that elevated authority. Every
+ * message's content is passed through `neutralizeKnownClosingTags` (below)
+ * BEFORE any wrapping — targeting only the two tag names THIS module ever
+ * introduces, so an already-applied inner boundary from the raw-HTTP
+ * wrapper (e.g. `<tool-output>`) is left completely untouched.
  */
 import {
   AIMessage,
@@ -54,6 +69,30 @@ function roleLabelFor(message: BaseMessage): string {
 
 function stringifyMessageContent(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content);
+}
+
+/** The only two tag names this module ever wraps content in. */
+const OWN_TAG_NAMES = ['history-tool-result', 'prior-conversation-history'];
+
+/**
+ * Neutralizes any literal occurrence of this module's OWN closing-tag
+ * sequences (case-insensitive, tolerant of internal whitespace) within raw
+ * historical content, so that content can never prematurely close a
+ * boundary this module itself is about to construct — see module doc
+ * comment's "Boundary-escape hardening" note. Deliberately targets ONLY
+ * `OWN_TAG_NAMES`, never a bare `<`/`>`, so an already-applied inner
+ * boundary from the raw-HTTP path's own wrapper (e.g. `<tool-output>`,
+ * `<nested-dispatch-output>`) passes through byte-for-byte untouched.
+ */
+function neutralizeKnownClosingTags(text: string): string {
+  let result = text;
+  for (const tagName of OWN_TAG_NAMES) {
+    const closingTag = new RegExp(`</\\s*${tagName}\\s*>`, 'gi');
+    result = result.replace(closingTag, (match) =>
+      match.replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    );
+  }
+  return result;
 }
 
 export interface SerializeParentHistoryOptions {
@@ -83,7 +122,13 @@ export function serializeParentHistory(
 
   const transcriptEntries: string[] = [];
   for (const message of options.priorMessages) {
-    const contentText = stringifyMessageContent(message.content);
+    // Neutralized BEFORE either branch below — this content ends up inside
+    // BOTH the (tool-result-only) inner wrap and the outer transcript wrap,
+    // so a single pass covering both of this module's own tag names closes
+    // the breakout for either boundary regardless of message type.
+    const contentText = neutralizeKnownClosingTags(
+      stringifyMessageContent(message.content),
+    );
     if (message instanceof ToolMessage) {
       // Wrapped a second time here, on top of whatever boundary the
       // content already carries from generation time — see module doc
