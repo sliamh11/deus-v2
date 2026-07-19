@@ -43,7 +43,10 @@ import {
   StreamJsonLineParser,
   buildUserTurnInput,
   encodeNdjsonLine,
+  isAssistantEvent,
   isResultEvent,
+  isSystemInitEvent,
+  validateTurnEventSequence,
   type ParsedLineResult,
   type ResultEvent,
   type StreamJsonEvent,
@@ -355,6 +358,22 @@ export interface ConversationHandle {
   pid: number;
 }
 
+/** Wall-clock timing for one turn, measured host-side (`options.now`, so
+ *  hermetically injectable in tests) rather than only via the CLI's own
+ *  `ttft_ms`/`duration_ms` — this timing spans from `createConversation`
+ *  spawn, not from the CLI's own turn-start, and remains available even for
+ *  a turn that fails before the CLI reports its own terminal timing. */
+export interface TurnTiming {
+  /** From spawn to the session's own `system`/`init` event, or `undefined`
+   *  if init was never observed before this turn resolved. */
+  spawnToInitMs?: number;
+  /** From spawn to this turn's first `assistant` event, or `undefined` if
+   *  none arrived (e.g. the turn failed before any assistant output). */
+  spawnToFirstAssistantMs?: number;
+  /** From `sendTurn()` to this turn's resolution. */
+  totalTurnMs: number;
+}
+
 export interface TurnResult {
   result: ResultEvent;
   /** All retained events for this session (bounded), including the
@@ -362,6 +381,15 @@ export interface TurnResult {
    *  events collected since spawn — everything the smoke runner's
    *  assertions need, in one return value. */
   events: StreamJsonEvent[];
+  /** Exactly this turn's own events (system/init excluded — that belongs to
+   *  the session, not any one turn), independent of the session-wide
+   *  `maxRetainedEvents` cap: a long-lived multi-turn session's wider
+   *  `events` log can drop early-turn events once that cap is exceeded,
+   *  which is unsafe for building a durable checkpoint row. Bounded
+   *  separately by `maxTurnEvents`/`maxTurnEventBytes` — an overflow fails
+   *  the turn with `protocol_error` rather than silently truncating it. */
+  turnEvents: StreamJsonEvent[];
+  timing: TurnTiming;
   pid: number;
 }
 
@@ -391,6 +419,12 @@ type TerminationReason = 'idle' | 'shutdown';
 interface PendingTurn {
   resolve: (result: TurnResult) => void;
   reject: (error: Error) => void;
+  turnStartedAt: number;
+  /** This turn's own events only — reset per turn, independent of the
+   *  session-wide `retainedEvents` cap (see `TurnResult.turnEvents`). */
+  turnEvents: StreamJsonEvent[];
+  turnEventBytes: number;
+  firstAssistantEventAt?: number;
 }
 
 interface SessionRecord {
@@ -401,6 +435,13 @@ interface SessionRecord {
   lineParser: StreamJsonLineParser;
   retainedEvents: BoundedEventLog<StreamJsonEvent>;
   stderrTail: string;
+  /** Set once, at `createConversation` spawn — the origin point for every
+   *  turn's `TurnTiming`. */
+  spawnedAt: number;
+  /** Set once, the first time this session's own `system`/`init` event is
+   *  parsed — never re-set on a later turn (there is exactly one init per
+   *  process lifetime). */
+  initReceivedAt?: number;
   /** Per-stream UTF-8 decoders: `Buffer#toString('utf8')` on each chunk
    *  independently corrupts multi-byte characters split across a chunk
    *  boundary (produces replacement characters, which can then break JSON
@@ -438,11 +479,24 @@ export interface ClaudeCliSessionPoolOptions {
   processControl?: ProcessControlFns;
   maxRetainedEvents?: number;
   maxStderrTailChars?: number;
+  /** Bounds `TurnResult.turnEvents` — a long tool loop within ONE turn must
+   *  still fail visibly with `protocol_error` rather than silently drop its
+   *  earliest events (unlike the session-wide `retainedEvents` cap, which is
+   *  a diagnostic log allowed to drop old entries; a turn's own events are
+   *  what `checkpoint-translation.ts` must persist verbatim). */
+  maxTurnEvents?: number;
+  /** Bounds the total serialized byte size of one turn's events, for the
+   *  same reason as `maxTurnEvents` — a pathologically large single event
+   *  (e.g. a huge tool result) could exceed a reasonable memory budget even
+   *  under a low event-count cap. */
+  maxTurnEventBytes?: number;
   now?: () => number;
 }
 
 const DEFAULT_MAX_RETAINED_EVENTS = 200;
 const DEFAULT_MAX_STDERR_TAIL_CHARS = 4000;
+const DEFAULT_MAX_TURN_EVENTS = 2000;
+const DEFAULT_MAX_TURN_EVENT_BYTES = 20_000_000;
 
 /**
  * The pool: sole factory for the (module-private, never-exported) session
@@ -456,6 +510,8 @@ export class ClaudeCliSessionPool {
   private readonly processControl: ProcessControlFns;
   private readonly maxRetainedEvents: number;
   private readonly maxStderrTailChars: number;
+  private readonly maxTurnEvents: number;
+  private readonly maxTurnEventBytes: number;
   private readonly now: () => number;
   private occupiedSlotsCount = 0;
   private shutdownPromise?: Promise<void>;
@@ -468,6 +524,9 @@ export class ClaudeCliSessionPool {
       options.maxRetainedEvents ?? DEFAULT_MAX_RETAINED_EVENTS;
     this.maxStderrTailChars =
       options.maxStderrTailChars ?? DEFAULT_MAX_STDERR_TAIL_CHARS;
+    this.maxTurnEvents = options.maxTurnEvents ?? DEFAULT_MAX_TURN_EVENTS;
+    this.maxTurnEventBytes =
+      options.maxTurnEventBytes ?? DEFAULT_MAX_TURN_EVENT_BYTES;
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -552,6 +611,7 @@ export class ClaudeCliSessionPool {
         this.maxRetainedEvents,
       ),
       stderrTail: '',
+      spawnedAt: this.now(),
       stdoutDecoder: new StringDecoder('utf8'),
       stderrDecoder: new StringDecoder('utf8'),
       finalized: false,
@@ -620,7 +680,13 @@ export class ClaudeCliSessionPool {
     });
 
     return new Promise<TurnResult>((resolve, reject) => {
-      record.pendingTurn = { resolve, reject };
+      record.pendingTurn = {
+        resolve,
+        reject,
+        turnStartedAt: this.now(),
+        turnEvents: [],
+        turnEventBytes: 0,
+      };
       const line = encodeNdjsonLine(buildUserTurnInput(prompt));
       record.process.stdin?.write(line);
     });
@@ -741,8 +807,64 @@ export class ClaudeCliSessionPool {
 
     const event = result.event as StreamJsonEvent;
     record.retainedEvents.push(event);
-    if (isResultEvent(event) && record.pendingTurn !== undefined) {
-      const pending = record.pendingTurn;
+
+    if (isSystemInitEvent(event) && record.initReceivedAt === undefined) {
+      record.initReceivedAt = this.now();
+    }
+
+    const pending = record.pendingTurn;
+    if (pending === undefined) return;
+
+    // system/init belongs to the SESSION (one per process lifetime), not to
+    // any single turn — TurnResult.turnEvents deliberately excludes it (see
+    // its doc comment), so it is never appended to `pending.turnEvents`.
+    if (isSystemInitEvent(event)) return;
+
+    if (
+      isAssistantEvent(event) &&
+      pending.firstAssistantEventAt === undefined
+    ) {
+      pending.firstAssistantEventAt = this.now();
+    }
+
+    pending.turnEvents.push(event);
+    // Buffer.byteLength (not `.length`, which counts UTF-16 code units) —
+    // the option/field are named *Bytes and multibyte content would
+    // otherwise under-count against the documented byte guard.
+    pending.turnEventBytes += Buffer.byteLength(result.raw, 'utf8');
+    if (
+      pending.turnEvents.length > this.maxTurnEvents ||
+      pending.turnEventBytes > this.maxTurnEventBytes
+    ) {
+      this.failPendingTurn(
+        record,
+        new ClaudeCliSessionError(
+          `turn event buffer overflow on conversation "${record.conversationId}": ` +
+            `${pending.turnEvents.length} events / ${pending.turnEventBytes} bytes ` +
+            `(max ${this.maxTurnEvents} events / ${this.maxTurnEventBytes} bytes) — ` +
+            `failing visibly rather than silently dropping early events`,
+          'protocol_error',
+          { stderrTail: record.stderrTail },
+        ),
+      );
+      return;
+    }
+
+    if (isResultEvent(event)) {
+      const violations = validateTurnEventSequence(pending.turnEvents);
+      if (violations.length > 0) {
+        this.failPendingTurn(
+          record,
+          new ClaudeCliSessionError(
+            `protocol violation on conversation "${record.conversationId}": ` +
+              violations.map((v) => `${v.kind}: ${v.detail}`).join('; '),
+            'protocol_error',
+            { stderrTail: record.stderrTail },
+          ),
+        );
+        return;
+      }
+
       record.pendingTurn = undefined;
       record.state = 'idle';
       this.armIdleTimer(record);
@@ -752,9 +874,23 @@ export class ClaudeCliSessionPool {
         pid: record.pid,
         timestamp: this.now(),
       });
+      const completedAt = this.now();
       pending.resolve({
         result: event,
         events: record.retainedEvents.toArray(),
+        turnEvents: pending.turnEvents,
+        timing: {
+          ...(record.initReceivedAt !== undefined
+            ? { spawnToInitMs: record.initReceivedAt - record.spawnedAt }
+            : {}),
+          ...(pending.firstAssistantEventAt !== undefined
+            ? {
+                spawnToFirstAssistantMs:
+                  pending.firstAssistantEventAt - record.spawnedAt,
+              }
+            : {}),
+          totalTurnMs: completedAt - pending.turnStartedAt,
+        },
         pid: record.pid,
       });
     }

@@ -5,7 +5,10 @@ import {
   StreamJsonLineParser,
   buildUserTurnInput,
   encodeNdjsonLine,
+  extractAssistantMessageId,
+  extractAssistantModel,
   extractAssistantText,
+  extractAssistantUsage,
   extractToolResultBlocks,
   extractToolResultText,
   extractToolUseBlocks,
@@ -13,7 +16,10 @@ import {
   isResultEvent,
   isSystemInitEvent,
   isUserEvent,
+  normalizeCliUsageToLangChainUsage,
+  validateTurnEventSequence,
   type AssistantEvent,
+  type CliUsage,
   type ResultEvent,
   type StreamJsonEvent,
   type SystemInitEvent,
@@ -341,5 +347,177 @@ describe('BoundedEventLog', () => {
 
   it('throws on a non-positive cap rather than silently accepting an unbounded log', () => {
     expect(() => new BoundedEventLog<number>(0)).toThrow();
+  });
+});
+
+// ── Real usage/model-ID fields (EP-002 step 2.3 spike, `claude 2.1.215`,
+//    `--output-format stream-json --verbose`) ────────────────────────────
+
+const ASSISTANT_WITH_USAGE_FIXTURE: StreamJsonEvent = {
+  type: 'assistant',
+  message: {
+    model: 'claude-sonnet-5',
+    id: 'msg_011CdBQeR2o2KQyqYuLKbPbv',
+    type: 'message',
+    role: 'assistant',
+    content: [{ type: 'text', text: 'ready' }],
+    stop_reason: null,
+    usage: {
+      input_tokens: 2,
+      cache_creation_input_tokens: 29792,
+      cache_read_input_tokens: 23538,
+      cache_creation: {
+        ephemeral_5m_input_tokens: 0,
+        ephemeral_1h_input_tokens: 29792,
+      },
+      output_tokens: 4,
+      service_tier: 'standard',
+      inference_geo: 'not_available',
+    },
+  },
+  parent_tool_use_id: null,
+  session_id: '05e7b36d-7df0-4475-8764-a141ff820bd1',
+};
+
+describe('assistant usage/model-ID extraction (real captured shape)', () => {
+  it('extractAssistantMessageId returns the real message id', () => {
+    expect(
+      extractAssistantMessageId(ASSISTANT_WITH_USAGE_FIXTURE as AssistantEvent),
+    ).toBe('msg_011CdBQeR2o2KQyqYuLKbPbv');
+  });
+
+  it('extractAssistantModel returns the exact resolved model id string', () => {
+    expect(
+      extractAssistantModel(ASSISTANT_WITH_USAGE_FIXTURE as AssistantEvent),
+    ).toBe('claude-sonnet-5');
+  });
+
+  it('extractAssistantMessageId/Model return undefined when absent, never fabricated', () => {
+    expect(
+      extractAssistantMessageId(ASSISTANT_TOOL_USE_FIXTURE as AssistantEvent),
+    ).toBeUndefined();
+    expect(
+      extractAssistantModel(ASSISTANT_TOOL_USE_FIXTURE as AssistantEvent),
+    ).toBeUndefined();
+  });
+
+  it('extractAssistantUsage returns the real per-cycle usage object', () => {
+    const usage = extractAssistantUsage(
+      ASSISTANT_WITH_USAGE_FIXTURE as AssistantEvent,
+    );
+    expect(usage).toEqual({
+      input_tokens: 2,
+      cache_creation_input_tokens: 29792,
+      cache_read_input_tokens: 23538,
+      cache_creation: {
+        ephemeral_5m_input_tokens: 0,
+        ephemeral_1h_input_tokens: 29792,
+      },
+      output_tokens: 4,
+      service_tier: 'standard',
+      inference_geo: 'not_available',
+    });
+  });
+
+  it('extractAssistantUsage returns undefined when no usage was reported', () => {
+    expect(
+      extractAssistantUsage(ASSISTANT_TOOL_USE_FIXTURE as AssistantEvent),
+    ).toBeUndefined();
+  });
+});
+
+describe('normalizeCliUsageToLangChainUsage', () => {
+  it('sums input_tokens + cache_read + cache_creation into LangChain input_tokens (real shape: input_tokens is NEW tokens only, cache counters are additive)', () => {
+    const usage: CliUsage = {
+      input_tokens: 2,
+      cache_creation_input_tokens: 29792,
+      cache_read_input_tokens: 23538,
+      output_tokens: 4,
+    };
+    const normalized = normalizeCliUsageToLangChainUsage(usage);
+    expect(normalized).toEqual({
+      input_tokens: 2 + 29792 + 23538,
+      output_tokens: 4,
+      total_tokens: 2 + 29792 + 23538 + 4,
+      input_token_details: { cache_read: 23538, cache_creation: 29792 },
+    });
+  });
+
+  it('omits input_token_details when no cache fields were reported, never fabricating zeros', () => {
+    const usage: CliUsage = { input_tokens: 100, output_tokens: 50 };
+    const normalized = normalizeCliUsageToLangChainUsage(usage);
+    expect(normalized).toEqual({
+      input_tokens: 100,
+      output_tokens: 50,
+      total_tokens: 150,
+    });
+    expect(normalized.input_token_details).toBeUndefined();
+  });
+
+  it('includes a zero cache_read explicitly when the CLI actually reported zero (not fabricated, but not omitted either)', () => {
+    const usage: CliUsage = {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_input_tokens: 0,
+    };
+    const normalized = normalizeCliUsageToLangChainUsage(usage);
+    expect(normalized.input_token_details).toEqual({ cache_read: 0 });
+  });
+});
+
+// ── Turn event sequence validation ──────────────────────────────────────────
+
+describe('validateTurnEventSequence', () => {
+  it('returns no violations for a clean tool_use/tool_result/result sequence', () => {
+    const violations = validateTurnEventSequence([
+      ASSISTANT_TOOL_USE_FIXTURE,
+      USER_TOOL_RESULT_FIXTURE,
+      RESULT_SUCCESS_FIXTURE,
+    ]);
+    expect(violations).toEqual([]);
+  });
+
+  it('flags an orphan tool_result with no matching tool_use this turn', () => {
+    const violations = validateTurnEventSequence([
+      USER_TOOL_RESULT_FIXTURE,
+      RESULT_SUCCESS_FIXTURE,
+    ]);
+    expect(violations).toContainEqual(
+      expect.objectContaining({ kind: 'orphan_tool_result' }),
+    );
+  });
+
+  it('flags a duplicate tool_use id within the same turn', () => {
+    const violations = validateTurnEventSequence([
+      ASSISTANT_TOOL_USE_FIXTURE,
+      ASSISTANT_TOOL_USE_FIXTURE,
+      USER_TOOL_RESULT_FIXTURE,
+      RESULT_SUCCESS_FIXTURE,
+    ]);
+    expect(violations).toContainEqual(
+      expect.objectContaining({ kind: 'duplicate_tool_use_id' }),
+    );
+  });
+
+  it('flags a terminal result reporting success with no result text', () => {
+    const inconsistentResult: StreamJsonEvent = {
+      ...RESULT_SUCCESS_FIXTURE,
+      result: undefined,
+    };
+    const violations = validateTurnEventSequence([inconsistentResult]);
+    expect(violations).toContainEqual(
+      expect.objectContaining({ kind: 'inconsistent_terminal_result' }),
+    );
+  });
+
+  it('does not flag an error result with no result text (failure, not inconsistency)', () => {
+    const errorResult: StreamJsonEvent = {
+      type: 'result',
+      subtype: 'error',
+      is_error: true,
+      session_id: 'x',
+    };
+    const violations = validateTurnEventSequence([errorResult]);
+    expect(violations).toEqual([]);
   });
 });
