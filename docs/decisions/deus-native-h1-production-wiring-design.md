@@ -1,14 +1,9 @@
 ---
 name: LIA-454 — H1 production-wiring design (relocating wrapToolCall enforcement to the MCP seam)
 description: >
-  Design proposal for wiring LIA-449's proven CLI-subprocess + stdio-MCP
-  transport into deus-native's production chat-turn path, replacing
-  `buildProxyRoutedChatAnthropic`'s raw-HTTP client. Maps every middleware
-  responsibility (permissions, wardens, memory, telemetry, context
-  compaction, checkpointing, transcript storage, nested dispatch, model-tier
-  selection) onto the new MCP-tool-handler boundary. Records a NEW,
-  independently-verified policy-compliance finding that changes the
-  go/no-go calculus for this entire initiative.
+  Design proposal for wiring LIA-449's CLI-subprocess + stdio-MCP transport
+  into deus-native's production chat-turn path. Records an independently
+  verified OAuth-policy finding and its resolution (user GO, see §0.1).
 type: decision
 tags: [deus-v2, agent-runtime, cli-subprocess, mcp, h1, lia-454, security, policy]
 date: 2026-07-19
@@ -16,21 +11,20 @@ date: 2026-07-19
 
 # LIA-454 — H1 Production-Wiring Design
 
-**Status:** Proposed — design only. **Not accepted. Implementation
-deliberately withheld pending explicit user sign-off** (see §0). Plan-review:
-**SHIP** — native Claude (2 rounds: round 1 REVISE on an unverified
-safety-parity claim and a wrong tool-catalog attribution, both fixed and
-re-verified in round 2) + GPT co-gate SHIP.
-
+**Status:** Design SHIP'd; §0 policy gate cleared (§0.1) — implementation authorized.
 **Date:** 2026-07-19
+**Scope:** `docs/decisions/` (this document is design/ADR only, touches no
+production code). Eventual implementation would touch
+`src/agent-runtimes/deus-native-backend.ts`, `src/agent-runtimes/nested-dispatch.ts`,
+`src/agent-runtimes/nested-dispatch-tool.ts`, `src/agent-runtimes/model-selection.ts`,
+`src/agent-runtimes/checkpointer.ts`, and would add a new Deus-owned MCP
+tool server alongside `src/agent-runtimes/cli-subprocess/`.
 **Author:** Autonomous overnight session, continuing
 `Handoffs/2026-07-18-23-51-deus-v2-h1-wiring-and-scope-b.md`.
-**Scope of this document:** design only. Touches no production code. The
-eventual implementation would touch `src/agent-runtimes/deus-native-backend.ts`,
-`src/agent-runtimes/nested-dispatch.ts`, `src/agent-runtimes/nested-dispatch-tool.ts`,
-`src/agent-runtimes/model-selection.ts`, `src/agent-runtimes/checkpointer.ts`,
-and would add a new Deus-owned MCP tool server alongside
-`src/agent-runtimes/cli-subprocess/`.
+**Plan-review:** SHIP — native Claude (2 rounds: round 1 REVISE on an
+unverified safety-parity claim and a wrong tool-catalog attribution, both
+fixed and re-verified in round 2) + GPT co-gate SHIP. Implementation may now
+proceed, starting with the §3.1 verification spike this document calls for.
 
 ## 0. NEW FINDING — this is a business/policy decision, not only an engineering one
 
@@ -87,19 +81,59 @@ the user's call — it touches account standing, product legal exposure, and
 a business decision about whether Deus should depend on automating a
 consumer-subscription CLI in a production path at all (vs., e.g., budgeting
 for metered API-key usage instead, which is unambiguously policy-compliant
-and sidesteps this entire question). **Recommendation: do not implement any
-part of §3 below until the user has explicitly reviewed §0 and decided how
-to proceed** — options include (a) proceed anyway with an explicit
-risk-acceptance decision, (b) implement but keep it behind a flag never
-enabled in real production traffic pending Anthropic clarification, (c)
-pursue metered API keys instead and abandon the CLI-subprocess direction
-for production (LIA-449's spike/research value stands regardless), (d) ask
-Anthropic directly. This document does not recommend one of these — that
-recommendation is the user's to make.
+and sidesteps this entire question). **At the time this was written, the
+recommendation was: do not implement any part of §3 below until the user
+has explicitly reviewed §0 and decided how to proceed** — the options laid
+out were (a) proceed anyway with an explicit risk-acceptance decision, (b)
+implement but keep it behind a flag never enabled in real production
+traffic pending Anthropic clarification, (c) pursue metered API keys
+instead and abandon the CLI-subprocess direction for production (LIA-449's
+spike/research value stands regardless), (d) ask Anthropic directly. **This
+has since been superseded — see §0.1: the user chose (a)/(effectively the
+Zed/VS Code-precedent variant of proceeding), and implementation is now
+authorized.**
 
 Everything below is the engineering design, produced so that whichever way
 this policy question resolves, the implementation work is not starting from
 zero.
+
+### 0.1 Resolution — user GO decision (2026-07-19)
+
+The user was given the actual tradeoff directly (Anthropic's
+OAuth-restriction text, the Roo Code precedent and how LIA-449's mechanism
+differs from it, the genuine residual ambiguity in "on behalf of their
+users" framing, and the real personal-account risk), conditioned on
+confirming this mechanism matches how official IDE tooling does it. That
+confirmation was independently verified, not just asserted: Zed's Claude
+Code integration wraps the official `@anthropic-ai/claude-agent-sdk` via ACP
+(`zed.dev/blog/claude-code-via-acp`), and — stronger corroboration since
+it's first-party, not third-party — Anthropic's own VS Code extension
+"bundles the same `claude` CLI underneath... same authentication"
+(`code.claude.com/docs/en/vs-code`). Both ultimately spawn the real,
+unmodified `claude` binary via stream-json, the same mechanism LIA-449
+built (confirmed via a 2026-07-18 static read of the SDK's compiled source:
+it does nothing more than spawn+stream-json, no special headers/attestation).
+Roo Code's blocked mechanism, by contrast, extracted the raw OAuth token for
+its own HTTP client — the same shape as `deus-native`'s old, already-blocked
+`buildProxyRoutedChatAnthropic`, materially different from LIA-449's
+real-subprocess approach.
+
+The user's response: *"If that's how Zed works as well - I'm good with that
+approach. lets go with that."*
+
+This clears this document's §0 policy gate. Recorded as a Linear comment
+thread on LIA-454 (`comment-492fb737`, 2026-07-19T02:49:23Z) rather than by
+editing this document directly at the time, to avoid a git conflict with
+the concurrent session that owned this worktree — reconciled into this
+document now. Full verification trail:
+`Session-Logs/2026-07-19/deus-v2-lia454-policy-goahead.md` (vault).
+
+Implementation is now authorized to proceed. §3.1's core safety mechanism
+(does an MCP tool-error response reach the CLI's model loop equivalently to
+`wrapToolCall`'s `ToolMessage` substitution) remains flagged as unverified
+in §3 below and still needs its own small spike before implementation
+treats it as settled — that spike is the recommended first step, not this
+policy resolution itself.
 
 ## 1. Why this ticket exists
 
@@ -263,8 +297,8 @@ section calls for.
 
 ## 3. Proposed design
 
-*(Provided as a straw-man design for eventual user policy sign-off to react
-to — not yet implemented.)*
+*(Design accepted per §0.1's GO decision — not yet implemented. §3.1's core
+safety mechanism still needs its own verification spike first, per §0.1.)*
 
 ### 3.1 Tool catalog: a Deus-owned MCP server mirroring `SAFE_TOOL_NAMES`
 
@@ -366,17 +400,18 @@ about.
 
 | AC | Disposition |
 |---|---|
-| A real design doc/ADR addressing the relocation-of-enforcement question, plan-reviewed with full rigor, before any implementation | **This document** — plan-review SHIP (native Claude, 2 rounds; GPT co-gate SHIP). §0's policy flag is itself a new, load-bearing input for the user before implementation. |
-| Production `deus-native` chat turns route through the new transport (behind a flag, strangler pattern) without regressing `wrapToolCall`'s enforcement coverage | Designed in §3.1/§3.6; **not implemented** — blocked on §0, and §3.1's core safety mechanism itself needs a verification spike before it's implementation-ready. |
-| A7 tool-loop-reliability benchmark re-run against the new transport | Not attempted — requires a real implementation to benchmark against, which is blocked on §0. |
+| A real design doc/ADR addressing the relocation-of-enforcement question, plan-reviewed with full rigor, before any implementation | **This document** — plan-review SHIP (native Claude, 2 rounds; GPT co-gate SHIP). §0's policy flag was a new, load-bearing input for the user before implementation — **resolved via user GO, see §0.1.** |
+| Production `deus-native` chat turns route through the new transport (behind a flag, strangler pattern) without regressing `wrapToolCall`'s enforcement coverage | Designed in §3.1/§3.6; **not implemented** — §0's policy block is cleared (§0.1), but §3.1's core safety mechanism still needs its verification spike before implementation is ready to start. |
+| A7 tool-loop-reliability benchmark re-run against the new transport | Not attempted — requires a real implementation to benchmark against. |
 | Production-grade process-lifecycle management (280-process/65GB/$183-day precedent avoided) | Designed at a high level in §3.5; the "280-process" figure itself was not found anywhere in the LIA-449 ADR — likely from the LIA-454 Linear ticket's own context, not independently re-verified this session. Real work item regardless of §0's outcome. |
 | Cross-platform story stated explicitly | **Not addressed.** `ClaudeCliSessionPool` is POSIX-only by deliberate design (`deus-native-cli-subprocess-mcp-seam.md`, §6, "Platform scope") — Windows support does not exist in the underlying transport this design builds on. This is an open gap this document surfaces but does not resolve. |
 
 ## 5. What this document explicitly does NOT do
 
-- **Does not authorize any implementation.** Per §0, that requires a
+- **Did not, by itself, authorize implementation** — §0 flagged that as a
   separate, explicit user decision on the policy question, independent of
-  this design's engineering merit.
+  this design's engineering merit. **That decision is now recorded (§0.1,
+  GO)**; implementation may proceed, starting with the §3.1 spike below.
 - **Does not resolve the checkpointing fork (§2.7).** Flagged for user
   input, not decided here.
 - **Does not verify §3.1's MCP-error-denial-parity mechanism.** Flagged as
