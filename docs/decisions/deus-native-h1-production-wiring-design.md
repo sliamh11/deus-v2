@@ -11,15 +11,10 @@ date: 2026-07-19
 
 # LIA-454 — H1 Production-Wiring Design
 
-**Status:** Design SHIP'd; §0 policy gate cleared (§0.1); §3.1 verification
-spike CONFIRMED (2026-07-19, see §3.1); §2.7 checkpointing fork RESOLVED
-(2026-07-19, option A, see §2.7). **First real implementation slice landed
-(2026-07-19): nested-dispatch (§3.3's recommended first walking skeleton)
-now routes through the CLI-subprocess transport, flag-gated behind
-`DEUS_NATIVE_TRANSPORT=cli-subprocess` (default off everywhere, per §3.6) —
-see §4's updated disposition table.** The parent turn loop (`runTurn()`'s
-own `createAgent`/`agent.invoke`, §3.4) is still unchanged raw-HTTP
-regardless of the flag; that remains the next real implementation slice.
+**Status:** Design SHIP'd; §0/§3.1/§2.7 resolved. **Nested-dispatch (first
+walking skeleton) implemented (2026-07-19)**, flag-gated behind
+`DEUS_NATIVE_TRANSPORT=cli-subprocess` (default off) — see §4. Parent turn
+loop still unchanged raw-HTTP; that's the next slice.
 **Date:** 2026-07-19
 **Scope:** `docs/decisions/` (this document is design/ADR only, touches no
 production code). Eventual implementation would touch
