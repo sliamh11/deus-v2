@@ -285,6 +285,25 @@ export async function resolvePublicWebTarget(rawUrl: string): Promise<{
   return { url, address: first.address, family: first.family as 4 | 6 };
 }
 
+// Node 20+/22's Happy-Eyeballs dual-stack connect (net.connect's
+// lookupAndConnectMultiple) calls a custom `lookup` with `options.all: true`
+// and expects an address array back, not the single (address, family)
+// triple the one-address-per-request contract used pre-Happy-Eyeballs.
+// Returning the wrong shape for whichever mode Node asks for surfaces as
+// `ERR_INVALID_IP_ADDRESS: Invalid IP address: undefined` deep inside net/tls.
+export function createPinnedLookup(
+  address: string,
+  family: 4 | 6,
+): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address, family }]);
+    } else {
+      callback(null, address, family);
+    }
+  };
+}
+
 async function fetchPublicText(rawUrl: string): Promise<{
   status: number;
   url: string;
@@ -295,9 +314,7 @@ async function fetchPublicText(rawUrl: string): Promise<{
   const request = target.url.protocol === 'https:' ? httpsRequest : httpRequest;
 
   return new Promise((resolve, reject) => {
-    const lookup: LookupFunction = (_hostname, _options, callback) => {
-      callback(null, target.address, target.family);
-    };
+    const lookup = createPinnedLookup(target.address, target.family);
     const req = request(
       {
         protocol: target.url.protocol,
