@@ -19,6 +19,8 @@ import {
   killProcess,
   forceKillProcess,
   processExists,
+  getProcessStartIdentity,
+  getProcessCommandLine,
   containerBuildHint,
   detectProxyBindHost,
   hostGatewayArgs,
@@ -66,6 +68,92 @@ describe('processExists', () => {
 
   it('returns false for non-existent PID', () => {
     expect(processExists(999999999)).toBe(false);
+  });
+});
+
+describe('getProcessStartIdentity', () => {
+  beforeEach(() => {
+    mockExecFileSync.mockReset();
+  });
+
+  it('returns unverifiable on Windows', () => {
+    if (IS_WINDOWS) {
+      expect(getProcessStartIdentity(process.pid)).toEqual({
+        status: 'unverifiable',
+      });
+    }
+  });
+
+  it('returns the trimmed ps output as "found" on non-Windows', () => {
+    if (IS_WINDOWS) return;
+    mockExecFileSync.mockReturnValue(Buffer.from('Fri Jul 19 10:23:45 2026\n'));
+    const result = getProcessStartIdentity(12345);
+    expect(result).toEqual({
+      status: 'found',
+      value: 'Fri Jul 19 10:23:45 2026',
+    });
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      'ps',
+      ['-o', 'lstart=', '-p', '12345'],
+      expect.anything(),
+    );
+  });
+
+  it('returns "not_found" when ps throws (no such process)', () => {
+    if (IS_WINDOWS) return;
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error('no such process');
+    });
+    expect(getProcessStartIdentity(999999999)).toEqual({
+      status: 'not_found',
+    });
+  });
+
+  it('returns "not_found" when ps returns empty output', () => {
+    if (IS_WINDOWS) return;
+    mockExecFileSync.mockReturnValue(Buffer.from(''));
+    expect(getProcessStartIdentity(999999999)).toEqual({
+      status: 'not_found',
+    });
+  });
+});
+
+describe('getProcessCommandLine', () => {
+  beforeEach(() => {
+    mockExecFileSync.mockReset();
+  });
+
+  it('returns unverifiable on Windows', () => {
+    if (IS_WINDOWS) {
+      expect(getProcessCommandLine(process.pid)).toEqual({
+        status: 'unverifiable',
+      });
+    }
+  });
+
+  it('returns the trimmed ps output as "found" on non-Windows', () => {
+    if (IS_WINDOWS) return;
+    mockExecFileSync.mockReturnValue(
+      Buffer.from('claude --print --no-session-persistence\n'),
+    );
+    const result = getProcessCommandLine(12345);
+    expect(result).toEqual({
+      status: 'found',
+      value: 'claude --print --no-session-persistence',
+    });
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      'ps',
+      ['-o', 'args=', '-p', '12345'],
+      expect.anything(),
+    );
+  });
+
+  it('returns "not_found" when ps throws (no such process)', () => {
+    if (IS_WINDOWS) return;
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error('no such process');
+    });
+    expect(getProcessCommandLine(999999999)).toEqual({ status: 'not_found' });
   });
 });
 
