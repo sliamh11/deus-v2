@@ -15,6 +15,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'DEUS_AGENT_BACKEND',
+  'DEUS_NATIVE_TRANSPORT',
   'DEUS_CONTEXT_FILE_MAX_CHARS',
   'DEUS_OPENAI_MODEL',
   'LLAMA_CPP_BASE_URL',
@@ -253,6 +254,21 @@ const rawAgentBackend = (
 // AND eliminates the prior silent-coercion ternary for new backend IDs.
 export const DEFAULT_AGENT_RUNTIME: AgentRuntimeId =
   parseAgentBackend(rawAgentBackend) ?? 'claude';
+
+// LIA-454 H1 production-wiring walking skeleton (nested-dispatch only —
+// the parent turn loop still always uses raw-http regardless of this flag).
+// Default 'raw-http' in EVERY environment, including the user's own
+// personal runs — per docs/decisions/deus-native-h1-production-wiring-design.md
+// §3.6, this must never be silently on; it is opt-in only, one env var at a
+// time, until deliberately flipped.
+export const DEUS_NATIVE_TRANSPORT: 'raw-http' | 'cli-subprocess' =
+  (
+    process.env.DEUS_NATIVE_TRANSPORT ||
+    envConfig.DEUS_NATIVE_TRANSPORT ||
+    'raw-http'
+  ).toLowerCase() === 'cli-subprocess'
+    ? 'cli-subprocess'
+    : 'raw-http';
 
 export const DEUS_OPENAI_MODEL =
   process.env.DEUS_OPENAI_MODEL || envConfig.DEUS_OPENAI_MODEL || '';

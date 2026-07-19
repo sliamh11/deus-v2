@@ -66,6 +66,7 @@ import {
   createNestedDispatcher,
   type CreateNestedDispatcherDeps,
   type NestedDispatchResult,
+  type NestedDispatcher,
 } from './nested-dispatch.js';
 import {
   buildAgentSpecDispatchRequest,
@@ -256,6 +257,20 @@ export interface NestedDispatchToolOptions {
    *  adapter never sees, and cannot recover, the unfiltered catalog.
    *  Omit (or pass an empty map) for the original generic-only behavior. */
   agentSpecs?: ReadonlyMap<string, LoadedAgentSpec>;
+  /**
+   * LIA-454: overrides which `NestedDispatcher` implementation this tool
+   * uses. Zero-arg factory — NOT `(deps: CreateNestedDispatcherDeps) =>
+   * NestedDispatcher` — because the CLI-subprocess alternate
+   * (`createCliSubprocessNestedDispatcher`) needs a structurally different
+   * deps shape (`CliSubprocessNestedDispatcherDeps`: a pool, MCP server
+   * paths, marshalled permission context) than `deps` above
+   * (`CreateNestedDispatcherDeps`: `resolveModel`/`buildChildTools`/etc for
+   * the in-process LangChain path). The caller's closure captures whichever
+   * deps its own implementation needs; this option just decides which
+   * dispatcher gets constructed. Omitted => `createNestedDispatcher(deps)`,
+   * the original LangChain in-process path — unchanged default.
+   */
+  createDispatcher?: () => NestedDispatcher;
 }
 
 /**
@@ -279,7 +294,8 @@ export function buildNestedDispatchTool(
   deps: CreateNestedDispatcherDeps,
   options?: NestedDispatchToolOptions,
 ): StructuredTool {
-  const dispatcher = createNestedDispatcher(deps);
+  const dispatcher =
+    options?.createDispatcher?.() ?? createNestedDispatcher(deps);
   const modelPolicy = options?.modelPolicy;
   const agentSpecs = options?.agentSpecs;
 

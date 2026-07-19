@@ -315,7 +315,7 @@ const PLAN_REVIEW_BEHAVIOR = 'plan-review-gate';
  * Non-Goals): those names are simply not in scope, so they fall through to
  * the empty-array (no gate invocation, single delegate) path below.
  */
-function selectWardenBehaviors(
+export function selectWardenBehaviors(
   toolName: string,
   toolInput: Record<string, unknown>,
 ): readonly string[] {
