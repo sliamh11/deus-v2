@@ -255,8 +255,12 @@ const rawAgentBackend = (
 export const DEFAULT_AGENT_RUNTIME: AgentRuntimeId =
   parseAgentBackend(rawAgentBackend) ?? 'claude';
 
-// LIA-454 H1 production-wiring walking skeleton (nested-dispatch only —
-// the parent turn loop still always uses raw-http regardless of this flag).
+// LIA-454 H1 production-wiring. As of EP-002 step 11, this flag selects the
+// COMPLETE parent-and-nested CLI-subprocess strategy — not just
+// nested-dispatch children (that was PR #47's earlier, narrower scope,
+// before the parent loop itself could route through this transport). The
+// combination "raw-HTTP parent + CLI-subprocess nested dispatch" is no
+// longer selectable; both now move together on this one flag.
 // Default 'raw-http' in EVERY environment, including the user's own
 // personal runs — per docs/decisions/deus-native-h1-production-wiring-design.md
 // §3.6, this must never be silently on; it is opt-in only, one env var at a

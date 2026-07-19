@@ -273,6 +273,34 @@ describe('buildClaudeCliArgs', () => {
     expect(args.slice(-2)).toEqual(['--model', 'claude-sonnet-5']);
   });
 
+  it('LIA-454 EP-002 step 11: omits --append-system-prompt-file when not supplied (default-unchanged)', () => {
+    const args = buildClaudeCliArgs({
+      mcpConfigPath: '/scratch/mcp-config.json',
+      allowedTool: 'mcp__deus_lia449__check_permission',
+      model: 'claude-sonnet-5',
+    });
+    expect(args).not.toContain('--append-system-prompt-file');
+  });
+
+  it('LIA-454 EP-002 step 11: appends --append-system-prompt-file <path> as the last two args when supplied, preserving every existing arg exactly', () => {
+    const withoutHistory = buildClaudeCliArgs({
+      mcpConfigPath: '/scratch/mcp-config.json',
+      allowedTool: 'mcp__deus_lia449__check_permission',
+      model: 'claude-sonnet-5',
+    });
+    const withHistory = buildClaudeCliArgs({
+      mcpConfigPath: '/scratch/mcp-config.json',
+      allowedTool: 'mcp__deus_lia449__check_permission',
+      model: 'claude-sonnet-5',
+      appendSystemPromptFile: '/scratch/history.txt',
+    });
+    expect(withHistory.slice(-2)).toEqual([
+      '--append-system-prompt-file',
+      '/scratch/history.txt',
+    ]);
+    expect(withHistory.slice(0, -2)).toEqual(withoutHistory);
+  });
+
   it('LIA-454 EP-002 step 6: omits --mcp-config/--strict-mcp-config/--allowedTools entirely in no-tools mode (no mcpConfigPath)', () => {
     const args = buildClaudeCliArgs({ model: 'claude-sonnet-5' });
     expect(args).not.toContain('--mcp-config');

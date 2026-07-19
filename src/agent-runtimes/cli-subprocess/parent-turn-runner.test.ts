@@ -364,3 +364,165 @@ describe('runParentTurnViaCliSubprocess: conversation wiring', () => {
     });
   });
 });
+
+describe('runParentTurnViaCliSubprocess: history injection (LIA-454 EP-002 step 11 fix)', () => {
+  let historyScratchRoot: string;
+  afterEach(() => {
+    if (historyScratchRoot) {
+      fs.rmSync(historyScratchRoot, { recursive: true, force: true });
+    }
+  });
+
+  function historyDeps(
+    pool: ClaudeCliSessionPool,
+    saver: BaseCheckpointSaver,
+    overrides: Partial<
+      Parameters<typeof runParentTurnViaCliSubprocess>[1]
+    > = {},
+  ): Parameters<typeof runParentTurnViaCliSubprocess>[1] {
+    historyScratchRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lia454-parent-history-'),
+    );
+    const { lease } = fakeLease();
+    const { slot } = fakeSlot();
+    return {
+      pool,
+      mcpServerScriptPath: '/repo/parent-turn-mcp-server.ts',
+      mcpServerName: MCP_SERVER_NAME,
+      repoRoot: '/repo',
+      scratchDirFor: (id: string) => path.join(historyScratchRoot, id),
+      saver,
+      acquireThreadTurnLease: async () => lease,
+      acquireProcessSlot: async () => slot,
+      ...overrides,
+    };
+  }
+
+  it('invokes loadSessionOpenText exactly once for a new thread and never for a resumed thread', async () => {
+    const { pool } = fakePool();
+    const { saver } = tempSaver();
+    const loadSessionOpenText = vi.fn(async () => 'welcome context');
+    const deps = historyDeps(pool, saver, { loadSessionOpenText });
+
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-session-open' }),
+      deps,
+    );
+    expect(loadSessionOpenText).toHaveBeenCalledTimes(1);
+
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-session-open', prompt: 'follow-up' }),
+      deps,
+    );
+    expect(loadSessionOpenText).toHaveBeenCalledTimes(1); // still 1 -- not called again
+  });
+
+  it('writes prior messages into a history file and passes its path as appendSystemPromptFile on the NEXT turn', async () => {
+    // The turn's own finally-block cleanup deletes the history file before
+    // this call returns, so its content can't be read post-hoc -- spy on
+    // the real write call instead (still calling through) to capture what
+    // was actually written.
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+    const { pool, createConversationCalls } = fakePool();
+    const { saver } = tempSaver();
+    const deps = historyDeps(pool, saver);
+
+    // First turn: brand-new thread, no prior history yet -> no history file.
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-hist' }),
+      deps,
+    );
+    expect(createConversationCalls[0].options).not.toHaveProperty(
+      'appendSystemPromptFile',
+    );
+
+    // Second turn, same thread: the first turn's persisted messages are
+    // now prior history and must reach the CLI.
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-hist', prompt: 'follow-up' }),
+      deps,
+    );
+    const secondOptions = createConversationCalls[1].options as {
+      appendSystemPromptFile?: string;
+    };
+    expect(secondOptions.appendSystemPromptFile).toBeDefined();
+
+    const historyWriteCall = writeSpy.mock.calls.find(
+      ([writtenPath]) => writtenPath === secondOptions.appendSystemPromptFile,
+    );
+    expect(historyWriteCall).toBeDefined();
+    const historyContent = historyWriteCall?.[1];
+    expect(historyContent).toContain('hi there'); // first turn's assistant reply
+    expect(historyContent).toContain('<prior-conversation-history>');
+    writeSpy.mockRestore();
+  });
+
+  it('writes the history file with mode 0600', async () => {
+    // The turn's own finally-block cleanup deletes the file before this
+    // call returns, so mode can't be checked post-hoc -- spy on the real
+    // write call instead (still calling through) to capture the exact
+    // options it was written with.
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+    const { pool } = fakePool();
+    const { saver } = tempSaver();
+    const loadSessionOpenText = vi.fn(async () => 'welcome context');
+    const deps = historyDeps(pool, saver, { loadSessionOpenText });
+
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-mode' }),
+      deps,
+    );
+
+    const historyWriteCall = writeSpy.mock.calls.find(([, content]) =>
+      typeof content === 'string' ? content.includes('welcome context') : false,
+    );
+    expect(historyWriteCall).toBeDefined();
+    expect(historyWriteCall?.[2]).toMatchObject({ mode: 0o600 });
+    writeSpy.mockRestore();
+  });
+
+  it('cleans up the history file after the turn completes, whether the turn succeeds or the CLI reports is_error', async () => {
+    const loadSessionOpenText = vi.fn(async () => 'welcome context');
+
+    const successPool = fakePool();
+    const successDeps = historyDeps(successPool.pool, tempSaver().saver, {
+      loadSessionOpenText,
+    });
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-cleanup-success' }),
+      successDeps,
+    );
+    const successPath = (
+      successPool.createConversationCalls[0].options as {
+        appendSystemPromptFile: string;
+      }
+    ).appendSystemPromptFile;
+    expect(successPath).toBeDefined();
+    expect(fs.existsSync(successPath)).toBe(false);
+
+    const errorPool = fakePool({
+      sendTurn: async () => ({
+        result: { is_error: true, result: 'boom', session_id: 's1' },
+        events: [],
+        turnEvents: [],
+        timing: { totalTurnMs: 1 },
+        pid: 1,
+      }),
+    });
+    const errorDeps = historyDeps(errorPool.pool, tempSaver().saver, {
+      loadSessionOpenText,
+    });
+    const outcome = await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-cleanup-error' }),
+      errorDeps,
+    );
+    expect(outcome.status).toBe('error');
+    const errorPath = (
+      errorPool.createConversationCalls[0].options as {
+        appendSystemPromptFile: string;
+      }
+    ).appendSystemPromptFile;
+    expect(errorPath).toBeDefined();
+    expect(fs.existsSync(errorPath)).toBe(false);
+  });
+});

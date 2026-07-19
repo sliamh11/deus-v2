@@ -32,6 +32,9 @@
  * machinery the raw-HTTP branch already uses, rather than duplicating that
  * logic per transport.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { BaseMessage } from '@langchain/core/messages';
 
@@ -40,6 +43,7 @@ import {
   translateCliTurnResult,
 } from './checkpoint-translation.js';
 import type { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
+import { serializeParentHistory } from './parent-turn-history.js';
 import {
   acquireProcessSlot as defaultAcquireProcessSlot,
   acquireThreadTurnLease as defaultAcquireThreadTurnLease,
@@ -94,6 +98,14 @@ export interface ParentTurnRunnerDeps {
   ) => Promise<ProcessSlotLease | null>;
   leaseOptions?: AcquireLeaseOptions;
   slotOptions?: AcquireProcessSlotOptions;
+  /** Invoked ONLY for a genuinely new thread (`priorTuple === undefined`),
+   *  mirroring the raw-HTTP path's own `isNewSession` lifecycle contract —
+   *  never called for a resumed thread. Its result (if any) is folded into
+   *  the history envelope alongside prior messages (LIA-454 EP-002 step 11
+   *  — `deus-native-backend.ts` supplies `loadSessionOpenContext(...)
+   *  .systemMessage`, reused as-is). Omitted => no session-open content,
+   *  same as before this fix existed. */
+  loadSessionOpenText?: () => Promise<string | undefined>;
 }
 
 let conversationCounter = 0;
@@ -144,15 +156,42 @@ export async function runParentTurnViaCliSubprocess(
         (priorTuple?.checkpoint.channel_values['messages'] as
           BaseMessage[] | undefined) ?? [];
 
+      // Mirrors the raw-HTTP path's own `isNewSession` lifecycle contract:
+      // session-open content is loaded and injected once, ONLY on a
+      // genuinely new thread — never re-loaded on a resumed one.
+      const isNewSession = priorTuple === undefined;
+      const sessionOpenText = isNewSession
+        ? await deps.loadSessionOpenText?.()
+        : undefined;
+
+      // LIA-454 EP-002 step 11: the fix for step 10's zero-history bug —
+      // prior conversation history (+ session-open context on a new
+      // thread) is serialized and delivered via `--append-system-prompt-
+      // file`, never as bare/unwrapped text (see `parent-turn-history.ts`'s
+      // trust-model doc comment for why the untrusted-content framing
+      // matters here specifically). Omitted entirely when there's nothing
+      // to say — matching a true no-op, not an empty file.
+      const historyText = serializeParentHistory({
+        priorMessages,
+        ...(sessionOpenText !== undefined ? { sessionOpenText } : {}),
+      });
+
       const conversationId = nextConversationId(options.threadId);
       const allowedTool = PARENT_TOOL_NAMES.map(
         (name) => `mcp__${deps.mcpServerName}__${name}`,
       ).join(',');
+      const scratchDir = deps.scratchDirFor(conversationId);
+      let historyFilePath: string | undefined;
+      if (historyText !== '') {
+        fs.mkdirSync(scratchDir, { recursive: true });
+        historyFilePath = path.join(scratchDir, 'history.txt');
+        fs.writeFileSync(historyFilePath, historyText, { mode: 0o600 });
+      }
 
       let created = false;
       try {
         await deps.pool.createConversation(conversationId, {
-          scratchDir: deps.scratchDirFor(conversationId),
+          scratchDir,
           mcpServerName: deps.mcpServerName,
           mcpServerScriptPath: deps.mcpServerScriptPath,
           mcpServerEnv: {
@@ -164,6 +203,9 @@ export async function runParentTurnViaCliSubprocess(
             ? { permissionMode: options.permissionMode }
             : {}),
           ...(options.model !== undefined ? { model: options.model } : {}),
+          ...(historyFilePath !== undefined
+            ? { appendSystemPromptFile: historyFilePath }
+            : {}),
         });
         created = true;
 
@@ -214,6 +256,13 @@ export async function runParentTurnViaCliSubprocess(
       } finally {
         if (created) {
           await deps.pool.terminate(conversationId).catch(() => {});
+        }
+        if (historyFilePath !== undefined) {
+          try {
+            fs.unlinkSync(historyFilePath);
+          } catch {
+            // already gone
+          }
         }
       }
     } finally {

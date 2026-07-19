@@ -202,6 +202,20 @@ export interface ClaudeCliArgsOptions {
    *  (unchanged behavior — every pre-existing caller that doesn't pass this
    *  keeps today's flag set byte-for-byte). */
   model?: string;
+  /** Absolute path to a file whose content is appended to the CLI's system
+   *  prompt (LIA-454 EP-002 step 11 — the parent-turn conversation-history
+   *  fix). Absent from `claude --help`'s documented flags but verified
+   *  directly against a real invocation on `claude 2.1.215` (EP-002 step
+   *  2.1's spike; a missing file fails loudly with a non-zero exit,
+   *  confirmed again at step 11 plan-review — "Error: Append system prompt
+   *  file not found"). Since this flag is undocumented, a future CLI
+   *  version could rename or drop it — re-verify against `claude 2.1.215`
+   *  or later before trusting this on a materially newer CLI version, and
+   *  treat step 12's real credentialed smoke test as the actual living
+   *  regression check for this flag's continued existence, not just this
+   *  comment. Omitted => every existing caller keeps today's exact arg
+   *  list, byte-for-byte. */
+  appendSystemPromptFile?: string;
 }
 
 /**
@@ -237,6 +251,9 @@ export function buildClaudeCliArgs(options: ClaudeCliArgsOptions): string[] {
     '--permission-mode',
     options.permissionMode ?? 'dontAsk',
     ...(options.model !== undefined ? ['--model', options.model] : []),
+    ...(options.appendSystemPromptFile !== undefined
+      ? ['--append-system-prompt-file', options.appendSystemPromptFile]
+      : []),
   ];
 }
 
@@ -423,6 +440,9 @@ export interface CreateConversationOptions {
    *  `McpScratchConfigOptions.serverEnv`). Omitted => no extra env, unchanged
    *  from today's behavior. Meaningless (and ignored) in no-tools mode. */
   mcpServerEnv?: Record<string, string>;
+  /** Passed straight through to `buildClaudeCliArgs` — see its own doc
+   *  comment (LIA-454 EP-002 step 11). Omitted => unchanged behavior. */
+  appendSystemPromptFile?: string;
 }
 
 // ── Internal session record (module-private — no public constructor) ──────
@@ -634,6 +654,9 @@ export class ClaudeCliSessionPool {
         : {}),
       permissionMode: createOptions.permissionMode,
       model: createOptions.model,
+      ...(createOptions.appendSystemPromptFile !== undefined
+        ? { appendSystemPromptFile: createOptions.appendSystemPromptFile }
+        : {}),
     });
 
     const child = this.spawnFn(this.claudeBin, args, {
