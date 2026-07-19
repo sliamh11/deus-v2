@@ -282,6 +282,12 @@ export interface PersistCliCheckpointOptions {
    *  function concatenates them after `priorTuple`'s own message state
    *  itself, so callers never have to reconstruct the full array. */
   newMessages: BaseMessage[];
+  /** LIA-457: when provided, used as the base of `fullMessages` INSTEAD of
+   *  `priorTuple`'s own stored messages — the caller's compacted baseline.
+   *  Checkpoint `id`/`step`/`parents` linkage is unaffected: compaction only
+   *  changes the `messages` channel's CONTENT for the next row, it never
+   *  forks checkpoint lineage. Omitted ⇒ byte-identical to today's behavior. */
+  replacePriorMessages?: BaseMessage[];
 }
 
 /**
@@ -296,7 +302,8 @@ export interface PersistCliCheckpointOptions {
 export async function persistCliCheckpoint(
   options: PersistCliCheckpointOptions,
 ): Promise<void> {
-  const { saver, threadId, priorTuple, newMessages } = options;
+  const { saver, threadId, priorTuple, newMessages, replacePriorMessages } =
+    options;
 
   // Invariant assertion, not the concurrency mechanism — see module doc
   // comment. Re-reads immediately before put() to catch an uncoordinated
@@ -327,8 +334,9 @@ export async function persistCliCheckpoint(
   // channels contain) down to the shapes THIS module's own writes always
   // produce for the 'messages' channel.
   const priorMessages =
-    (priorTuple?.checkpoint.channel_values['messages'] as
-      BaseMessage[] | undefined) ?? [];
+    replacePriorMessages ??
+    ((priorTuple?.checkpoint.channel_values['messages'] as
+      BaseMessage[] | undefined) ?? []);
   const fullMessages = [...priorMessages, ...newMessages];
 
   const priorMessagesVersion = priorTuple?.checkpoint.channel_versions[

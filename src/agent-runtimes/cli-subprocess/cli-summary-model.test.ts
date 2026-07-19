@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { HumanMessage } from '@langchain/core/messages';
 
 import {
@@ -21,6 +21,7 @@ import {
   type SpawnFn,
 } from './claude-cli-session-pool.js';
 import { CliSummaryModel, CliSummaryModelError } from './cli-summary-model.js';
+import type { ProcessSlotLease } from './process-lifecycle-registry.js';
 
 class FakeWritable extends EventEmitter {
   written: string[] = [];
@@ -108,6 +109,24 @@ function resultLine(text: string, isError = false): string {
   );
 }
 
+/** Test-local fake process-slot lease (LIA-457) — same shape as
+ *  `parent-turn-runner.test.ts`'s own `fakeSlot()`, replicated here rather
+ *  than imported (not exported from that file). Keeps this suite hermetic:
+ *  without an injected `acquireProcessSlot`, `_generate` would fall through
+ *  to the REAL registry import, touching the live global process-lease
+ *  directory from a unit test. */
+function fakeSlot(): { slot: ProcessSlotLease; releaseCount: () => number } {
+  let count = 0;
+  const slot: ProcessSlotLease = {
+    slotIndex: 0,
+    path: '/fake/slot/path',
+    release: () => {
+      count += 1;
+    },
+  };
+  return { slot, releaseCount: () => count };
+}
+
 let scratchRoot: string;
 const repoRoot = process.cwd();
 
@@ -130,11 +149,13 @@ describe('CliSummaryModel', () => {
       spawnFn,
       processControl: createFakeProcessControl(new Map([[1, child]])),
     });
+    const { slot } = fakeSlot();
     const model = new CliSummaryModel({
       pool,
       model: 'claude-sonnet-5',
       repoRoot,
       scratchDirFor: (id) => path.join(scratchRoot, id),
+      acquireProcessSlot: async () => slot,
     });
 
     const invokePromise = model.invoke('summarize: turn 1, turn 2');
@@ -163,11 +184,13 @@ describe('CliSummaryModel', () => {
       spawnFn,
       processControl: createFakeProcessControl(new Map([[1, child]])),
     });
+    const { slot } = fakeSlot();
     const model = new CliSummaryModel({
       pool,
       model: 'claude-sonnet-5',
       repoRoot,
       scratchDirFor: (id) => path.join(scratchRoot, id),
+      acquireProcessSlot: async () => slot,
     });
 
     const invokePromise = model.invoke([
@@ -200,11 +223,13 @@ describe('CliSummaryModel', () => {
       spawnFn,
       processControl: createFakeProcessControl(new Map([[1, child]])),
     });
+    const { slot } = fakeSlot();
     const model = new CliSummaryModel({
       pool,
       model: 'claude-sonnet-5',
       repoRoot,
       scratchDirFor: (id) => path.join(scratchRoot, id),
+      acquireProcessSlot: async () => slot,
     });
 
     const invokePromise = model.invoke('will fail');
@@ -233,11 +258,13 @@ describe('CliSummaryModel', () => {
       spawnFn,
       processControl: createFakeProcessControl(new Map([[1, child]])),
     });
+    const { slot } = fakeSlot();
     const model = new CliSummaryModel({
       pool,
       model: 'claude-sonnet-5',
       repoRoot,
       scratchDirFor: (id) => path.join(scratchRoot, id),
+      acquireProcessSlot: async () => slot,
     });
 
     const invokePromise = model.invoke('summarize');
@@ -246,5 +273,129 @@ describe('CliSummaryModel', () => {
     await invokePromise;
 
     expect(terminatedIds).toHaveLength(1);
+  });
+});
+
+describe('CliSummaryModel: process-slot integration (LIA-457)', () => {
+  it('acquires a slot before createConversation and releases it after terminate, on the success path', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn, calls } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+      processControl: createFakeProcessControl(new Map([[1, child]])),
+    });
+    const { slot, releaseCount } = fakeSlot();
+    const acquireProcessSlot = vi.fn(async () => slot);
+    const model = new CliSummaryModel({
+      pool,
+      model: 'claude-sonnet-5',
+      repoRoot,
+      scratchDirFor: (id) => path.join(scratchRoot, id),
+      acquireProcessSlot,
+    });
+
+    expect(acquireProcessSlot).not.toHaveBeenCalled();
+    const invokePromise = model.invoke('summarize');
+    await waitForWrite(child);
+    // The slot was acquired BEFORE the CLI subprocess was ever spawned.
+    expect(acquireProcessSlot).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
+    expect(releaseCount()).toBe(0); // not yet released mid-flight
+
+    child.emitStdout(resultLine('done'));
+    await invokePromise;
+    expect(releaseCount()).toBe(1);
+  });
+
+  it('releases the slot even when the CLI turn errors', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+      processControl: createFakeProcessControl(new Map([[1, child]])),
+    });
+    const { slot, releaseCount } = fakeSlot();
+    const model = new CliSummaryModel({
+      pool,
+      model: 'claude-sonnet-5',
+      repoRoot,
+      scratchDirFor: (id) => path.join(scratchRoot, id),
+      acquireProcessSlot: async () => slot,
+    });
+
+    const invokePromise = model.invoke('will fail');
+    await waitForWrite(child);
+    child.emitStdout(resultLine('', true));
+
+    await expect(invokePromise).rejects.toThrow(CliSummaryModelError);
+    expect(releaseCount()).toBe(1);
+  });
+
+  it('throws CliSummaryModelError and never calls createConversation when no slot is available', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn, calls } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+      processControl: createFakeProcessControl(new Map([[1, child]])),
+    });
+    const model = new CliSummaryModel({
+      pool,
+      model: 'claude-sonnet-5',
+      repoRoot,
+      scratchDirFor: (id) => path.join(scratchRoot, id),
+      acquireProcessSlot: async () => null,
+    });
+
+    await expect(model.invoke('summarize')).rejects.toThrow(
+      CliSummaryModelError,
+    );
+    expect(calls).toHaveLength(0); // never spawned — no leaked process
+  });
+
+  it('defaults to the real acquireProcessSlot import when acquireProcessSlot is omitted, isolated to a temp rootDir', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+      processControl: createFakeProcessControl(new Map([[1, child]])),
+    });
+    // Isolates this one test from the live production STORE_DIR — the real
+    // `acquireProcessSlot` import creates `<rootDir>/cli-subprocess/
+    // process-slots/` on disk wherever it's pointed.
+    const slotRootDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lia457-real-slot-root-'),
+    );
+    const model = new CliSummaryModel({
+      pool,
+      model: 'claude-sonnet-5',
+      repoRoot,
+      scratchDirFor: (id) => path.join(scratchRoot, id),
+      slotOptions: { rootDir: slotRootDir },
+      // acquireProcessSlot deliberately omitted — exercises the real default.
+    });
+
+    const invokePromise = model.invoke('summarize');
+    await waitForWrite(child);
+    child.emitStdout(resultLine('done'));
+    await invokePromise;
+
+    expect(fs.existsSync(path.join(slotRootDir, 'cli-subprocess'))).toBe(true);
+    fs.rmSync(slotRootDir, { recursive: true, force: true });
   });
 });

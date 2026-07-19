@@ -38,11 +38,14 @@ import path from 'node:path';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { BaseMessage } from '@langchain/core/messages';
 
+import { DEFAULT_NATIVE_MODEL } from '../model-selection.js';
 import {
   persistCliCheckpoint,
   translateCliTurnResult,
 } from './checkpoint-translation.js';
 import type { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
+import { CliSummaryModel } from './cli-summary-model.js';
+import { maybeCompactParentHistory } from './parent-turn-compaction.js';
 import { serializeParentHistory } from './parent-turn-history.js';
 import {
   acquireProcessSlot as defaultAcquireProcessSlot,
@@ -156,6 +159,28 @@ export async function runParentTurnViaCliSubprocess(
         (priorTuple?.checkpoint.channel_values['messages'] as
           BaseMessage[] | undefined) ?? [];
 
+      // LIA-457: context-compaction dry run — a pure function call, no
+      // LangGraph graph/checkpointer/stand-in turn involved (see
+      // `parent-turn-compaction.ts`'s module doc comment for why this avoids
+      // the fabricated-turn-into-checkpoint risk EP-002 deferred over). Cheap
+      // to call unconditionally: below the token threshold this returns
+      // `compacted: false` without any model/CLI call. The summary call (when
+      // it does fire) reserves its OWN process slot via the SAME injected
+      // `acquireSlot` the parent's own conversation uses below — see
+      // `cli-summary-model.ts`'s `_generate`.
+      const summaryModel = new CliSummaryModel({
+        pool: deps.pool,
+        model: options.model ?? DEFAULT_NATIVE_MODEL.model,
+        repoRoot: deps.repoRoot,
+        scratchDirFor: deps.scratchDirFor,
+        acquireProcessSlot: acquireSlot,
+        slotOptions: deps.slotOptions,
+      });
+      const compactionResult = await maybeCompactParentHistory(
+        priorMessages,
+        summaryModel,
+      );
+
       // Mirrors the raw-HTTP path's own `isNewSession` lifecycle contract:
       // session-open content is loaded and injected once, ONLY on a
       // genuinely new thread — never re-loaded on a resumed one.
@@ -172,7 +197,7 @@ export async function runParentTurnViaCliSubprocess(
       // matters here specifically). Omitted entirely when there's nothing
       // to say — matching a true no-op, not an empty file.
       const historyText = serializeParentHistory({
-        priorMessages,
+        priorMessages: compactionResult.messages,
         ...(sessionOpenText !== undefined ? { sessionOpenText } : {}),
       });
 
@@ -231,7 +256,10 @@ export async function runParentTurnViaCliSubprocess(
           turnEvents: turnResult.turnEvents,
           mcpServerName: deps.mcpServerName,
           registeredToolNames: PARENT_TOOL_NAMES,
-          priorMessages,
+          // LIA-457: the collision-detection seed must match what will
+          // actually coexist in the persisted checkpoint — when compaction
+          // fired, that's the compacted baseline, not the raw stale history.
+          priorMessages: compactionResult.messages,
         });
 
         // Checkpoint-before-success invariant: this write must complete
@@ -241,6 +269,9 @@ export async function runParentTurnViaCliSubprocess(
           threadId: options.threadId,
           priorTuple,
           newMessages: translated.messages,
+          ...(compactionResult.compacted
+            ? { replacePriorMessages: compactionResult.messages }
+            : {}),
         });
 
         return {
