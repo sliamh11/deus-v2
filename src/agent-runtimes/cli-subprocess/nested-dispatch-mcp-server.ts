@@ -234,7 +234,8 @@ export function createNestedDispatchMcpServer(): McpServer {
     { capabilities: {} },
   );
 
-  const encodedContext = process.env.DEUS_NESTED_DISPATCH_CONTEXT;
+  // LIA-454: marshalled per-turn permission context (see cli-subprocess-nested-dispatcher.ts).
+  const encodedContext = process.env.DEUS_NESTED_DISPATCH_CONTEXT; // LIA-454
   const context = parseNestedDispatchContext(encodedContext);
   // Lazily built and memoized — a denied context never touches this (the
   // gate in handleNestedDispatchToolCall returns before realAction is
