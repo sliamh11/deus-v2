@@ -348,15 +348,30 @@ describe('detectPortCollision', () => {
     for (const k of PORT_VARS) delete process.env[k];
   });
 
-  it('flags a collision on the fresh-install default (both 3005, ports unset)', () => {
+  it('no collision on the fresh-install default (LIA-451: Odysseus 3105 vs webhook 3107 no longer share a default)', () => {
     mockReadEnvFile.mockReturnValue({
       ODYSSEUS_HTTP_ENABLED: '1',
       LINEAR_API_KEY: 'lin_x',
       LINEAR_WEBHOOK_SECRET: 'sec',
     });
     expect(detectPortCollision()).toEqual({
+      collision: false,
+      port: null,
+      services: null,
+    });
+  });
+
+  it('still flags a collision when both ports are explicitly set equal', () => {
+    mockReadEnvFile.mockReturnValue({
+      ODYSSEUS_HTTP_ENABLED: '1',
+      ODYSSEUS_HTTP_PORT: '3105',
+      LINEAR_API_KEY: 'lin_x',
+      LINEAR_WEBHOOK_SECRET: 'sec',
+      LINEAR_WEBHOOK_PORT: '3105',
+    });
+    expect(detectPortCollision()).toEqual({
       collision: true,
-      port: 3005,
+      port: 3105,
       services: ['ODYSSEUS_HTTP_PORT', 'LINEAR_WEBHOOK_PORT'],
     });
   });
@@ -402,12 +417,14 @@ describe('detectPortCollision', () => {
   it('flags a collision when only LINEAR_API_TOKEN (not LINEAR_API_KEY) is set', () => {
     mockReadEnvFile.mockReturnValue({
       ODYSSEUS_HTTP_ENABLED: '1',
+      ODYSSEUS_HTTP_PORT: '3105',
       LINEAR_API_TOKEN: 'lin_tok',
       LINEAR_WEBHOOK_SECRET: 'sec',
+      LINEAR_WEBHOOK_PORT: '3105',
     });
     expect(detectPortCollision()).toEqual({
       collision: true,
-      port: 3005,
+      port: 3105,
       services: ['ODYSSEUS_HTTP_PORT', 'LINEAR_WEBHOOK_PORT'],
     });
   });
@@ -424,16 +441,17 @@ describe('detectPortCollision', () => {
     });
   });
 
-  it('treats a non-numeric port as the 3005 default (NaN guard)', () => {
+  it('treats a non-numeric port as the 3105 default (NaN guard)', () => {
     mockReadEnvFile.mockReturnValue({
       ODYSSEUS_HTTP_ENABLED: '1',
       ODYSSEUS_HTTP_PORT: 'not-a-port',
       LINEAR_API_KEY: 'lin_x',
       LINEAR_WEBHOOK_SECRET: 'sec',
+      LINEAR_WEBHOOK_PORT: '3105',
     });
     expect(detectPortCollision()).toEqual({
       collision: true,
-      port: 3005,
+      port: 3105,
       services: ['ODYSSEUS_HTTP_PORT', 'LINEAR_WEBHOOK_PORT'],
     });
   });
@@ -510,14 +528,14 @@ describe('detectPortCollision', () => {
     // actually enabled (else index.ts falls back to the standalone :3005 server).
     mockReadEnvFile.mockReturnValue({
       ODYSSEUS_HTTP_ENABLED: '1',
-      ODYSSEUS_HTTP_PORT: '3005',
+      ODYSSEUS_HTTP_PORT: '3107',
       INGRESS_LINEAR_VIA_GATEWAY: '1',
       LINEAR_API_KEY: 'lin_x',
       LINEAR_WEBHOOK_SECRET: 'sec',
     });
     expect(detectPortCollision()).toEqual({
       collision: true,
-      port: 3005,
+      port: 3107,
       services: ['ODYSSEUS_HTTP_PORT', 'LINEAR_WEBHOOK_PORT'],
     });
   });

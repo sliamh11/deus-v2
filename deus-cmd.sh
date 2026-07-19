@@ -1,6 +1,8 @@
 #!/usr/bin/env zsh
-PLIST="$HOME/Library/LaunchAgents/com.deus.plist"
-DEUS_PROJECTS_DIR="$HOME/.config/deus/projects"
+# LIA-451: com.deus-v2 / ~/.config/deus-v2, namespaced away from v1's
+# com.deus / ~/.config/deus so both installs' services and config never collide.
+PLIST="$HOME/Library/LaunchAgents/com.deus-v2.plist"
+DEUS_PROJECTS_DIR="$HOME/.config/deus-v2/projects"
 readonly DEUS_SKILLS_DIR="$HOME/.claude/skills"
 
 # Rust TUI archival (LIA-389, docs/decisions/tui-archival.md). The implementation
@@ -58,7 +60,7 @@ fi
 _read_config_key() {
   python3 -c "
 import json; from pathlib import Path
-p = Path('~/.config/deus/config.json').expanduser()
+p = Path('~/.config/deus-v2/config.json').expanduser()
 d = json.loads(p.read_text()) if p.exists() else {}
 print(d.get('$1', ''))" 2>/dev/null
 }
@@ -66,7 +68,7 @@ print(d.get('$1', ''))" 2>/dev/null
 _write_config_key() {
   python3 -c "
 import json, sys; from pathlib import Path
-p = Path('~/.config/deus/config.json').expanduser()
+p = Path('~/.config/deus-v2/config.json').expanduser()
 p.parent.mkdir(parents=True, exist_ok=True)
 d = json.loads(p.read_text()) if p.exists() else {}
 d[sys.argv[1]] = sys.argv[2]
@@ -96,15 +98,17 @@ _build_and_restart() {
   if [[ "$OSTYPE" != msys* && "$OSTYPE" != cygwin* ]]; then
     LINK_DIR="$HOME/.local/bin"
     mkdir -p "$LINK_DIR"
-    ln -sf "$SCRIPT_DIR/deus-cmd.sh" "$LINK_DIR/deus"
+    # LIA-451: "deus-v2", not "deus" -- this build/sync path must never
+    # overwrite v1's own ~/.local/bin/deus symlink.
+    ln -sf "$SCRIPT_DIR/deus-cmd.sh" "$LINK_DIR/deus-v2"
   fi
   if ! $no_restart; then
     # macOS restarts via launchd; Linux runs as a systemd unit (manual restart).
     if [[ "$OSTYPE" == darwin* ]]; then
-      launchctl kickstart -k "gui/$(id -u)/com.deus" 2>/dev/null
-      $quiet || echo "Deus built and restarted (CLI symlink refreshed)."
+      launchctl kickstart -k "gui/$(id -u)/com.deus-v2" 2>/dev/null
+      $quiet || echo "Deus (v2) built and restarted (CLI symlink refreshed)."
     elif [[ "$OSTYPE" == linux* ]]; then
-      $quiet || echo "Built. Restart the service: 'systemctl --user restart deus' (or 'systemctl restart deus' if installed as a system service)."
+      $quiet || echo "Built. Restart the service: 'systemctl --user restart deus-v2' (or 'systemctl restart deus-v2' if installed as a system service)."
     else
       $quiet || echo "Built. Service restart: not implemented on this platform."
     fi
@@ -147,7 +151,7 @@ _deus_freshness_check() {
   done
   git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1 || return 0
 
-  local stamp_dir="$HOME/.config/deus" stamp now last
+  local stamp_dir="$HOME/.config/deus-v2" stamp now last
   stamp="$stamp_dir/freshness-stamp"
   now=$(date +%s 2>/dev/null) || return 0
   mkdir -p "$stamp_dir" 2>/dev/null || {
@@ -254,7 +258,7 @@ _normalize_cli_agent() {
 }
 
 # ─── Project Config Helpers ───
-# Config stored at ~/.config/deus/projects/<md5-of-path>.json
+# Config stored at ~/.config/deus-v2/projects/<md5-of-path>.json
 # Outside both the project dir (no pollution) and the Deus repo (no cross-user leakage).
 
 _project_config_path() {
@@ -765,7 +769,7 @@ sys.exit(1)
     esac
 
     # Launch the thin-client server detached; first run downloads open-webui via uvx.
-    LOG="$HOME/.deus/owui/serve.log"
+    LOG="$HOME/.deus-v2/owui/serve.log"
     mkdir -p "$(dirname "$LOG")"
     echo "  Starting Open WebUI (uvx) → Deus on 127.0.0.1:$BACKEND_PORT … first run downloads the package."
     DEUS_ROOT="$SCRIPT_DIR" DEUS_PORT="$BACKEND_PORT" WEBUI_PORT="$FRONTEND_PORT" \
@@ -857,7 +861,7 @@ sys.exit(1)
     # ~/.claude/.credentials.json directly and auto-refreshes on /login.
     # Exporting a frozen token causes 401s after token rotation because
     # the CLI prioritizes the env var over the credentials file.
-    [[ "$OSTYPE" == darwin* ]] && launchctl kickstart -k "gui/$(id -u)/com.deus" 2>/dev/null
+    [[ "$OSTYPE" == darwin* ]] && launchctl kickstart -k "gui/$(id -u)/com.deus-v2" 2>/dev/null
     fi
     # Launch claude with bypass mode; fall back to normal mode if user declines
     launch_claude() {
@@ -948,10 +952,10 @@ $user_prompt"
       launch_codex "$prompt"
     }
 
-    # Resolve vault path from config (DEUS_VAULT_PATH env var → ~/.config/deus/config.json)
-    VAULT="${DEUS_VAULT_PATH:-$(python3 -c "import json; from pathlib import Path; print(json.loads(Path('~/.config/deus/config.json').expanduser().read_text()).get('vault_path',''))" 2>/dev/null)}"
+    # Resolve vault path from config (DEUS_VAULT_PATH env var → ~/.config/deus-v2/config.json)
+    VAULT="${DEUS_VAULT_PATH:-$(python3 -c "import json; from pathlib import Path; print(json.loads(Path('~/.config/deus-v2/config.json').expanduser().read_text()).get('vault_path',''))" 2>/dev/null)}"
 
-    # Resolve from DEUS_HOME env var → script's own directory → fallback $HOME/deus
+    # Resolve from DEUS_HOME env var → script's own directory → fallback $SCRIPT_DIR
     DEUS_HOME="${DEUS_HOME:-$(cd "$(dirname "$0")" && pwd)}"
     # "deus home" forces home mode regardless of cwd
     if [ "$1" = "home" ]; then
@@ -965,11 +969,11 @@ $user_prompt"
     PREFS_CATCH_ME_UP="true"
     PREFS_BYPASS="true"
     PREFS_PERSONA=""
-    if [ -f "$HOME/.config/deus/config.json" ]; then
-      PREFS_NAME=$(python3 -c "import json; from pathlib import Path; print(json.loads(Path('~/.config/deus/config.json').expanduser().read_text()).get('name',''))" 2>/dev/null)
-      PREFS_CATCH_ME_UP=$(python3 -c "import json; from pathlib import Path; d=json.loads(Path('~/.config/deus/config.json').expanduser().read_text()); print(str(d.get('catch_me_up',True)).lower())" 2>/dev/null)
-      PREFS_BYPASS=$(python3 -c "import json; from pathlib import Path; d=json.loads(Path('~/.config/deus/config.json').expanduser().read_text()); print(str(d.get('bypass_permissions',True)).lower())" 2>/dev/null)
-      PREFS_PERSONA=$(python3 -c "import json; from pathlib import Path; print(json.loads(Path('~/.config/deus/config.json').expanduser().read_text()).get('persona',''))" 2>/dev/null)
+    if [ -f "$HOME/.config/deus-v2/config.json" ]; then
+      PREFS_NAME=$(python3 -c "import json; from pathlib import Path; print(json.loads(Path('~/.config/deus-v2/config.json').expanduser().read_text()).get('name',''))" 2>/dev/null)
+      PREFS_CATCH_ME_UP=$(python3 -c "import json; from pathlib import Path; d=json.loads(Path('~/.config/deus-v2/config.json').expanduser().read_text()); print(str(d.get('catch_me_up',True)).lower())" 2>/dev/null)
+      PREFS_BYPASS=$(python3 -c "import json; from pathlib import Path; d=json.loads(Path('~/.config/deus-v2/config.json').expanduser().read_text()); print(str(d.get('bypass_permissions',True)).lower())" 2>/dev/null)
+      PREFS_PERSONA=$(python3 -c "import json; from pathlib import Path; print(json.loads(Path('~/.config/deus-v2/config.json').expanduser().read_text()).get('persona',''))" 2>/dev/null)
     fi
 
     # Override launch_claude based on bypass preference
@@ -1058,7 +1062,7 @@ Additional instructions from the user: $PREFS_PERSONA"
     # The only difference between home mode and external project mode is
     # the working directory and the startup instruction.
     if [ -z "$VAULT" ]; then
-      echo "Warning: No vault configured. Set DEUS_VAULT_PATH or vault_path in ~/.config/deus/config.json"
+      echo "Warning: No vault configured. Set DEUS_VAULT_PATH or vault_path in ~/.config/deus-v2/config.json"
       if [ "$CURRENT_DIR" != "$DEUS_HOME" ]; then
         if [ "$PRINT_IDENTITY" = "true" ]; then
           printf '%s' "$DEUS_IDENTITY" >&3
@@ -1071,7 +1075,7 @@ Additional instructions from the user: $PREFS_PERSONA"
           printf '%s' "$DEUS_IDENTITY" >&3
           exit 0
         fi
-        cd "$HOME/deus" && launch_agent --append-system-prompt "$DEUS_IDENTITY"
+        cd "$SCRIPT_DIR" && launch_agent --append-system-prompt "$DEUS_IDENTITY"
         exit $?
       fi
     fi
@@ -1086,7 +1090,7 @@ Additional instructions from the user: $PREFS_PERSONA"
 	      # See docs/decisions/vault-autoload.md for rationale.
 	      VAULT_AUTOLOAD=$(python3 -c "
 import json; from pathlib import Path
-c = json.loads(Path('~/.config/deus/config.json').expanduser().read_text())
+c = json.loads(Path('~/.config/deus-v2/config.json').expanduser().read_text())
 for f in c.get('vault_autoload', ['CLAUDE.md']):
     print(f)
 " 2>/dev/null || echo "CLAUDE.md")
@@ -1105,12 +1109,12 @@ for f in c.get('vault_autoload', ['CLAUDE.md']):
 
 	      # Memory tree (Phase 4): inject the nav index when the tree DB exists
 	      # (opt out with DEUS_MEMORY_TREE=0).
-	      _mt_db="${DEUS_MEMORY_TREE_DB:-$HOME/.deus/memory_tree.db}"
+	      _mt_db="${DEUS_MEMORY_TREE_DB:-$HOME/.deus-v2/memory_tree.db}"
 	      case "$_mt_db" in "~"/*) _mt_db="$HOME/${_mt_db#\~/}" ;; esac
 	      if [ "${DEUS_MEMORY_TREE:-}" != "0" ] && [ -f "$_mt_db" ]; then
 	        MEMORY_TREE_MD=$(cat "$VAULT/MEMORY_TREE.md" 2>/dev/null)
 	        if [ -n "$MEMORY_TREE_MD" ]; then
-	          CONTEXT="$CONTEXT\n\n=== VAULT: MEMORY_TREE.md ===\n$MEMORY_TREE_MD\n\n=== MEMORY TREE USAGE ===\nFor factual personal questions (identity, household, preferences, cross-branch), call:\n  python3 \$HOME/deus/scripts/memory_tree.py query \"<question>\"\nThe top result's path is the vault file to Read. On abstained:true or low confidence, fall back to Persona/INDEX.md. Prefer this over guessing from CLAUDE.md hints."
+	          CONTEXT="$CONTEXT\n\n=== VAULT: MEMORY_TREE.md ===\n$MEMORY_TREE_MD\n\n=== MEMORY TREE USAGE ===\nFor factual personal questions (identity, household, preferences, cross-branch), call:\n  python3 \$HOME/deus-v2/scripts/memory_tree.py query \"<question>\"\nThe top result's path is the vault file to Read. On abstained:true or low confidence, fall back to Persona/INDEX.md. Prefer this over guessing from CLAUDE.md hints."
 	        fi
 	      fi
 
@@ -1122,10 +1126,10 @@ for f in c.get('vault_autoload', ['CLAUDE.md']):
 	      fi
 
 	      printf "  Loading recent sessions...\r"
-	      RECENT=$(python3 "$HOME/deus/scripts/memory_indexer.py" --recent 3 2>/dev/null)
+	      RECENT=$(python3 "$SCRIPT_DIR/scripts/memory_indexer.py" --recent 3 2>/dev/null)
 	      [ -n "$RECENT" ] && CONTEXT="$CONTEXT\n\n=== RECENT SESSIONS ===\n$RECENT"
 
-	      SEMANTIC_CACHE="$HOME/.deus/resume_semantic_cache.txt"
+	      SEMANTIC_CACHE="$HOME/.deus-v2/resume_semantic_cache.txt"
 	      SEMANTIC_TTL=14400  # 4 hours
 	      SEMANTIC=""
 	      USE_CACHE=false
@@ -1138,7 +1142,7 @@ for f in c.get('vault_autoload', ['CLAUDE.md']):
 	        SEMANTIC=$(cat "$SEMANTIC_CACHE" 2>/dev/null)
 	      else
 	        printf "  Retrieving relevant context...\r"
-	        SEMANTIC=$(python3 "$HOME/deus/scripts/memory_indexer.py" --query "recent work ongoing tasks" --top 2 --recency-boost 2>/dev/null)
+	        SEMANTIC=$(python3 "$SCRIPT_DIR/scripts/memory_indexer.py" --query "recent work ongoing tasks" --top 2 --recency-boost 2>/dev/null)
 	        [ -n "$SEMANTIC" ] && echo "$SEMANTIC" > "$SEMANTIC_CACHE"
 	      fi
 	      [ -n "$SEMANTIC" ] && CONTEXT="$CONTEXT\n\n=== RELATED SESSIONS ===\n$SEMANTIC"
@@ -1257,7 +1261,7 @@ If no directive is present, verify freshness before catching up:
 
   1. ls -t \"$VAULT/Checkpoints\" | head -3
   2. ls -t \"$VAULT/Session-Logs/$(date +%Y-%m-%d)\" 2>/dev/null
-  3. If anything on disk is newer than the newest date in the === RECENT SESSIONS === block, re-run: python3 \$HOME/deus/scripts/memory_indexer.py --recent 3
+  3. If anything on disk is newer than the newest date in the === RECENT SESSIONS === block, re-run: python3 \$HOME/deus-v2/scripts/memory_indexer.py --recent 3
      and lead the catch-up from that output plus the newest same-day checkpoint's next_action / in_progress fields. Ignore the stale pre-loaded block.
   4. If disk matches the block, the snapshot is fresh — use it.
 
@@ -1289,11 +1293,11 @@ $STARTUP_INSTRUCTION"
     fi
 
     if [ -n "$FULL_PROMPT" ] && [ -n "$INITIAL_MSG" ]; then
-      cd "$HOME/deus" && launch_agent --append-system-prompt "$FULL_PROMPT" "$INITIAL_MSG"
+      cd "$SCRIPT_DIR" && launch_agent --append-system-prompt "$FULL_PROMPT" "$INITIAL_MSG"
     elif [ -n "$FULL_PROMPT" ]; then
-      cd "$HOME/deus" && launch_agent --append-system-prompt "$FULL_PROMPT"
+      cd "$SCRIPT_DIR" && launch_agent --append-system-prompt "$FULL_PROMPT"
     else
-      cd "$HOME/deus" && launch_agent
+      cd "$SCRIPT_DIR" && launch_agent
     fi
     ;;
   listen)
@@ -1306,11 +1310,11 @@ $STARTUP_INSTRUCTION"
     # Log review, rotation, and health reporting.
     shift
     case "$1" in
-      summary)  exec python3 "$HOME/deus/scripts/log_review.py" --summary ;;
-      pinned)   exec python3 "$HOME/deus/scripts/log_review.py" --pinned ;;
-      rotate)   exec python3 "$HOME/deus/scripts/log_review.py" --rotate-only ;;
-      review)   exec python3 "$HOME/deus/scripts/log_review.py" --review-only ;;
-      "")       exec python3 "$HOME/deus/scripts/log_review.py" ;;
+      summary)  exec python3 "$SCRIPT_DIR/scripts/log_review.py" --summary ;;
+      pinned)   exec python3 "$SCRIPT_DIR/scripts/log_review.py" --pinned ;;
+      rotate)   exec python3 "$SCRIPT_DIR/scripts/log_review.py" --rotate-only ;;
+      review)   exec python3 "$SCRIPT_DIR/scripts/log_review.py" --review-only ;;
+      "")       exec python3 "$SCRIPT_DIR/scripts/log_review.py" ;;
       *)
         echo "Usage: deus logs [summary|pinned|rotate|review]"
         echo ""
@@ -1500,7 +1504,7 @@ $STARTUP_INSTRUCTION"
     # LIA-428: deus-native terminal chat (thin client; the daemon owns the
     # runtime). Deliberately NO cd — the client forwards the user's original
     # cwd to the daemon (RunContext.cwd), and its discovery record lives
-    # under ~/.config/deus, not the repo.
+    # under ~/.config/deus-v2, not the repo.
     shift
     exec node "$SCRIPT_DIR/dist/cli/deus-native-chat-client.js" "$@"
     ;;

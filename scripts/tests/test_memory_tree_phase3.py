@@ -617,7 +617,7 @@ class TestHookEdges:
     def test_vault_root_reads_config_json(self, monkeypatch, tmp_path):
         """When DEUS_VAULT_PATH is unset, _vault_root falls back to config.json."""
         monkeypatch.delenv("DEUS_VAULT_PATH", raising=False)
-        cfg_dir = tmp_path / ".config" / "deus"
+        cfg_dir = tmp_path / ".config" / "deus-v2"
         cfg_dir.mkdir(parents=True)
         cfg_path = cfg_dir / "config.json"
         cfg_path.write_text(json.dumps({"vault_path": str(tmp_path / "myvault")}))
@@ -625,7 +625,7 @@ class TestHookEdges:
         from pathlib import Path as _P
         original_expanduser = _P.expanduser
         def fake_expand(self):
-            if str(self) == "~/.config/deus/config.json":
+            if str(self) == "~/.config/deus-v2/config.json":
                 return cfg_path
             return original_expanduser(self)
         monkeypatch.setattr(_P, "expanduser", fake_expand)
@@ -635,14 +635,14 @@ class TestHookEdges:
     def test_vault_root_returns_none_when_config_invalid(self, monkeypatch, tmp_path):
         """Malformed config.json → _vault_root returns None silently."""
         monkeypatch.delenv("DEUS_VAULT_PATH", raising=False)
-        cfg_dir = tmp_path / ".config" / "deus"
+        cfg_dir = tmp_path / ".config" / "deus-v2"
         cfg_dir.mkdir(parents=True)
         cfg_path = cfg_dir / "config.json"
         cfg_path.write_text("{not valid json")
         from pathlib import Path as _P
         original_expanduser = _P.expanduser
         def fake_expand(self):
-            if str(self) == "~/.config/deus/config.json":
+            if str(self) == "~/.config/deus-v2/config.json":
                 return cfg_path
             return original_expanduser(self)
         monkeypatch.setattr(_P, "expanduser", fake_expand)

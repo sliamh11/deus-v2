@@ -54,7 +54,8 @@ function getAppTenantId(): string {
   return process.env.TEAMS_APP_TENANT_ID || '';
 }
 function getPort(): number {
-  return parseInt(process.env.TEAMS_PORT || '3978', 10);
+  // LIA-451: 4078, distinct from v1's 3978 default.
+  return parseInt(process.env.TEAMS_PORT || '4078', 10);
 }
 
 // Use stderr for logging (stdout is reserved for MCP JSON-RPC)

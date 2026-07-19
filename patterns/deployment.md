@@ -1,5 +1,5 @@
 ---
-last_verified: "2026-07-15" # auto-bump @1784088960
+last_verified: "2026-07-19" # auto-bump @1784411000
 governs:
   - package.json
   - tsconfig.json
@@ -20,8 +20,8 @@ test_tasks:
 A merged PR does **not** auto-rebuild. Always run `npm run build` before restarting.
 
 ```bash
-npm run build && launchctl kickstart -k gui/$(id -u)/com.deus  # macOS
-npm run build && systemctl --user restart deus                  # Linux
+npm run build && launchctl kickstart -k gui/$(id -u)/com.deus-v2  # macOS
+npm run build && systemctl --user restart deus-v2                  # Linux
 ```
 
 Verify: `stat dist/index.js` mtime should be newer than the service startup timestamp in `logs/deus.log`.
@@ -38,16 +38,16 @@ Missing this step causes the service to silently run stale MCP code with no erro
 
 ## Process manager rule
 
-**Use exactly one process manager per platform.** Never mix (e.g., running both pm2 and launchd). Mixing causes orphan processes that hold ports, leading to `EADDRINUSE` on the credential proxy (port 3001).
+**Use exactly one process manager per platform.** Never mix (e.g., running both pm2 and launchd). Mixing causes orphan processes that hold ports, leading to `EADDRINUSE` on the credential proxy (port 3101).
 
 ```bash
 # macOS — launchd only
-launchctl bootout gui/$(id -u)/com.deus                                   # stop
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.deus.plist   # start
+launchctl bootout gui/$(id -u)/com.deus-v2                                   # stop
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.deus-v2.plist   # start
 
 # Linux — systemd only
-systemctl --user stop deus    # stop
-systemctl --user start deus   # start
+systemctl --user stop deus-v2    # stop
+systemctl --user start deus-v2   # start
 ```
 
 ## Container build cache
@@ -69,11 +69,11 @@ Different components read config from different locations. Getting this wrong ca
 | Component | Config source |
 |-----------|---------------|
 | Main process (`src/`) + evolution layer | Project root `.env` |
-| Setup / startup gate | `~/.config/deus/.env` |
-| Memory indexer | `~/.config/deus/.env` |
+| Setup / startup gate | `~/.config/deus-v2/.env` |
+| Memory indexer | `~/.config/deus-v2/.env` |
 | Credential proxy | OS credential store → `~/.claude/.credentials.json` fallback (dynamic — never `.env`) |
 
-**Common mistake:** Putting a key in `~/.config/deus/.env` but expecting the main process or evolution layer to find it — both read from the project root `.env`.
+**Common mistake:** Putting a key in `~/.config/deus-v2/.env` but expecting the main process or evolution layer to find it — both read from the project root `.env`.
 
 ## Verifying the service is alive
 

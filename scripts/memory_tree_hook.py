@@ -24,7 +24,7 @@ def _vault_root() -> Path | None:
     env = os.environ.get("DEUS_VAULT_PATH")
     if env:
         return Path(env).expanduser()
-    cfg = Path("~/.config/deus/config.json").expanduser()
+    cfg = Path("~/.config/deus-v2/config.json").expanduser()
     if cfg.exists():
         try:
             vp = json.loads(cfg.read_text()).get("vault_path", "")
@@ -115,10 +115,10 @@ def dispatch(data: dict) -> str:
 def _precheck_db_path() -> Path:
     """Cheap parent-side DB-path resolution (no memory_tree import) — keep this
     byte-for-byte in sync with memory_tree.DB_PATH's env/default
-    (DEUS_MEMORY_TREE_DB, fallback ~/.deus/memory_tree.db) so the parent's spawn
+    (DEUS_MEMORY_TREE_DB, fallback ~/.deus-v2/memory_tree.db) so the parent's spawn
     pre-check and the worker's authoritative mt.tree_automation_enabled() agree."""
     return Path(
-        os.environ.get("DEUS_MEMORY_TREE_DB", "~/.deus/memory_tree.db")
+        os.environ.get("DEUS_MEMORY_TREE_DB", "~/.deus-v2/memory_tree.db")
     ).expanduser()
 
 

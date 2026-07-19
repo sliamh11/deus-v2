@@ -22,7 +22,7 @@ def _load_vault_atoms() -> Path:
     env_path = os.environ.get("DEUS_VAULT_PATH")
     if env_path:
         return Path(env_path).expanduser() / "Atoms"
-    cfg_path = Path("~/.config/deus/config.json").expanduser()
+    cfg_path = Path("~/.config/deus-v2/config.json").expanduser()
     if cfg_path.exists():
         try:
             cfg = json.loads(cfg_path.read_text())
@@ -32,7 +32,7 @@ def _load_vault_atoms() -> Path:
             pass
     print(
         "ERROR: Memory vault not configured.\n"
-        "Set DEUS_VAULT_PATH or add vault_path to ~/.config/deus/config.json",
+        "Set DEUS_VAULT_PATH or add vault_path to ~/.config/deus-v2/config.json",
         file=__import__("sys").stderr,
     )
     __import__("sys").exit(1)

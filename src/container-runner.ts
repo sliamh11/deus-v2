@@ -466,7 +466,10 @@ export async function runContainerAgent(
     input.ipcRunKey,
   );
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `deus-${safeName}-${Date.now()}`;
+  // LIA-451: "deusv2-" (no hyphen after "deus") -- v1's orphan-cleanup filter
+  // (container-runtime.ts, `docker ps --filter name=deus-`) is a substring
+  // match that would otherwise still catch "deus-<name>"-prefixed containers.
+  const containerName = `deusv2-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(
     mounts,
     containerName,

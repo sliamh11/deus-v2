@@ -14,7 +14,7 @@
  *   TEAMS_APP_ID         — Azure Bot / Entra app (client) ID
  *   TEAMS_APP_PASSWORD   — client secret value
  *   TEAMS_APP_TENANT_ID  — directory (tenant) ID (single-tenant); omit for multi-tenant
- *   TEAMS_PORT           — messaging-endpoint port (default: 3978)
+ *   TEAMS_PORT           — messaging-endpoint port (default: 4078, LIA-451)
  *   TEAMS_CREDENTIALS_DIR — where conversation references persist (default: ~/.teams-mcp/)
  *   LOG_LEVEL            — pino log level (default: info)
  */

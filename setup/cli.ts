@@ -27,7 +27,9 @@ export async function run(_args: string[]): Promise<void> {
 
 function setupUnixCli(projectRoot: string, homeDir: string): void {
   const binDir = path.join(homeDir, '.local', 'bin');
-  const linkPath = path.join(binDir, 'deus');
+  // LIA-451: "deus-v2", never "deus" -- this checkout's own setup must never
+  // touch v1's ~/.local/bin/deus symlink.
+  const linkPath = path.join(binDir, 'deus-v2');
   const scriptPath = path.join(projectRoot, 'deus-cmd.sh');
 
   if (!fs.existsSync(scriptPath)) {
@@ -72,9 +74,9 @@ function setupUnixCli(projectRoot: string, homeDir: string): void {
   }
 
   fs.symlinkSync(scriptPath, linkPath);
-  logger.info({ linkPath, scriptPath }, 'Created deus CLI symlink');
+  logger.info({ linkPath, scriptPath }, 'Created deus-v2 CLI symlink');
 
-  // Clean up stale /usr/local/bin/deus symlink that may shadow the new one
+  // Clean up stale /usr/local/bin/deus-v2 symlink that may shadow the new one
   cleanStaleLegacySymlink(logger);
 
   // Check if ~/.local/bin is in PATH; if not, add it to shell config
@@ -155,15 +157,15 @@ export function checkExistingCli(
 
 /**
  * Remove a legacy CLI symlink if it points to a dead target.
- * Old manual installs can leave stale symlinks that shadow ~/.local/bin/deus.
- * @param legacyPath defaults to /usr/local/bin/deus; override for testing.
+ * Old manual installs can leave stale symlinks that shadow ~/.local/bin/deus-v2.
+ * @param legacyPath defaults to /usr/local/bin/deus-v2 (LIA-451); override for testing.
  */
 export function cleanStaleLegacySymlink(
   log: {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
   },
-  legacyPath = '/usr/local/bin/deus',
+  legacyPath = '/usr/local/bin/deus-v2',
 ): void {
   try {
     const stat = fs.lstatSync(legacyPath);
@@ -179,7 +181,7 @@ export function cleanStaleLegacySymlink(
     } catch {
       log.warn(
         { legacyPath },
-        'Stale symlink at /usr/local/bin/deus may shadow the CLI. Remove it manually: sudo rm /usr/local/bin/deus',
+        'Stale symlink at /usr/local/bin/deus-v2 may shadow the CLI. Remove it manually: sudo rm /usr/local/bin/deus-v2',
       );
     }
   } catch {
@@ -189,7 +191,8 @@ export function cleanStaleLegacySymlink(
 
 function setupWindowsCli(projectRoot: string, homeDir: string): void {
   const binDir = path.join(homeDir, '.local', 'bin');
-  const cmdPath = path.join(binDir, 'deus.cmd');
+  // LIA-451: "deus-v2.cmd", never "deus.cmd" -- must never shadow v1's shim.
+  const cmdPath = path.join(binDir, 'deus-v2.cmd');
   const ps1Path = path.join(projectRoot, 'deus-cmd.ps1');
 
   if (!fs.existsSync(ps1Path)) {
@@ -210,7 +213,7 @@ function setupWindowsCli(projectRoot: string, homeDir: string): void {
     ].join('\r\n') + '\r\n';
 
   fs.writeFileSync(cmdPath, cmdContent);
-  logger.info({ cmdPath, ps1Path }, 'Created deus.cmd shim');
+  logger.info({ cmdPath, ps1Path }, 'Created deus-v2.cmd shim');
 
   // Check if binDir is in user PATH and add it if not
   let inPath = false;

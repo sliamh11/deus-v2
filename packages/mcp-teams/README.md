@@ -15,7 +15,7 @@ the Teams analog of `@deus-ai/slack-mcp`.
 | `TEAMS_APP_ID` | — | Azure Bot / Entra app (client) ID |
 | `TEAMS_APP_PASSWORD` | — | client secret value |
 | `TEAMS_APP_TENANT_ID` | — | directory (tenant) ID for single-tenant; omit for multi-tenant |
-| `TEAMS_PORT` | `3978` | messaging-endpoint port |
+| `TEAMS_PORT` | `4078` | messaging-endpoint port |
 | `TEAMS_CREDENTIALS_DIR` | `~/.teams-mcp/` | where conversation references persist |
 | `LOG_LEVEL` | `info` | pino log level (stderr) |
 
@@ -23,7 +23,7 @@ the Teams analog of `@deus-ai/slack-mcp`.
 
 Unlike Slack's Socket Mode, the Bot Framework pushes activities to a **public
 HTTPS endpoint**. This server listens on `TEAMS_PORT` locally; you must expose
-that port via a dedicated tunnel (e.g. ngrok/Cloudflare → `http://localhost:3978`)
+that port via a dedicated tunnel (e.g. ngrok/Cloudflare → `http://localhost:4078`)
 and set the Azure Bot **messaging endpoint** to `https://<your-tunnel>/api/messages`.
 Deus's existing ingress tunnel forwards only the gateway port and does **not**
 cover `TEAMS_PORT`.

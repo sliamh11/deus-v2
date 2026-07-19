@@ -33,8 +33,8 @@ Before any change to `evolution/`, read `docs/decisions/INDEX.md`. Three decisio
 
 | Database | Owner | Safe to delete? | Env override |
 |----------|-------|-----------------|--------------|
-| `~/.deus/memory.db` | `scripts/memory_indexer.py` | Yes — derived from on-disk files | `DEUS_DB` |
-| `~/.deus/evolution.db` | `evolution/` | No — scored interactions, reflections | `DEUS_EVOLUTION_DB` |
+| `~/.deus-v2/memory.db` | `scripts/memory_indexer.py` | Yes — derived from on-disk files | `DEUS_DB` |
+| `~/.deus-v2/evolution.db` | `evolution/` | No — scored interactions, reflections | `DEUS_EVOLUTION_DB` |
 
 **Tests that monkeypatch the database path** must use `EVOLUTION_DB_PATH`, not the old `DB_PATH`. Using `DB_PATH` silently tests against the wrong database file.
 
@@ -64,7 +64,7 @@ Adding a new backend = one file + one registration line. Abstract contract in `e
 
 ## Config file locations
 
-The evolution layer reads from the **project root `.env`** — not from `~/.config/deus/.env`. See `patterns/deployment.md` §Config file locations for the full table.
+The evolution layer reads from the **project root `.env`** — not from `~/.config/deus-v2/.env`. See `patterns/deployment.md` §Config file locations for the full table.
 
 ## Tests
 
