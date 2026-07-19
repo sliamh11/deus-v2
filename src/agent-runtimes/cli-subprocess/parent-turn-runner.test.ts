@@ -110,18 +110,30 @@ function fakeSlot(): { slot: ProcessSlotLease; releaseCount: () => number } {
   return { slot, releaseCount: () => count };
 }
 
-let scratchRoot: string;
+// Tracks EVERY tempSaver() created this test (a single test can create more
+// than one, e.g. the cleanup-on-success-and-error test below) so afterEach
+// cleans all of them, not just the last. Each saver's underlying
+// better-sqlite3 handle is closed BEFORE its dir is removed — required
+// cross-platform (matches `checkpointer.ts`'s own `_resetCheckpointerForTests`
+// precedent): on Windows a still-open sqlite file blocks `fs.rmSync`/`unlink`
+// with `EBUSY`, a real failure this suite hit once Windows CI actually ran
+// it (caught at LIA-454 EP-002 step 13's PR CI, not locally on POSIX).
+const createdSavers: Array<{ saver: SqliteSaver; dir: string }> = [];
 afterEach(() => {
-  if (scratchRoot) fs.rmSync(scratchRoot, { recursive: true, force: true });
+  for (const { saver, dir } of createdSavers.splice(0)) {
+    saver.db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 function tempSaver(): { saver: SqliteSaver; dir: string } {
   const dir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'lia454-parent-turn-runner-'),
   );
-  scratchRoot = dir;
   const dbPath = path.join(dir, 'checkpoints.db');
-  return { saver: SqliteSaver.fromConnString(dbPath), dir };
+  const created = { saver: SqliteSaver.fromConnString(dbPath), dir };
+  createdSavers.push(created);
+  return created;
 }
 
 function baseOptions(

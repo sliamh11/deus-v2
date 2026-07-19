@@ -360,6 +360,9 @@ export function createParentTurnMcpServer(): {
     { capabilities: {} },
   );
 
+  // LIA-454: per-turn permission/warden/tool-broker context, marshalled
+  // once at spawn time by parent-turn-runner.ts (never persisted, never
+  // logged) — see the module docstring for the full trust model.
   const encodedContext = process.env.DEUS_PARENT_TURN_CONTEXT;
   const context = parseParentTurnContext(encodedContext);
   const middlewareConfig = resolveMiddlewareStackConfig();

@@ -284,6 +284,17 @@ function tempSaver(): { saver: SqliteSaver; dbPath: string; dir: string } {
   return { saver: SqliteSaver.fromConnString(dbPath), dbPath, dir };
 }
 
+/** Closes the underlying better-sqlite3 handle before removing its temp
+ *  dir — required cross-platform (matches `checkpointer.ts`'s own
+ *  `_resetCheckpointerForTests` precedent): on Windows a still-open sqlite
+ *  file blocks `fs.rmSync`/`unlink` with `EBUSY`, a real failure this
+ *  module's own tests hit once Windows CI actually ran them (caught at
+ *  LIA-454 EP-002 step 13's PR CI, not locally on POSIX). */
+function closeAndCleanup(saver: SqliteSaver, dir: string): void {
+  saver.db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 const echoTool = tool(async (args: { value: string }) => `echo:${args.value}`, {
   name: 'echo_tool',
   description: 'Echoes the provided value back.',
@@ -327,7 +338,7 @@ describe('persistCliCheckpoint', () => {
       // locks the version-advancement contract the module is built around.
       expect(tuple!.checkpoint.channel_versions['messages']).toBe(1);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      closeAndCleanup(saver, dir);
     }
   });
 
@@ -366,7 +377,7 @@ describe('persistCliCheckpoint', () => {
       );
       expect(afterTurn2!.checkpoint.id).not.toBe(afterTurn1!.checkpoint.id);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      closeAndCleanup(saver, dir);
     }
   });
 
@@ -405,7 +416,7 @@ describe('persistCliCheckpoint', () => {
         }),
       ).rejects.toThrow(/stale parent checkpoint/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      closeAndCleanup(saver, dir);
     }
   });
 
@@ -476,7 +487,7 @@ describe('persistCliCheckpoint', () => {
         ),
       ).toBe(true);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      closeAndCleanup(saver, dir);
     }
   });
 
@@ -543,7 +554,7 @@ describe('persistCliCheckpoint', () => {
         expect.arrayContaining(['h1', 'a1', 'h2', 'h3', 'a3']),
       );
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      closeAndCleanup(saver, dir);
     }
   });
 });
