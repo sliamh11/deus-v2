@@ -71,6 +71,7 @@
  */
 
 import crypto from 'crypto';
+import os from 'node:os';
 import path from 'node:path';
 
 import { createAgent, type AgentMiddleware } from 'langchain';
@@ -106,6 +107,9 @@ import { buildContextCompactionMiddleware } from './context-compaction.js';
 import { createTurnUsageCollector } from './deus-native-usage.js';
 import { buildNestedDispatchTool } from './nested-dispatch-tool.js';
 import { loadAgentSpecs, type LoadedAgentSpec } from './agent-spec-loader.js';
+import { DEUS_NATIVE_TRANSPORT, PROJECT_ROOT } from '../config.js';
+import { ClaudeCliSessionPool } from './cli-subprocess/claude-cli-session-pool.js';
+import { createCliSubprocessNestedDispatcher } from './cli-subprocess/cli-subprocess-nested-dispatcher.js';
 import {
   buildNativeModelClient,
   parseEffectiveNativeModelConfig,
@@ -269,6 +273,12 @@ export class DeusNativeRuntime implements AgentRuntime {
     sessionRef: RuntimeSession,
     eventSink: RuntimeEventSink,
   ): Promise<RunResult> {
+    // LIA-454 walking skeleton: only constructed when DEUS_NATIVE_TRANSPORT
+    // === 'cli-subprocess' (default 'raw-http', unchanged behavior). Scoped
+    // to this one runTurn() call — shut down in the `finally` below
+    // regardless of which return path this turn takes, so no subprocess
+    // from this turn ever survives the turn.
+    let cliSubprocessPool: ClaudeCliSessionPool | undefined;
     try {
       // publicIngress fail-closed guard (added after code-review: a real gap
       // the earlier drafts missed). container-runner.ts's buildContainerArgs
@@ -479,6 +489,71 @@ export class DeusNativeRuntime implements AgentRuntime {
       // alone). onUsage folds every child AIMessage into the SAME
       // usageCollector the parent uses below, using the parent's
       // outgoingSessionId and the child's own resolved model id.
+      // LIA-454 walking skeleton: when opted in, nested-dispatch children
+      // route through the CLI-subprocess transport instead of an in-process
+      // LangChain createAgent — avoids the H1/LIA-433 429 the raw-HTTP
+      // client hits. The parent turn loop itself (this method's own
+      // createAgent/agent.invoke below) is UNCHANGED regardless of this
+      // flag — only nested-dispatch children are affected, per this
+      // walking skeleton's explicit scope (design doc §3.3/§2.5).
+      const cliSubprocessCreateDispatcher =
+        DEUS_NATIVE_TRANSPORT === 'cli-subprocess'
+          ? (() => {
+              cliSubprocessPool = new ClaudeCliSessionPool({
+                // Small bound on concurrent nested-dispatch subprocesses —
+                // a real, partial mitigation of the design doc's §3.5
+                // orphan-risk concern for this walking skeleton (full
+                // production-wide orphan reconciliation is out of scope
+                // here).
+                maxProcesses: 3,
+                idleTimeoutMs: 120_000,
+                terminationGraceMs: 3_000,
+                onEvent: () => {},
+              });
+              const mcpServerScriptPath = path.join(
+                PROJECT_ROOT,
+                'src/agent-runtimes/cli-subprocess/nested-dispatch-mcp-server.ts',
+              );
+              const mcpServerName = 'deus_lia454_nested_dispatch';
+              return () =>
+                createCliSubprocessNestedDispatcher({
+                  pool: cliSubprocessPool!,
+                  mcpServerScriptPath,
+                  mcpServerName,
+                  repoRoot: PROJECT_ROOT,
+                  scratchDirFor: (conversationId) =>
+                    path.join(
+                      os.tmpdir(),
+                      'deus-lia454-nested-dispatch',
+                      outgoingSessionId,
+                      conversationId,
+                    ),
+                  allowedTool: `mcp__${mcpServerName}__web_search,mcp__${mcpServerName}__web_fetch`,
+                  // Same rawPermissionProfile/wardenCwd/toolCtx values the
+                  // parent's own buildMiddlewareStack/buildSafeTools above
+                  // already compute — REUSING toolCtx directly (not
+                  // re-deriving its fields from runContext) so the parent
+                  // and every nested child share one source of truth for the
+                  // tool-broker context shape (code-review finding: a
+                  // hand-copied field mapping is a drift seam if
+                  // buildToolBrokerContext's shape ever changes).
+                  // groupFolder/chatJid deliberately omitted from the
+                  // marshalled context (ai-eng-warden finding): confirmed
+                  // executeBrokerTool's web_search/web_fetch cases never
+                  // read ctx.containerInput at all, so carrying this
+                  // WhatsApp-JID-shaped PII into a plaintext scratch config
+                  // file under os.tmpdir() would be pure unnecessary
+                  // exposure — least-data.
+                  mcpServerContext: {
+                    permissionProfile: rawPermissionProfile,
+                    wardenCwd,
+                    toolBrokerContext: { cwd: toolCtx.cwd },
+                    allowedWebFetchHosts: resolveAllowedWebFetchHosts(),
+                  },
+                });
+            })()
+          : undefined;
+
       const dispatchTool = buildNestedDispatchTool(
         {
           // LIA-429 closed part of the KNOWN GAP originally noted here: the
@@ -563,6 +638,9 @@ export class DeusNativeRuntime implements AgentRuntime {
           // exposes every key it's given, so this is the ONLY thing gating
           // which roles a chat user can dispatch.
           agentSpecs: this.agentSpecs,
+          // LIA-454 walking skeleton: undefined (default LangChain
+          // in-process path) unless DEUS_NATIVE_TRANSPORT === 'cli-subprocess'.
+          createDispatcher: cliSubprocessCreateDispatcher,
         },
       );
 
@@ -760,6 +838,10 @@ export class DeusNativeRuntime implements AgentRuntime {
         result: null,
         error: message,
       };
+    } finally {
+      // LIA-454 walking skeleton: no CLI-subprocess process from this turn
+      // survives the turn, on any return path (success or error above).
+      await cliSubprocessPool?.shutdownAll();
     }
   }
 

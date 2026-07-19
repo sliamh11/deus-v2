@@ -190,14 +190,78 @@ function baseMetadata(
  *  JSON text when the content is a JSON string. Non-JSON string content is
  *  returned as-is — the contract's own `safeParseAsync` is the single
  *  source of truth for whether that shape is valid, matching the oracle's
- *  `z.preprocess` JSON-text convention (RESEARCH_OUTPUT_CONTRACT). */
-function extractCandidateOutput(content: unknown): unknown {
+ *  `z.preprocess` JSON-text convention (RESEARCH_OUTPUT_CONTRACT).
+ *  Exported (LIA-454): reused by `cli-subprocess-nested-dispatcher.ts`,
+ *  which reduces a CLI turn's terminal text through the same JSON-or-raw
+ *  convention before validating it against the same `outputContract`. */
+export function extractCandidateOutput(content: unknown): unknown {
   if (typeof content !== 'string') return content;
   try {
     return JSON.parse(content) as unknown;
   } catch {
     return content;
   }
+}
+
+/**
+ * Validates a `NestedDispatchRequest`'s shape — the same four checks
+ * `createNestedDispatcher.dispatch()` always ran inline (`agentId`, `model`,
+ * `prompt`, `outputContract`, in that order, before any model resolution or
+ * child construction). Exported (LIA-454) so
+ * `createCliSubprocessNestedDispatcher` enforces the identical contract
+ * without duplicating these four checks — a request that dynamically fails
+ * on one dispatcher must fail identically on the other, since both are
+ * drop-in `NestedDispatcher` implementations behind the same `dispatch_nested_agent`
+ * tool. Returns the `contract_failure` result to return immediately, or
+ * `undefined` when the request is valid.
+ */
+export function validateNestedDispatchRequest<T>(
+  request: NestedDispatchRequest<T>,
+  metadata: NestedDispatchMetadata,
+): NestedDispatchResult<T> | undefined {
+  if (typeof request?.agentId !== 'string' || request.agentId.length === 0) {
+    return {
+      status: 'contract_failure',
+      error: {
+        code: 'subagent_output_contract_failed',
+        message: 'nested dispatch request is missing a non-empty "agentId"',
+      },
+      metadata,
+    };
+  }
+  if (typeof request.model !== 'string' || request.model.length === 0) {
+    return {
+      status: 'contract_failure',
+      error: {
+        code: 'subagent_output_contract_failed',
+        message: 'nested dispatch request is missing a non-empty "model"',
+      },
+      metadata,
+    };
+  }
+  if (typeof request.prompt !== 'string' || request.prompt.length === 0) {
+    return {
+      status: 'contract_failure',
+      error: {
+        code: 'subagent_output_contract_failed',
+        message: 'nested dispatch request is missing a non-empty "prompt"',
+      },
+      metadata,
+    };
+  }
+  if (!isOutputContract(request.outputContract)) {
+    return {
+      status: 'contract_failure',
+      error: {
+        code: 'subagent_output_contract_failed',
+        message:
+          'nested dispatch request is missing a Zod-compatible ' +
+          '"outputContract" (expected a safeParseAsync method)',
+      },
+      metadata,
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -271,51 +335,11 @@ export function createNestedDispatcher(
       // outputContract, but the oracle's own "omitting the output
       // contract" case calls dispatch() with an `as never` cast to exercise
       // exactly this dynamic-caller failure path.
-      if (
-        typeof request?.agentId !== 'string' ||
-        request.agentId.length === 0
-      ) {
-        return {
-          status: 'contract_failure',
-          error: {
-            code: 'subagent_output_contract_failed',
-            message: 'nested dispatch request is missing a non-empty "agentId"',
-          },
-          metadata,
-        };
-      }
-      if (typeof request.model !== 'string' || request.model.length === 0) {
-        return {
-          status: 'contract_failure',
-          error: {
-            code: 'subagent_output_contract_failed',
-            message: 'nested dispatch request is missing a non-empty "model"',
-          },
-          metadata,
-        };
-      }
-      if (typeof request.prompt !== 'string' || request.prompt.length === 0) {
-        return {
-          status: 'contract_failure',
-          error: {
-            code: 'subagent_output_contract_failed',
-            message: 'nested dispatch request is missing a non-empty "prompt"',
-          },
-          metadata,
-        };
-      }
-      if (!isOutputContract(request.outputContract)) {
-        return {
-          status: 'contract_failure',
-          error: {
-            code: 'subagent_output_contract_failed',
-            message:
-              'nested dispatch request is missing a Zod-compatible ' +
-              '"outputContract" (expected a safeParseAsync method)',
-          },
-          metadata,
-        };
-      }
+      const validationFailure = validateNestedDispatchRequest(
+        request,
+        metadata,
+      );
+      if (validationFailure !== undefined) return validationFailure;
 
       let model: BaseChatModel;
       let result: Awaited<ReturnType<ReturnType<typeof createAgent>['invoke']>>;

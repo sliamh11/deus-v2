@@ -129,12 +129,25 @@ export interface McpScratchConfigOptions {
   /** Repo root used ONLY to resolve the tsx loader — never the scratch cwd. */
   repoRoot: string;
   nodeExecPath?: string;
+  /** Extra environment variables merged into the spawned MCP server
+   *  subprocess's environment (on top of whatever it already inherits from
+   *  the parent `claude` process). Used by LIA-454's nested-dispatch MCP
+   *  server to receive its per-turn permission/warden/tool-broker context
+   *  (`DEUS_NESTED_DISPATCH_CONTEXT`) — a value that only exists at the
+   *  `deus-native-backend.ts` call site and cannot be read from any file the
+   *  scratch dir already has. */
+  serverEnv?: Record<string, string>;
 }
 
 export interface McpScratchConfig {
   mcpServers: Record<
     string,
-    { type: 'stdio'; command: string; args: string[] }
+    {
+      type: 'stdio';
+      command: string;
+      args: string[];
+      env?: Record<string, string>;
+    }
   >;
 }
 
@@ -154,6 +167,7 @@ export function buildMcpScratchConfig(
         type: 'stdio',
         command: options.nodeExecPath ?? process.execPath,
         args: ['--import', tsxLoaderPath, options.serverScriptPath],
+        ...(options.serverEnv !== undefined ? { env: options.serverEnv } : {}),
       },
     },
   };
@@ -177,6 +191,10 @@ export interface ClaudeCliArgsOptions {
   mcpConfigPath: string;
   allowedTool: string;
   permissionMode?: string;
+  /** Model id passed via `--model`. Omitted => the CLI's own default model
+   *  (unchanged behavior — every pre-existing caller that doesn't pass this
+   *  keeps today's flag set byte-for-byte). */
+  model?: string;
 }
 
 /**
@@ -207,6 +225,7 @@ export function buildClaudeCliArgs(options: ClaudeCliArgsOptions): string[] {
     options.allowedTool,
     '--permission-mode',
     options.permissionMode ?? 'dontAsk',
+    ...(options.model !== undefined ? ['--model', options.model] : []),
   ];
 }
 
@@ -355,6 +374,13 @@ export interface CreateConversationOptions {
   repoRoot: string;
   allowedTool: string;
   permissionMode?: string;
+  /** Model id passed to `buildClaudeCliArgs` as `--model`. Omitted => the
+   *  CLI's own default model, unchanged from today. */
+  model?: string;
+  /** Extra environment variables for the spawned MCP server subprocess (see
+   *  `McpScratchConfigOptions.serverEnv`). Omitted => no extra env, unchanged
+   *  from today's behavior. */
+  mcpServerEnv?: Record<string, string>;
 }
 
 // ── Internal session record (module-private — no public constructor) ──────
@@ -488,6 +514,7 @@ export class ClaudeCliSessionPool {
       serverName: createOptions.mcpServerName,
       serverScriptPath: createOptions.mcpServerScriptPath,
       repoRoot: createOptions.repoRoot,
+      serverEnv: createOptions.mcpServerEnv,
     });
     const mcpConfigPath = writeMcpScratchConfig(
       createOptions.scratchDir,
@@ -497,6 +524,7 @@ export class ClaudeCliSessionPool {
       mcpConfigPath,
       allowedTool: createOptions.allowedTool,
       permissionMode: createOptions.permissionMode,
+      model: createOptions.model,
     });
 
     const child = this.spawnFn(this.claudeBin, args, {
@@ -608,6 +636,31 @@ export class ClaudeCliSessionPool {
 
   getPid(conversationId: string): number | undefined {
     return this.sessions.get(conversationId)?.pid;
+  }
+
+  /**
+   * Public per-conversation termination (LIA-454 nested-dispatch walking
+   * skeleton): a one-shot dispatcher needs deterministic cleanup right after
+   * its single turn completes, not idle-timeout-driven reaping.
+   * No-op on an unknown id — a dispatch that failed before
+   * `createConversation` finished (or whose id was never recorded) must not
+   * throw during best-effort cleanup.
+   */
+  async terminate(conversationId: string): Promise<void> {
+    const record = this.sessions.get(conversationId);
+    if (record === undefined) return;
+    // Same 'shutdown' reason shutdownAll() uses — a deliberate termination
+    // request, not an idle reap or an unexpected crash — so
+    // finalizeSession() reports a clean 'exited' event rather than
+    // 'unexpected_exit'.
+    record.terminationReason = 'shutdown';
+    this.emit({
+      type: 'termination_requested',
+      conversationId: record.conversationId,
+      pid: record.pid,
+      timestamp: this.now(),
+    });
+    await this.terminateSession(record);
   }
 
   // ── Stream wiring ────────────────────────────────────────────────────────

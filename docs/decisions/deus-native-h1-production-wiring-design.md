@@ -11,10 +11,10 @@ date: 2026-07-19
 
 # LIA-454 — H1 Production-Wiring Design
 
-**Status:** Design SHIP'd; §0 policy gate cleared (§0.1); §3.1 verification
-spike CONFIRMED (2026-07-19, see §3.1); §2.7 checkpointing fork RESOLVED
-(2026-07-19, option A, see §2.7) — the real `/plan` implementation session
-(forward-brief item 3) is the next step.
+**Status:** Design SHIP'd; §0/§3.1/§2.7 resolved. **Nested-dispatch (first
+walking skeleton) implemented (2026-07-19)**, flag-gated behind
+`DEUS_NATIVE_TRANSPORT=cli-subprocess` (default off) — see §4. Parent turn
+loop still unchanged raw-HTTP; that's the next slice.
 **Date:** 2026-07-19
 **Scope:** `docs/decisions/` (this document is design/ADR only, touches no
 production code). Eventual implementation would touch
@@ -423,9 +423,9 @@ about.
 | AC | Disposition |
 |---|---|
 | A real design doc/ADR addressing the relocation-of-enforcement question, plan-reviewed with full rigor, before any implementation | **This document** — plan-review SHIP (native Claude, 2 rounds; GPT co-gate SHIP). §0's policy flag was a new, load-bearing input for the user before implementation — **resolved via user GO, see §0.1.** |
-| Production `deus-native` chat turns route through the new transport (behind a flag, strangler pattern) without regressing `wrapToolCall`'s enforcement coverage | Designed in §3.1/§3.6; **not implemented** — §0's policy block is cleared (§0.1), §3.1's core safety mechanism is verified by spike (see §3.1), and the §2.7 checkpointing fork is resolved (option A). The real `/plan` implementation session is the next step. |
-| A7 tool-loop-reliability benchmark re-run against the new transport | Not attempted — requires a real implementation to benchmark against. |
-| Production-grade process-lifecycle management (280-process/65GB/$183-day precedent avoided) | Designed at a high level in §3.5; the "280-process" figure itself was not found anywhere in the LIA-449 ADR — likely from the LIA-454 Linear ticket's own context, not independently re-verified this session. Real work item regardless of §0's outcome. |
+| Production `deus-native` chat turns route through the new transport (behind a flag, strangler pattern) without regressing `wrapToolCall`'s enforcement coverage | **Partially implemented (2026-07-19)**: nested-dispatch children route through the CLI-subprocess transport when `DEUS_NATIVE_TRANSPORT=cli-subprocess` (default off) — new `nested-dispatch-mcp-server.ts` relocates the `permissions` pre-execution gate onto the MCP seam per §3.1's confirmed mechanism, receiving the SAME per-turn `rawPermissionProfile`/`wardenCwd`/`ToolBrokerContext` values the parent's own middleware uses (marshalled via a new `DEUS_NESTED_DISPATCH_CONTEXT` env channel — see `CliSubprocessNestedDispatcherDeps.mcpServerContext` in `cli-subprocess-nested-dispatcher.ts`), fails closed on missing/malformed context, and structurally checks `selectWardenBehaviors` (dormant today, same as the parent). Independently verified by a real credentialed smoke test (`scripts/spikes/lia454_nested_dispatch_cli_subprocess_smoke.ts`): no 429 in either an allow or a deny case, the deny case fails closed with the model correctly reporting the denial (never fabricating success), and the spawned subprocess is reaped after each dispatch. **The parent turn loop itself (`runTurn()`'s own `createAgent`/`agent.invoke`) is still unchanged raw-HTTP regardless of the flag** — that is the next implementation slice, per §3.3's recommended ordering (nested-dispatch first, parent loop second). |
+| A7 tool-loop-reliability benchmark re-run against the new transport | Not attempted — per the design's own ordering (forward-brief item 5), this benchmarks the PARENT turn loop's reliability, which requires the parent-loop wiring (still unimplemented) as its target, not the nested-dispatch slice alone. |
+| Production-grade process-lifecycle management (280-process/65GB/$183-day precedent avoided) | Designed at a high level in §3.5; the "280-process" figure itself was not found anywhere in the LIA-449 ADR — likely from the LIA-454 Linear ticket's own context, not independently re-verified this session. The nested-dispatch slice adds a small, partial mitigation (a bounded `maxProcesses` pool constructed per `runTurn()` call, unconditionally `shutdownAll()`'d in a `finally` regardless of turn outcome) but NOT the full production-wide cross-process orphan reconciliation §3.5 describes — that remains a real, separate work item regardless of §0's outcome. |
 | Cross-platform story stated explicitly | **Not addressed.** `ClaudeCliSessionPool` is POSIX-only by deliberate design (`deus-native-cli-subprocess-mcp-seam.md`, §6, "Platform scope") — Windows support does not exist in the underlying transport this design builds on. This is an open gap this document surfaces but does not resolve. |
 
 ## 5. What this document explicitly does NOT do

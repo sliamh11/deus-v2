@@ -200,6 +200,30 @@ describe('resolveTsxLoaderPath / buildMcpScratchConfig', () => {
     expect(entry.args[0]).toBe('--import');
     expect(path.isAbsolute(entry.args[1])).toBe(true);
     expect(entry.args[2]).toBe(dummyServerScriptPath);
+    expect(entry.env).toBeUndefined();
+  });
+
+  it('LIA-454: omits env when serverEnv is not supplied (default-unchanged)', () => {
+    const config = buildMcpScratchConfig({
+      serverName: 'deus_lia454',
+      serverScriptPath: dummyServerScriptPath,
+      repoRoot,
+    });
+    expect(config.mcpServers.deus_lia454.env).toBeUndefined();
+  });
+
+  it('LIA-454: threads serverEnv through to the per-server config entry', () => {
+    const config = buildMcpScratchConfig({
+      serverName: 'deus_lia454',
+      serverScriptPath: dummyServerScriptPath,
+      repoRoot,
+      serverEnv: {
+        DEUS_NESTED_DISPATCH_CONTEXT: '{"permissionProfile":"default"}',
+      },
+    });
+    expect(config.mcpServers.deus_lia454.env).toEqual({
+      DEUS_NESTED_DISPATCH_CONTEXT: '{"permissionProfile":"default"}',
+    });
   });
 });
 
@@ -230,6 +254,23 @@ describe('buildClaudeCliArgs', () => {
       '--permission-mode',
       'dontAsk',
     ]);
+  });
+
+  it('LIA-454: omits --model when not supplied (default-unchanged)', () => {
+    const args = buildClaudeCliArgs({
+      mcpConfigPath: '/scratch/mcp-config.json',
+      allowedTool: 'mcp__deus_lia449__check_permission',
+    });
+    expect(args).not.toContain('--model');
+  });
+
+  it('LIA-454: appends --model <id> when a model is supplied', () => {
+    const args = buildClaudeCliArgs({
+      mcpConfigPath: '/scratch/mcp-config.json',
+      allowedTool: 'mcp__deus_lia449__check_permission',
+      model: 'claude-sonnet-5',
+    });
+    expect(args.slice(-2)).toEqual(['--model', 'claude-sonnet-5']);
   });
 });
 
@@ -816,6 +857,100 @@ describe('ClaudeCliSessionPool: shutdownAll / parent cleanup', () => {
     await pool.createConversation('conv-a', createOptionsFor('a'));
     pool.shutdownAllSync();
     expect(processControl.forceKillCalls).toEqual([1]);
+  });
+});
+
+describe('ClaudeCliSessionPool: createConversation threads model + mcpServerEnv (LIA-454)', () => {
+  it('threads model through to buildClaudeCliArgs as --model, appended to the spawn args', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn, calls } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', {
+      ...createOptionsFor('a'),
+      model: 'claude-sonnet-5',
+    });
+    expect(calls[0].args.slice(-2)).toEqual(['--model', 'claude-sonnet-5']);
+  });
+
+  it('omits --model when not supplied, unchanged from today', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn, calls } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    expect(calls[0].args).not.toContain('--model');
+  });
+
+  it('threads mcpServerEnv into the written --mcp-config JSON for the registered server', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn, calls } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', {
+      ...createOptionsFor('a'),
+      mcpServerEnv: {
+        DEUS_NESTED_DISPATCH_CONTEXT: '{"permissionProfile":"default"}',
+      },
+    });
+    const mcpConfigIndex = calls[0].args.indexOf('--mcp-config');
+    const mcpConfigPath = calls[0].args[mcpConfigIndex + 1];
+    const written = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf8'));
+    expect(written.mcpServers.deus_lia449.env).toEqual({
+      DEUS_NESTED_DISPATCH_CONTEXT: '{"permissionProfile":"default"}',
+    });
+  });
+});
+
+describe('ClaudeCliSessionPool: terminate() (LIA-454)', () => {
+  it('terminates a known conversation, mirroring shutdownAll for a single session', async () => {
+    const child = new FakeChildProcess(7);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const childrenByPid = new Map([[7, child]]);
+    const processControl = createFakeProcessControl(childrenByPid);
+    const events: SessionLifecycleEvent[] = [];
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: (e) => events.push(e),
+      spawnFn,
+      processControl,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    expect(pool.occupiedSlots).toBe(1);
+
+    await pool.terminate('conv-a');
+
+    expect(pool.occupiedSlots).toBe(0);
+    expect(pool.activeConversationIds).toEqual([]);
+    expect(events.map((e) => e.type)).toContain('termination_requested');
+  });
+
+  it('is a no-op on an unknown conversation id (never throws)', async () => {
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn: createFakeSpawnFn([]).spawnFn,
+    });
+    await expect(pool.terminate('never-existed')).resolves.toBeUndefined();
   });
 });
 
