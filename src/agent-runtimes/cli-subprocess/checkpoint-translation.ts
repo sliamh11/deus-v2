@@ -335,8 +335,9 @@ export async function persistCliCheckpoint(
   // produce for the 'messages' channel.
   const priorMessages =
     replacePriorMessages ??
-    ((priorTuple?.checkpoint.channel_values['messages'] as
-      BaseMessage[] | undefined) ?? []);
+    (priorTuple?.checkpoint.channel_values['messages'] as
+      BaseMessage[] | undefined) ??
+    [];
   const fullMessages = [...priorMessages, ...newMessages];
 
   const priorMessagesVersion = priorTuple?.checkpoint.channel_versions[

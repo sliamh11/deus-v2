@@ -14,7 +14,11 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 
-import { AIMessage, HumanMessage, type BaseMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  HumanMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
 
 import { COMPACTION_TOKEN_THRESHOLD_ENV } from '../context-compaction.js';
 import { persistCliCheckpoint } from './checkpoint-translation.js';
@@ -559,8 +563,7 @@ describe('runParentTurnViaCliSubprocess: context-compaction integration (LIA-457
     pool: ClaudeCliSessionPool;
     createConversationCalls: Array<{ id: string; options: unknown }>;
   } {
-    const createConversationCalls: Array<{ id: string; options: unknown }> =
-      [];
+    const createConversationCalls: Array<{ id: string; options: unknown }> = [];
     const pool = {
       createConversation: vi.fn(async (id: string, options: unknown) => {
         createConversationCalls.push({ id, options });
@@ -739,7 +742,7 @@ describe('runParentTurnViaCliSubprocess: context-compaction integration (LIA-457
     expect(acquireProcessSlot).toHaveBeenCalledTimes(2);
   });
 
-  it('null-slot degrade path: the summary\'s own slot acquisition failing does not fail the turn — it proceeds uncompacted', async () => {
+  it("null-slot degrade path: the summary's own slot acquisition failing does not fail the turn — it proceeds uncompacted", async () => {
     vi.stubEnv(COMPACTION_TOKEN_THRESHOLD_ENV, '1');
     const { pool, createConversationCalls } = compactionPool('unused summary');
     const { saver } = tempSaver();

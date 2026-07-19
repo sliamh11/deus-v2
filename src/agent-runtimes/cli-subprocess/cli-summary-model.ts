@@ -96,7 +96,8 @@ export class CliSummaryModel extends BaseChatModel {
     // string that `context-compaction.ts`'s `containsFailedSummary()`
     // already detects — compaction is dropped for this turn (fail open,
     // uncompacted history), never a hang or a leaked process/slot.
-    const acquireSlot = this.deps.acquireProcessSlot ?? defaultAcquireProcessSlot;
+    const acquireSlot =
+      this.deps.acquireProcessSlot ?? defaultAcquireProcessSlot;
     const slot = await acquireSlot(this.deps.slotOptions);
     if (slot === null) {
       throw new CliSummaryModelError(

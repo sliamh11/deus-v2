@@ -35,7 +35,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
-import { AIMessage, HumanMessage, type BaseMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  HumanMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
 
 import { COMPACTION_SUMMARY_PREFIX } from '../../src/agent-runtimes/context-compaction.js';
 import { ClaudeCliSessionPool } from '../../src/agent-runtimes/cli-subprocess/claude-cli-session-pool.js';
@@ -77,10 +81,7 @@ async function main(): Promise<void> {
   const dbPath = path.join(scratchRoot, 'checkpoints.db');
   const saver = SqliteSaver.fromConnString(dbPath);
   log('dbPath', dbPath);
-  log(
-    'forced threshold',
-    process.env.DEUS_NATIVE_COMPACTION_TOKEN_THRESHOLD,
-  );
+  log('forced threshold', process.env.DEUS_NATIVE_COMPACTION_TOKEN_THRESHOLD);
 
   try {
     const threadId = crypto.randomUUID();

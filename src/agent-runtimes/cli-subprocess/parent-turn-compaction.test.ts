@@ -93,7 +93,9 @@ describe('maybeCompactParentHistory', () => {
 
   it('degrades to uncompacted (never throws) when the summary model rejects — mirrors the CliSummaryModel null-slot path', async () => {
     const invoke = vi.fn(async () => {
-      throw new Error('CliSummaryModel: no CLI subprocess slot available (production-wide process cap reached)');
+      throw new Error(
+        'CliSummaryModel: no CLI subprocess slot available (production-wide process cap reached)',
+      );
     });
     const model = { invoke } as unknown as FakeListChatModel;
     const priorMessages = conversationFixture();

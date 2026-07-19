@@ -441,7 +441,8 @@ describe('persistCliCheckpoint', () => {
         const compactedBaseline = [
           new HumanMessage({
             id: 'summary-1',
-            content: "Here is Deus's compacted conversation summary:\n\ncontext",
+            content:
+              "Here is Deus's compacted conversation summary:\n\ncontext",
           }),
         ];
         await persistCliCheckpoint({
@@ -457,9 +458,10 @@ describe('persistCliCheckpoint', () => {
         });
         // The RAW stored messages ('raw turn 1'/'raw reply 1') are gone —
         // replaced by the compacted baseline, not appended alongside it.
-        expect(afterCompaction!.checkpoint.channel_values['messages']).toEqual(
-          [...compactedBaseline, new HumanMessage({ id: 'h2', content: 'turn 2' })],
-        );
+        expect(afterCompaction!.checkpoint.channel_values['messages']).toEqual([
+          ...compactedBaseline,
+          new HumanMessage({ id: 'h2', content: 'turn 2' }),
+        ]);
       } finally {
         closeAndCleanup(saver, dir);
       }
@@ -504,7 +506,9 @@ describe('persistCliCheckpoint', () => {
           threadId,
           priorTuple: priorB,
           newMessages: [new HumanMessage({ id: 'h2', content: 'turn 2' })],
-          replacePriorMessages: [new HumanMessage({ id: 'h1', content: 'turn 1' })],
+          replacePriorMessages: [
+            new HumanMessage({ id: 'h1', content: 'turn 1' }),
+          ],
         });
 
         const afterA = await saverA.getTuple({
@@ -534,7 +538,7 @@ describe('persistCliCheckpoint', () => {
       }
     });
 
-    it('omitted (undefined) stays byte-identical to today\'s behavior', async () => {
+    it("omitted (undefined) stays byte-identical to today's behavior", async () => {
       const { saver, dir } = tempSaver();
       try {
         const threadId = crypto.randomUUID();
@@ -549,7 +553,9 @@ describe('persistCliCheckpoint', () => {
         const tuple = await saver.getTuple({
           configurable: { thread_id: threadId },
         });
-        expect(tuple!.checkpoint.channel_values['messages']).toEqual(newMessages);
+        expect(tuple!.checkpoint.channel_values['messages']).toEqual(
+          newMessages,
+        );
       } finally {
         closeAndCleanup(saver, dir);
       }
