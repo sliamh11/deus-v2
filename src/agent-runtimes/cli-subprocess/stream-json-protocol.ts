@@ -116,7 +116,13 @@ export interface ToolUseContentBlock extends ContentBlockBase {
 export interface ToolResultContentBlock extends ContentBlockBase {
   type: 'tool_result';
   tool_use_id: string;
-  content?: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  // The real `claude` CLI represents `content` as a plain string for an
+  // `isError: true` MCP tool result (confirmed live, LIA-454 §3.1 spike,
+  // `lia449b_mcp_deny_equivalence_spike.ts`) — the array-of-parts shape
+  // below is what a normal (non-error) result uses. `extractToolResultText`
+  // must handle both.
+  content?:
+    string | Array<{ type: string; text?: string; [key: string]: unknown }>;
   is_error?: boolean;
 }
 
@@ -210,10 +216,14 @@ export function extractAssistantText(event: AssistantEvent): string {
     .join('');
 }
 
-/** Flattens a tool_result block's own `content` array to plain text, for
- *  assertions that need to inspect what the tool actually returned. */
+/** Flattens a tool_result block's `content` to plain text, for assertions
+ *  that need to inspect what the tool actually returned. Handles both
+ *  observed wire shapes: an array of content parts (normal result) and a
+ *  plain string (observed for `isError: true` results — see the type
+ *  comment on `ToolResultContentBlock.content`). */
 export function extractToolResultText(block: ToolResultContentBlock): string {
   if (block.content === undefined) return '';
+  if (typeof block.content === 'string') return block.content;
   return block.content
     .filter((part) => part.type === 'text' && typeof part.text === 'string')
     .map((part) => part.text as string)
