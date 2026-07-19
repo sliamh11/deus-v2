@@ -75,7 +75,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createAgent, type AgentMiddleware } from 'langchain';
-import { HumanMessage } from '@langchain/core/messages';
+import { HumanMessage, type BaseMessage } from '@langchain/core/messages';
 
 import { FatalError } from '../errors/index.js';
 import { logger } from '../logger.js';
@@ -109,7 +109,7 @@ import { buildNestedDispatchTool } from './nested-dispatch-tool.js';
 import { loadAgentSpecs, type LoadedAgentSpec } from './agent-spec-loader.js';
 import { DEUS_NATIVE_TRANSPORT, PROJECT_ROOT } from '../config.js';
 import { ClaudeCliSessionPool } from './cli-subprocess/claude-cli-session-pool.js';
-import { createCliSubprocessNestedDispatcher } from './cli-subprocess/cli-subprocess-nested-dispatcher.js';
+import { runParentTurnViaCliSubprocess } from './cli-subprocess/parent-turn-runner.js';
 import {
   buildNativeModelClient,
   parseEffectiveNativeModelConfig,
@@ -273,11 +273,11 @@ export class DeusNativeRuntime implements AgentRuntime {
     sessionRef: RuntimeSession,
     eventSink: RuntimeEventSink,
   ): Promise<RunResult> {
-    // LIA-454 walking skeleton: only constructed when DEUS_NATIVE_TRANSPORT
-    // === 'cli-subprocess' (default 'raw-http', unchanged behavior). Scoped
-    // to this one runTurn() call — shut down in the `finally` below
-    // regardless of which return path this turn takes, so no subprocess
-    // from this turn ever survives the turn.
+    // LIA-454 EP-002 step 11: only constructed when DEUS_NATIVE_TRANSPORT ===
+    // 'cli-subprocess' (default 'raw-http', unchanged behavior). Scoped to
+    // this one runTurn() call — shut down in the `finally` below regardless
+    // of which return path this turn takes, so no subprocess from this turn
+    // ever survives the turn.
     let cliSubprocessPool: ClaudeCliSessionPool | undefined;
     try {
       // publicIngress fail-closed guard (added after code-review: a real gap
@@ -338,6 +338,213 @@ export class DeusNativeRuntime implements AgentRuntime {
         }
         await eventSink(event);
       };
+
+      // B8 (LIA-408)/LIA-454 EP-002 step 11: hoisted above the transport
+      // branch below (both need it) — construction has no side effects, so
+      // moving it earlier changes nothing observable for the raw-HTTP path.
+      const usageCollector = createTurnUsageCollector({
+        sessionId: outgoingSessionId,
+        eventSink: usageEventSink,
+      });
+      // D5 (LIA-419)/LIA-454 EP-002 step 11: hoisted for the same reason —
+      // a fresh random UUID's value is unaffected by when it's generated.
+      const currentTurnMessageId = crypto.randomUUID();
+
+      // LIA-454 EP-002 step 11: shared post-processing (tool-call
+      // extraction/events, usage recording, output/completion events,
+      // RunResult construction, transcript append) for EITHER transport —
+      // not duplicated per branch. `startedAt` stays branch-local (real
+      // wall-clock timing, unlike the ID above) rather than hoisted.
+      const finalizeSuccessfulTurn = async (params: {
+        messages: BaseMessage[];
+        text: string;
+        assistantMessageId: unknown;
+        primaryModel: string;
+        primaryProvider: 'anthropic';
+        startedAt: Date;
+      }): Promise<RunResult> => {
+        const {
+          messages,
+          text,
+          assistantMessageId,
+          primaryModel,
+          primaryProvider,
+          startedAt,
+        } = params;
+        const transcriptToolCalls: TranscriptToolCall[] = [];
+        for (const message of messages) {
+          const m = message as {
+            tool_calls?: Array<{ id?: string; name?: string; args?: unknown }>;
+          };
+          if (Array.isArray(m.tool_calls)) {
+            for (const call of m.tool_calls) {
+              if (!call.name) continue;
+              const transcriptInput =
+                call.args !== null &&
+                typeof call.args === 'object' &&
+                !Array.isArray(call.args)
+                  ? (call.args as Record<string, unknown>)
+                  : {};
+              transcriptToolCalls.push({
+                ...(call.id !== undefined ? { id: call.id } : {}),
+                name: call.name,
+                input: transcriptInput,
+              });
+              await eventSink({
+                type: 'tool_call',
+                name: call.name,
+                arguments: (call.args as Record<string, unknown>) ?? {},
+              });
+            }
+          }
+        }
+
+        await usageCollector.record(messages, {
+          provider: primaryProvider,
+          model: primaryModel,
+        });
+        const turnUsage = usageCollector.aggregate();
+
+        const completedAt = new Date();
+        await eventSink({ type: 'output_text', text });
+        await eventSink({ type: 'turn_complete' });
+
+        const runResult: RunResult = {
+          status: 'success',
+          result: text,
+          sessionRef: { backend: 'deus-native', session_id: outgoingSessionId },
+          ...(turnUsage !== undefined ? { usage: turnUsage } : {}),
+        };
+        try {
+          await appendDeusNativeTranscriptTurn({
+            sessionId: outgoingSessionId,
+            groupFolder: runContext.groupFolder,
+            ...(runContext.cwd !== undefined ? { cwd: runContext.cwd } : {}),
+            prompt: runContext.prompt,
+            assistantText: text,
+            userMessageId: currentTurnMessageId,
+            ...(typeof assistantMessageId === 'string'
+              ? { assistantMessageId }
+              : {}),
+            primaryModel,
+            toolCalls: transcriptToolCalls,
+            usageEvents: transcriptUsageEvents,
+            startedAt,
+            completedAt,
+          });
+        } catch (error) {
+          console.warn(
+            `deus-native transcript append unexpectedly rejected for session ${outgoingSessionId}`,
+            error,
+          );
+        }
+        return runResult;
+      };
+
+      if (DEUS_NATIVE_TRANSPORT === 'cli-subprocess') {
+        // LIA-454 EP-002 step 11: the parent loop itself now routes through
+        // the CLI-subprocess transport too (previously only nested-dispatch
+        // children did, PR #47) — this flag now selects the COMPLETE
+        // parent-and-nested CLI strategy, not a mix of raw-HTTP parent +
+        // CLI-subprocess children (that combination is no longer
+        // selectable; see config.ts's updated comment). None of the
+        // raw-HTTP machinery below (buildNativeModelClient, the raw
+        // middleware stack, buildSafeTools/dispatchTool/tools, createAgent/
+        // agent.invoke) is constructed on this branch.
+        //
+        // Scope carve-out (EP-002's Goal section, plan-review round 1/2):
+        // fixes the severe zero-history bug in step 10's
+        // parent-turn-runner.ts (prior checkpoint messages were read but
+        // never sent to the CLI). Deliberately does NOT integrate
+        // context-compaction (LIA-457) or control-group memory-recall
+        // (LIA-458) for this path, and nested-dispatch child usage from
+        // inside parent-turn-mcp-server.ts's own subprocess is not yet
+        // folded into RunResult.usage (LIA-460) — all real, named,
+        // documented gaps, not silently dropped. The raw-HTTP path's own
+        // thread-turn lease is also deliberately NOT added here (LIA-459) —
+        // see EP-002's "Chosen approach" section for why.
+        const rawPermissionProfile =
+          runContext.backendConfig?.['permissionProfile'];
+        if (
+          rawPermissionProfile !== undefined &&
+          typeof rawPermissionProfile !== 'string'
+        ) {
+          throw new Error(
+            `deus-native: backendConfig.permissionProfile must be a string ` +
+              `profile name, got ${typeof rawPermissionProfile}`,
+          );
+        }
+        const wardenCwd = path.resolve(
+          runContext.worktreePath ?? runContext.cwd ?? process.cwd(),
+        );
+        const toolCtx = buildToolBrokerContext(runContext);
+
+        cliSubprocessPool = new ClaudeCliSessionPool({
+          // Mirrors the nested-dispatch site's own established convention
+          // (below, in the now-superseded raw-HTTP-only wiring) — a small
+          // in-process bound; the step-9 cross-process slot registry is the
+          // authoritative production-wide cap, this is defense in depth.
+          maxProcesses: 3,
+          idleTimeoutMs: 120_000,
+          terminationGraceMs: 3_000,
+          onEvent: () => {},
+        });
+        const mcpServerScriptPath = path.join(
+          PROJECT_ROOT,
+          'src/agent-runtimes/cli-subprocess/parent-turn-mcp-server.ts',
+        );
+        const mcpServerName = 'deus_lia454_parent';
+        const startedAt = new Date();
+
+        const outcome = await runParentTurnViaCliSubprocess(
+          {
+            threadId: outgoingSessionId,
+            prompt: runContext.prompt,
+            currentTurnMessageId,
+            model: effectiveModels.main.model,
+            mcpServerContext: {
+              permissionProfile: rawPermissionProfile,
+              wardenCwd,
+              workspaceRoot: wardenCwd,
+              safeToolCwd: toolCtx.cwd,
+              allowedWebFetchHosts: resolveAllowedWebFetchHosts(),
+              parentSessionId: outgoingSessionId,
+              effectiveModels,
+              agentCatalogIds: Array.from(this.agentSpecs.keys()),
+            },
+          },
+          {
+            pool: cliSubprocessPool,
+            mcpServerScriptPath,
+            mcpServerName,
+            repoRoot: PROJECT_ROOT,
+            scratchDirFor: (conversationId) =>
+              path.join(
+                os.tmpdir(),
+                'deus-lia454-parent-turn',
+                outgoingSessionId,
+                conversationId,
+              ),
+            saver: getCheckpointer(),
+            loadSessionOpenText: async () =>
+              (await loadSessionOpenContext(runContext, group)).systemMessage,
+          },
+        );
+
+        if (outcome.status === 'error') {
+          return { status: 'error', result: null, error: outcome.error };
+        }
+
+        return await finalizeSuccessfulTurn({
+          messages: outcome.newMessages,
+          text: outcome.finalAssistantText,
+          assistantMessageId: outcome.finalAssistantMessageId,
+          primaryModel:
+            outcome.model !== '' ? outcome.model : effectiveModels.main.model,
+          primaryProvider: outcome.provider,
+          startedAt,
+        });
+      }
 
       // B4 (LIA-404): read the real checkpoint state ONCE to derive the
       // injection-gating signal. This happens before invoke()'s own internal
@@ -466,16 +673,13 @@ export class DeusNativeRuntime implements AgentRuntime {
         },
       );
 
-      // B8 (LIA-408): turn-scoped usage collector, created once
-      // outgoingSessionId is known and shared by the parent's own
+      // B8 (LIA-408): turn-scoped usage collector, shared by the parent's own
       // per-AIMessage usage recording below AND every nested-dispatch
       // child's `onUsage` callback — one code path builds every 'usage'
       // event and the combined RunResult.usage aggregate, whether the
-      // AIMessage came from the parent or from a dispatched child.
-      const usageCollector = createTurnUsageCollector({
-        sessionId: outgoingSessionId,
-        eventSink: usageEventSink,
-      });
+      // AIMessage came from the parent or from a dispatched child. Hoisted
+      // above the transport branch (LIA-454 EP-002 step 11) — see its
+      // declaration earlier in this method.
 
       // B8 (LIA-408): the parent-facing dispatch_nested_agent tool. Every
       // factory below runs AGAIN, fresh, on each individual dispatch (never
@@ -489,70 +693,14 @@ export class DeusNativeRuntime implements AgentRuntime {
       // alone). onUsage folds every child AIMessage into the SAME
       // usageCollector the parent uses below, using the parent's
       // outgoingSessionId and the child's own resolved model id.
-      // LIA-454 walking skeleton: when opted in, nested-dispatch children
-      // route through the CLI-subprocess transport instead of an in-process
-      // LangChain createAgent — avoids the H1/LIA-433 429 the raw-HTTP
-      // client hits. The parent turn loop itself (this method's own
-      // createAgent/agent.invoke below) is UNCHANGED regardless of this
-      // flag — only nested-dispatch children are affected, per this
-      // walking skeleton's explicit scope (design doc §3.3/§2.5).
-      const cliSubprocessCreateDispatcher =
-        DEUS_NATIVE_TRANSPORT === 'cli-subprocess'
-          ? (() => {
-              cliSubprocessPool = new ClaudeCliSessionPool({
-                // Small bound on concurrent nested-dispatch subprocesses —
-                // a real, partial mitigation of the design doc's §3.5
-                // orphan-risk concern for this walking skeleton (full
-                // production-wide orphan reconciliation is out of scope
-                // here).
-                maxProcesses: 3,
-                idleTimeoutMs: 120_000,
-                terminationGraceMs: 3_000,
-                onEvent: () => {},
-              });
-              const mcpServerScriptPath = path.join(
-                PROJECT_ROOT,
-                'src/agent-runtimes/cli-subprocess/nested-dispatch-mcp-server.ts',
-              );
-              const mcpServerName = 'deus_lia454_nested_dispatch';
-              return () =>
-                createCliSubprocessNestedDispatcher({
-                  pool: cliSubprocessPool!,
-                  mcpServerScriptPath,
-                  mcpServerName,
-                  repoRoot: PROJECT_ROOT,
-                  scratchDirFor: (conversationId) =>
-                    path.join(
-                      os.tmpdir(),
-                      'deus-lia454-nested-dispatch',
-                      outgoingSessionId,
-                      conversationId,
-                    ),
-                  allowedTool: `mcp__${mcpServerName}__web_search,mcp__${mcpServerName}__web_fetch`,
-                  // Same rawPermissionProfile/wardenCwd/toolCtx values the
-                  // parent's own buildMiddlewareStack/buildSafeTools above
-                  // already compute — REUSING toolCtx directly (not
-                  // re-deriving its fields from runContext) so the parent
-                  // and every nested child share one source of truth for the
-                  // tool-broker context shape (code-review finding: a
-                  // hand-copied field mapping is a drift seam if
-                  // buildToolBrokerContext's shape ever changes).
-                  // groupFolder/chatJid deliberately omitted from the
-                  // marshalled context (ai-eng-warden finding): confirmed
-                  // executeBrokerTool's web_search/web_fetch cases never
-                  // read ctx.containerInput at all, so carrying this
-                  // WhatsApp-JID-shaped PII into a plaintext scratch config
-                  // file under os.tmpdir() would be pure unnecessary
-                  // exposure — least-data.
-                  mcpServerContext: {
-                    permissionProfile: rawPermissionProfile,
-                    wardenCwd,
-                    toolBrokerContext: { cwd: toolCtx.cwd },
-                    allowedWebFetchHosts: resolveAllowedWebFetchHosts(),
-                  },
-                });
-            })()
-          : undefined;
+      // LIA-454 EP-002 step 11: the CLI-subprocess-backed nested-dispatch
+      // wiring that used to live here (PR #47's walking skeleton) is GONE
+      // from this branch — `DEUS_NATIVE_TRANSPORT === 'cli-subprocess'` now
+      // returns early via the branch earlier in this method, so this code
+      // (reached only when the flag is NOT 'cli-subprocess') never needs a
+      // CLI-subprocess dispatcher; `createDispatcher` is simply omitted
+      // below, defaulting to the in-process LangChain dispatcher —
+      // unchanged from the flag's original 'raw-http' behavior.
 
       const dispatchTool = buildNestedDispatchTool(
         {
@@ -638,9 +786,10 @@ export class DeusNativeRuntime implements AgentRuntime {
           // exposes every key it's given, so this is the ONLY thing gating
           // which roles a chat user can dispatch.
           agentSpecs: this.agentSpecs,
-          // LIA-454 walking skeleton: undefined (default LangChain
-          // in-process path) unless DEUS_NATIVE_TRANSPORT === 'cli-subprocess'.
-          createDispatcher: cliSubprocessCreateDispatcher,
+          // createDispatcher omitted: this branch only runs when
+          // DEUS_NATIVE_TRANSPORT is NOT 'cli-subprocess' (see LIA-454
+          // EP-002 step 11's branch earlier in this method), so it always
+          // uses the default in-process LangChain dispatcher.
         },
       );
 
@@ -686,7 +835,8 @@ export class DeusNativeRuntime implements AgentRuntime {
       // returned checkpoint state. Message-count slicing is invalid once
       // compaction can replace a large prefix with one summary and make the
       // final state shorter than it was before this turn.
-      const currentTurnMessageId = crypto.randomUUID();
+      // (currentTurnMessageId is now hoisted above the transport branch —
+      // LIA-454 EP-002 step 11 — see its declaration earlier in this method.)
       const startedAt = new Date();
       const result = await agent.invoke(
         {
@@ -724,55 +874,6 @@ export class DeusNativeRuntime implements AgentRuntime {
         );
       }
       const messages = allResultMessages.slice(currentTurnStart);
-      const transcriptToolCalls: TranscriptToolCall[] = [];
-      for (const message of messages) {
-        const m = message as {
-          tool_calls?: Array<{ id?: string; name?: string; args?: unknown }>;
-        };
-        if (Array.isArray(m.tool_calls)) {
-          for (const call of m.tool_calls) {
-            if (!call.name) continue;
-            const transcriptInput =
-              call.args !== null &&
-              typeof call.args === 'object' &&
-              !Array.isArray(call.args)
-                ? (call.args as Record<string, unknown>)
-                : {};
-            transcriptToolCalls.push({
-              ...(call.id !== undefined ? { id: call.id } : {}),
-              name: call.name,
-              input: transcriptInput,
-            });
-            await eventSink({
-              type: 'tool_call',
-              name: call.name,
-              arguments: (call.args as Record<string, unknown>) ?? {},
-            });
-          }
-        }
-      }
-
-      // B6 (LIA-406) + B8 (LIA-408): one 'usage' event per PARENT AIMessage
-      // this turn, via the shared collector (identical unconditional-emit/
-      // never-fabricate-zeros semantics as pre-B8 — see
-      // deus-native-usage.ts). Any nested-dispatch child's usage was already
-      // folded into the SAME collector by the dispatch tool's `onUsage`
-      // callback during `agent.invoke()` above, so `aggregate()` below is
-      // the combined parent-plus-every-child total for RunResult.usage —
-      // never just the parent's own local total.
-      // Hardcoded 'anthropic' because buildProxyRoutedChatAnthropic is the
-      // only model-construction path today (single-provider). If a second
-      // provider path is added, this must become a function of which client
-      // was actually built.
-      await usageCollector.record(messages, {
-        provider: effectiveModels.main.provider,
-        // Read off the SAME `effectiveModels.main` ref used to construct
-        // `model` above (line ~286) — not re-hardcoded, so it can't drift
-        // from whatever model tier was actually resolved/constructed for
-        // this turn.
-        model: effectiveModels.main.model,
-      });
-      const turnUsage = usageCollector.aggregate();
 
       const last = messages[messages.length - 1] as
         { content?: unknown } | undefined;
@@ -782,52 +883,27 @@ export class DeusNativeRuntime implements AgentRuntime {
           : last?.content !== undefined
             ? JSON.stringify(last.content)
             : '';
-      const completedAt = new Date();
       const assistantMessageId = (
         messages[messages.length - 1] as { id?: unknown } | undefined
       )?.id;
 
-      await eventSink({ type: 'output_text', text });
-      await eventSink({ type: 'turn_complete' });
-
-      // B4 (LIA-404): outgoingSessionId (computed at the top of the turn —
-      // it doubled as the checkpointer thread_id) flows back through
-      // RunResult.sessionRef into message-orchestrator.ts/task-scheduler.ts's
-      // existing generic `if (runResult.sessionRef) setSession(...)`
-      // persistence. Unlike B3's cosmetic marker, this id now references
-      // real, resumable checkpointer state for this thread.
-      const runResult: RunResult = {
-        status: 'success',
-        result: text,
-        sessionRef: { backend: 'deus-native', session_id: outgoingSessionId },
-        // B6 (LIA-406): omitted (not zeroed) when no message in the turn
-        // carried usage_metadata — never fabricate counts.
-        ...(turnUsage !== undefined ? { usage: turnUsage } : {}),
-      };
-      try {
-        await appendDeusNativeTranscriptTurn({
-          sessionId: outgoingSessionId,
-          groupFolder: runContext.groupFolder,
-          ...(runContext.cwd !== undefined ? { cwd: runContext.cwd } : {}),
-          prompt: runContext.prompt,
-          assistantText: text,
-          userMessageId: currentTurnMessageId,
-          ...(typeof assistantMessageId === 'string'
-            ? { assistantMessageId }
-            : {}),
-          primaryModel: effectiveModels.main.model,
-          toolCalls: transcriptToolCalls,
-          usageEvents: transcriptUsageEvents,
-          startedAt,
-          completedAt,
-        });
-      } catch (error) {
-        console.warn(
-          `deus-native transcript append unexpectedly rejected for session ${outgoingSessionId}`,
-          error,
-        );
-      }
-      return runResult;
+      // B6 (LIA-406) + B8 (LIA-408): any nested-dispatch child's usage was
+      // already folded into the SAME usageCollector by the dispatch tool's
+      // `onUsage` callback during `agent.invoke()` above, so
+      // `finalizeSuccessfulTurn`'s own `usageCollector.record(messages, ...)`
+      // call below sees the combined parent-plus-every-child total.
+      // Hardcoded 'anthropic' because buildProxyRoutedChatAnthropic is the
+      // only model-construction path today (single-provider). If a second
+      // provider path is added, this must become a function of which client
+      // was actually built.
+      return await finalizeSuccessfulTurn({
+        messages,
+        text,
+        assistantMessageId,
+        primaryModel: effectiveModels.main.model,
+        primaryProvider: effectiveModels.main.provider,
+        startedAt,
+      });
     } catch (err) {
       // Never throw out of runTurn — matches ContainerRuntime.runTurn's
       // never-throw contract (network failure, proxy auth failure, or any
@@ -839,7 +915,7 @@ export class DeusNativeRuntime implements AgentRuntime {
         error: message,
       };
     } finally {
-      // LIA-454 walking skeleton: no CLI-subprocess process from this turn
+      // LIA-454 EP-002 step 11: no CLI-subprocess process from this turn
       // survives the turn, on any return path (success or error above).
       await cliSubprocessPool?.shutdownAll();
     }

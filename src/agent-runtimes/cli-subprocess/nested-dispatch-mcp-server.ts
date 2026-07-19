@@ -36,21 +36,12 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { z } from 'zod';
 
-import {
-  evaluatePermission,
-  resolvePermissionProfile,
-} from '../permission-rules.js';
-import { selectWardenBehaviors } from '../middleware-stack.js';
+import { resolveMiddlewareStackConfig } from '../middleware-stack.js';
 import {
   buildSafeTools,
   type ToolBrokerContext,
 } from '../tool-broker-langchain-adapter.js';
-
-export interface McpToolResult {
-  [x: string]: unknown;
-  isError?: boolean;
-  content: Array<{ type: 'text'; text: string }>;
-}
+import { gateAndExecuteMcpTool, type McpToolResult } from './mcp-tool-gate.js';
 
 /** Shape of `DEUS_NESTED_DISPATCH_CONTEXT` — built by `deus-native-backend.ts`
  *  from values already in scope there (see module doc above). */
@@ -111,12 +102,19 @@ export function parseNestedDispatchContext(
 }
 
 /**
- * The permission (+ future warden) pre-execution gate shared by both
- * `web_search` and `web_fetch`. Exported and directly testable — LIA-454's
- * independent oracle (`nested-dispatch-mcp-server.oracle.test.ts`, authored
- * blind to this implementation) exercises exactly this function, proving
+ * The permission + wardens pre-execution gate shared by both `web_search`
+ * and `web_fetch`. Exported and directly testable — LIA-454's independent
+ * oracle (`nested-dispatch-mcp-server.oracle.test.ts`, authored blind to
+ * the original implementation) exercises exactly this function, proving
  * the enforcement decision is made BEFORE `realAction` is ever invoked,
- * never observed or corrected after the fact.
+ * never observed or corrected after the fact. Context PARSING stays local
+ * (transport/marshalling-specific — see `parseNestedDispatchContext`); the
+ * actual policy decision delegates to `mcp-tool-gate.ts`'s transport-neutral
+ * `gateAndExecuteMcpTool` (LIA-454 EP-002 step 7), the SAME shared gate the
+ * future parent-turn MCP server (step 8) uses, so wardens are now REALLY
+ * enforced here (via the shared `runWardenBehavior`) rather than only
+ * detected-and-denied — closing the parity gap the original inline
+ * implementation left open.
  */
 export async function handleNestedDispatchToolCall(
   encodedContext: string | undefined,
@@ -132,46 +130,16 @@ export async function handleNestedDispatchToolCall(
     );
   }
 
-  const profileName = context.permissionProfile ?? 'default';
-  let policy;
-  try {
-    policy = resolvePermissionProfile(profileName);
-  } catch (err) {
-    // resolvePermissionProfile throws on an unknown profile name — same
-    // fail-visibly contract middleware-stack.ts's own permissions layer
-    // relies on (never silently fall back to a weaker policy).
-    return denyResult(
-      toolName,
-      `permission profile resolution failed: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  const evaluation = evaluatePermission(policy, toolName);
-  if (evaluation.decision !== 'allow') {
-    return denyResult(
-      toolName,
-      `blocked by the "${profileName}" permission profile (${evaluation.reason})`,
-    );
-  }
-
-  // Wardens: selectWardenBehaviors() returns [] for both web_search and
-  // web_fetch today (neither is `apply_patch` nor a git-commit-shaped `Bash`
-  // call) — a real no-op, matching middleware-stack.ts's own ordering
-  // (permissions first, then wardens). This walking skeleton does not yet
-  // invoke the real Python warden gate runner from inside a spawned
-  // subprocess, so IF a future catalog addition ever makes this non-empty,
-  // fail closed rather than silently bypass parity.
-  const wardenBehaviors = selectWardenBehaviors(toolName, args);
-  if (wardenBehaviors.length > 0) {
-    return denyResult(
-      toolName,
-      `warden-gated (${wardenBehaviors.join(', ')}) but warden enforcement ` +
-        'is not yet implemented on the CLI-subprocess MCP seam',
-    );
-  }
-
-  return realAction(args);
+  return gateAndExecuteMcpTool(
+    toolName,
+    args,
+    {
+      permissionProfile: context.permissionProfile,
+      wardenCwd: context.wardenCwd,
+    },
+    resolveMiddlewareStackConfig(),
+    realAction,
+  );
 }
 
 /** Builds the real-action delegate for each tool from the existing,

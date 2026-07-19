@@ -43,7 +43,10 @@ import {
   StreamJsonLineParser,
   buildUserTurnInput,
   encodeNdjsonLine,
+  isAssistantEvent,
   isResultEvent,
+  isSystemInitEvent,
+  validateTurnEventSequence,
   type ParsedLineResult,
   type ResultEvent,
   type StreamJsonEvent,
@@ -188,13 +191,31 @@ export function writeMcpScratchConfig(
 // ── CLI argument construction ─
 
 export interface ClaudeCliArgsOptions {
-  mcpConfigPath: string;
-  allowedTool: string;
+  /** Omitted entirely (along with `allowedTool`) for a NO-TOOLS conversation
+   *  (LIA-454 EP-002 step 6: the CLI-backed compaction summarizer) — no MCP
+   *  server exists to connect to, so `--mcp-config`/`--strict-mcp-config`/
+   *  `--allowedTools` are all omitted rather than pointed at a fake server. */
+  mcpConfigPath?: string;
+  allowedTool?: string;
   permissionMode?: string;
   /** Model id passed via `--model`. Omitted => the CLI's own default model
    *  (unchanged behavior — every pre-existing caller that doesn't pass this
    *  keeps today's flag set byte-for-byte). */
   model?: string;
+  /** Absolute path to a file whose content is appended to the CLI's system
+   *  prompt (LIA-454 EP-002 step 11 — the parent-turn conversation-history
+   *  fix). Absent from `claude --help`'s documented flags but verified
+   *  directly against a real invocation on `claude 2.1.215` (EP-002 step
+   *  2.1's spike; a missing file fails loudly with a non-zero exit,
+   *  confirmed again at step 11 plan-review — "Error: Append system prompt
+   *  file not found"). Since this flag is undocumented, a future CLI
+   *  version could rename or drop it — re-verify against `claude 2.1.215`
+   *  or later before trusting this on a materially newer CLI version, and
+   *  treat step 12's real credentialed smoke test as the actual living
+   *  regression check for this flag's continued existence, not just this
+   *  comment. Omitted => every existing caller keeps today's exact arg
+   *  list, byte-for-byte. */
+  appendSystemPromptFile?: string;
 }
 
 /**
@@ -202,7 +223,10 @@ export interface ClaudeCliArgsOptions {
  * before relying on them (the committed ADR (`docs/decisions/deus-native-cli-subprocess-mcp-seam.md`) "CLI flag
  * verification"). `--print` is required for both stream-json formats;
  * persistence across turns comes from leaving stdin open after a `result`,
- * not from omitting `--print`.
+ * not from omitting `--print`. `--tools ''` is unconditional (disables ALL
+ * built-in tools regardless of MCP-server presence) — it is what makes a
+ * no-`mcpConfigPath` conversation genuinely tool-free, not merely
+ * MCP-server-free.
  */
 export function buildClaudeCliArgs(options: ClaudeCliArgsOptions): string[] {
   return [
@@ -212,20 +236,24 @@ export function buildClaudeCliArgs(options: ClaudeCliArgsOptions): string[] {
     '--output-format',
     'stream-json',
     '--verbose',
-    '--mcp-config',
-    options.mcpConfigPath,
-    '--strict-mcp-config',
+    ...(options.mcpConfigPath !== undefined
+      ? ['--mcp-config', options.mcpConfigPath, '--strict-mcp-config']
+      : []),
     '--setting-sources',
     '',
     '--no-session-persistence',
     '--disable-slash-commands',
     '--tools',
     '',
-    '--allowedTools',
-    options.allowedTool,
+    ...(options.allowedTool !== undefined
+      ? ['--allowedTools', options.allowedTool]
+      : []),
     '--permission-mode',
     options.permissionMode ?? 'dontAsk',
     ...(options.model !== undefined ? ['--model', options.model] : []),
+    ...(options.appendSystemPromptFile !== undefined
+      ? ['--append-system-prompt-file', options.appendSystemPromptFile]
+      : []),
   ];
 }
 
@@ -355,6 +383,22 @@ export interface ConversationHandle {
   pid: number;
 }
 
+/** Wall-clock timing for one turn, measured host-side (`options.now`, so
+ *  hermetically injectable in tests) rather than only via the CLI's own
+ *  `ttft_ms`/`duration_ms` — this timing spans from `createConversation`
+ *  spawn, not from the CLI's own turn-start, and remains available even for
+ *  a turn that fails before the CLI reports its own terminal timing. */
+export interface TurnTiming {
+  /** From spawn to the session's own `system`/`init` event, or `undefined`
+   *  if init was never observed before this turn resolved. */
+  spawnToInitMs?: number;
+  /** From spawn to this turn's first `assistant` event, or `undefined` if
+   *  none arrived (e.g. the turn failed before any assistant output). */
+  spawnToFirstAssistantMs?: number;
+  /** From `sendTurn()` to this turn's resolution. */
+  totalTurnMs: number;
+}
+
 export interface TurnResult {
   result: ResultEvent;
   /** All retained events for this session (bounded), including the
@@ -362,25 +406,43 @@ export interface TurnResult {
    *  events collected since spawn — everything the smoke runner's
    *  assertions need, in one return value. */
   events: StreamJsonEvent[];
+  /** Exactly this turn's own events (system/init excluded — that belongs to
+   *  the session, not any one turn), independent of the session-wide
+   *  `maxRetainedEvents` cap: a long-lived multi-turn session's wider
+   *  `events` log can drop early-turn events once that cap is exceeded,
+   *  which is unsafe for building a durable checkpoint row. Bounded
+   *  separately by `maxTurnEvents`/`maxTurnEventBytes` — an overflow fails
+   *  the turn with `protocol_error` rather than silently truncating it. */
+  turnEvents: StreamJsonEvent[];
+  timing: TurnTiming;
   pid: number;
 }
 
 export interface CreateConversationOptions {
   /** Isolated scratch working directory for this one conversation's process. */
   scratchDir: string;
-  mcpServerName: string;
-  mcpServerScriptPath: string;
+  /** Omitted entirely (along with `mcpServerScriptPath`/`allowedTool`) for a
+   *  NO-TOOLS conversation (LIA-454 EP-002 step 6: the CLI-backed compaction
+   *  summarizer) — no MCP server is ever spawned or configured, matching
+   *  `buildClaudeCliArgs`'s own no-`mcpConfigPath` behavior. `repoRoot` is
+   *  still accepted but goes unused (only needed to resolve the tsx loader
+   *  for an MCP server that, in this mode, does not exist). */
+  mcpServerName?: string;
+  mcpServerScriptPath?: string;
   /** Repo root, used only to resolve the tsx loader (never the scratch cwd). */
   repoRoot: string;
-  allowedTool: string;
+  allowedTool?: string;
   permissionMode?: string;
   /** Model id passed to `buildClaudeCliArgs` as `--model`. Omitted => the
    *  CLI's own default model, unchanged from today. */
   model?: string;
   /** Extra environment variables for the spawned MCP server subprocess (see
    *  `McpScratchConfigOptions.serverEnv`). Omitted => no extra env, unchanged
-   *  from today's behavior. */
+   *  from today's behavior. Meaningless (and ignored) in no-tools mode. */
   mcpServerEnv?: Record<string, string>;
+  /** Passed straight through to `buildClaudeCliArgs` — see its own doc
+   *  comment (LIA-454 EP-002 step 11). Omitted => unchanged behavior. */
+  appendSystemPromptFile?: string;
 }
 
 // ── Internal session record (module-private — no public constructor) ──────
@@ -391,6 +453,12 @@ type TerminationReason = 'idle' | 'shutdown';
 interface PendingTurn {
   resolve: (result: TurnResult) => void;
   reject: (error: Error) => void;
+  turnStartedAt: number;
+  /** This turn's own events only — reset per turn, independent of the
+   *  session-wide `retainedEvents` cap (see `TurnResult.turnEvents`). */
+  turnEvents: StreamJsonEvent[];
+  turnEventBytes: number;
+  firstAssistantEventAt?: number;
 }
 
 interface SessionRecord {
@@ -401,6 +469,13 @@ interface SessionRecord {
   lineParser: StreamJsonLineParser;
   retainedEvents: BoundedEventLog<StreamJsonEvent>;
   stderrTail: string;
+  /** Set once, at `createConversation` spawn — the origin point for every
+   *  turn's `TurnTiming`. */
+  spawnedAt: number;
+  /** Set once, the first time this session's own `system`/`init` event is
+   *  parsed — never re-set on a later turn (there is exactly one init per
+   *  process lifetime). */
+  initReceivedAt?: number;
   /** Per-stream UTF-8 decoders: `Buffer#toString('utf8')` on each chunk
    *  independently corrupts multi-byte characters split across a chunk
    *  boundary (produces replacement characters, which can then break JSON
@@ -438,11 +513,24 @@ export interface ClaudeCliSessionPoolOptions {
   processControl?: ProcessControlFns;
   maxRetainedEvents?: number;
   maxStderrTailChars?: number;
+  /** Bounds `TurnResult.turnEvents` — a long tool loop within ONE turn must
+   *  still fail visibly with `protocol_error` rather than silently drop its
+   *  earliest events (unlike the session-wide `retainedEvents` cap, which is
+   *  a diagnostic log allowed to drop old entries; a turn's own events are
+   *  what `checkpoint-translation.ts` must persist verbatim). */
+  maxTurnEvents?: number;
+  /** Bounds the total serialized byte size of one turn's events, for the
+   *  same reason as `maxTurnEvents` — a pathologically large single event
+   *  (e.g. a huge tool result) could exceed a reasonable memory budget even
+   *  under a low event-count cap. */
+  maxTurnEventBytes?: number;
   now?: () => number;
 }
 
 const DEFAULT_MAX_RETAINED_EVENTS = 200;
 const DEFAULT_MAX_STDERR_TAIL_CHARS = 4000;
+const DEFAULT_MAX_TURN_EVENTS = 2000;
+const DEFAULT_MAX_TURN_EVENT_BYTES = 20_000_000;
 
 /**
  * The pool: sole factory for the (module-private, never-exported) session
@@ -456,6 +544,8 @@ export class ClaudeCliSessionPool {
   private readonly processControl: ProcessControlFns;
   private readonly maxRetainedEvents: number;
   private readonly maxStderrTailChars: number;
+  private readonly maxTurnEvents: number;
+  private readonly maxTurnEventBytes: number;
   private readonly now: () => number;
   private occupiedSlotsCount = 0;
   private shutdownPromise?: Promise<void>;
@@ -468,6 +558,9 @@ export class ClaudeCliSessionPool {
       options.maxRetainedEvents ?? DEFAULT_MAX_RETAINED_EVENTS;
     this.maxStderrTailChars =
       options.maxStderrTailChars ?? DEFAULT_MAX_STDERR_TAIL_CHARS;
+    this.maxTurnEvents = options.maxTurnEvents ?? DEFAULT_MAX_TURN_EVENTS;
+    this.maxTurnEventBytes =
+      options.maxTurnEventBytes ?? DEFAULT_MAX_TURN_EVENT_BYTES;
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -510,21 +603,60 @@ export class ClaudeCliSessionPool {
 
     const env = buildChildEnv();
     assertNoAmbiguousAuthOverride(env);
-    const mcpConfig = buildMcpScratchConfig({
-      serverName: createOptions.mcpServerName,
-      serverScriptPath: createOptions.mcpServerScriptPath,
-      repoRoot: createOptions.repoRoot,
-      serverEnv: createOptions.mcpServerEnv,
-    });
-    const mcpConfigPath = writeMcpScratchConfig(
-      createOptions.scratchDir,
-      mcpConfig,
-    );
+
+    // No-tools mode (LIA-454 EP-002 step 6): no `mcpServerName` means no MCP
+    // server is configured at all, matching `buildClaudeCliArgs`'s own
+    // no-`mcpConfigPath` behavior — `writeMcpScratchConfig` (which also
+    // creates `scratchDir` as a side effect) is skipped entirely, so the
+    // directory must still be created explicitly here.
+    let mcpConfigPath: string | undefined;
+    // mcpServerName/mcpServerScriptPath/allowedTool are required TOGETHER —
+    // any partial combination (code-review finding: the original guard only
+    // checked the mcpServerName-present direction, silently letting e.g.
+    // `allowedTool` alone through to `buildClaudeCliArgs` as a nonsensical
+    // "--allowedTools with no --mcp-config" spawn) fails visibly instead.
+    const mcpFieldsProvided = [
+      createOptions.mcpServerName !== undefined,
+      createOptions.mcpServerScriptPath !== undefined,
+      createOptions.allowedTool !== undefined,
+    ].filter(Boolean).length;
+    if (mcpFieldsProvided !== 0 && mcpFieldsProvided !== 3) {
+      throw new ClaudeCliSessionError(
+        'createConversation: mcpServerName/mcpServerScriptPath/allowedTool ' +
+          'are required together — all three (or none, for a no-tools ' +
+          'conversation) must be provided',
+        'spawn_error',
+      );
+    }
+    if (
+      createOptions.mcpServerName !== undefined &&
+      createOptions.mcpServerScriptPath !== undefined &&
+      createOptions.allowedTool !== undefined
+    ) {
+      const mcpConfig = buildMcpScratchConfig({
+        serverName: createOptions.mcpServerName,
+        serverScriptPath: createOptions.mcpServerScriptPath,
+        repoRoot: createOptions.repoRoot,
+        serverEnv: createOptions.mcpServerEnv,
+      });
+      mcpConfigPath = writeMcpScratchConfig(
+        createOptions.scratchDir,
+        mcpConfig,
+      );
+    } else {
+      fs.mkdirSync(createOptions.scratchDir, { recursive: true });
+    }
+
     const args = buildClaudeCliArgs({
-      mcpConfigPath,
-      allowedTool: createOptions.allowedTool,
+      ...(mcpConfigPath !== undefined ? { mcpConfigPath } : {}),
+      ...(createOptions.allowedTool !== undefined
+        ? { allowedTool: createOptions.allowedTool }
+        : {}),
       permissionMode: createOptions.permissionMode,
       model: createOptions.model,
+      ...(createOptions.appendSystemPromptFile !== undefined
+        ? { appendSystemPromptFile: createOptions.appendSystemPromptFile }
+        : {}),
     });
 
     const child = this.spawnFn(this.claudeBin, args, {
@@ -552,6 +684,7 @@ export class ClaudeCliSessionPool {
         this.maxRetainedEvents,
       ),
       stderrTail: '',
+      spawnedAt: this.now(),
       stdoutDecoder: new StringDecoder('utf8'),
       stderrDecoder: new StringDecoder('utf8'),
       finalized: false,
@@ -620,7 +753,13 @@ export class ClaudeCliSessionPool {
     });
 
     return new Promise<TurnResult>((resolve, reject) => {
-      record.pendingTurn = { resolve, reject };
+      record.pendingTurn = {
+        resolve,
+        reject,
+        turnStartedAt: this.now(),
+        turnEvents: [],
+        turnEventBytes: 0,
+      };
       const line = encodeNdjsonLine(buildUserTurnInput(prompt));
       record.process.stdin?.write(line);
     });
@@ -741,8 +880,64 @@ export class ClaudeCliSessionPool {
 
     const event = result.event as StreamJsonEvent;
     record.retainedEvents.push(event);
-    if (isResultEvent(event) && record.pendingTurn !== undefined) {
-      const pending = record.pendingTurn;
+
+    if (isSystemInitEvent(event) && record.initReceivedAt === undefined) {
+      record.initReceivedAt = this.now();
+    }
+
+    const pending = record.pendingTurn;
+    if (pending === undefined) return;
+
+    // system/init belongs to the SESSION (one per process lifetime), not to
+    // any single turn — TurnResult.turnEvents deliberately excludes it (see
+    // its doc comment), so it is never appended to `pending.turnEvents`.
+    if (isSystemInitEvent(event)) return;
+
+    if (
+      isAssistantEvent(event) &&
+      pending.firstAssistantEventAt === undefined
+    ) {
+      pending.firstAssistantEventAt = this.now();
+    }
+
+    pending.turnEvents.push(event);
+    // Buffer.byteLength (not `.length`, which counts UTF-16 code units) —
+    // the option/field are named *Bytes and multibyte content would
+    // otherwise under-count against the documented byte guard.
+    pending.turnEventBytes += Buffer.byteLength(result.raw, 'utf8');
+    if (
+      pending.turnEvents.length > this.maxTurnEvents ||
+      pending.turnEventBytes > this.maxTurnEventBytes
+    ) {
+      this.failPendingTurn(
+        record,
+        new ClaudeCliSessionError(
+          `turn event buffer overflow on conversation "${record.conversationId}": ` +
+            `${pending.turnEvents.length} events / ${pending.turnEventBytes} bytes ` +
+            `(max ${this.maxTurnEvents} events / ${this.maxTurnEventBytes} bytes) — ` +
+            `failing visibly rather than silently dropping early events`,
+          'protocol_error',
+          { stderrTail: record.stderrTail },
+        ),
+      );
+      return;
+    }
+
+    if (isResultEvent(event)) {
+      const violations = validateTurnEventSequence(pending.turnEvents);
+      if (violations.length > 0) {
+        this.failPendingTurn(
+          record,
+          new ClaudeCliSessionError(
+            `protocol violation on conversation "${record.conversationId}": ` +
+              violations.map((v) => `${v.kind}: ${v.detail}`).join('; '),
+            'protocol_error',
+            { stderrTail: record.stderrTail },
+          ),
+        );
+        return;
+      }
+
       record.pendingTurn = undefined;
       record.state = 'idle';
       this.armIdleTimer(record);
@@ -752,9 +947,23 @@ export class ClaudeCliSessionPool {
         pid: record.pid,
         timestamp: this.now(),
       });
+      const completedAt = this.now();
       pending.resolve({
         result: event,
         events: record.retainedEvents.toArray(),
+        turnEvents: pending.turnEvents,
+        timing: {
+          ...(record.initReceivedAt !== undefined
+            ? { spawnToInitMs: record.initReceivedAt - record.spawnedAt }
+            : {}),
+          ...(pending.firstAssistantEventAt !== undefined
+            ? {
+                spawnToFirstAssistantMs:
+                  pending.firstAssistantEventAt - record.spawnedAt,
+              }
+            : {}),
+          totalTurnMs: completedAt - pending.turnStartedAt,
+        },
         pid: record.pid,
       });
     }

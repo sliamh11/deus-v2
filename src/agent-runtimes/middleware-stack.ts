@@ -354,7 +354,7 @@ export function selectWardenBehaviors(
  * lifetime of that middleware instance — never re-queried per protected
  * call.
  */
-function resolveWardenRepoRoot(wardenCwd: string): string {
+export function resolveWardenRepoRoot(wardenCwd: string): string {
   try {
     const commonGitDir = execFileSync(
       'git',
@@ -425,7 +425,7 @@ export function probeWardenGateIntegration(
  *  no-op path — plus a third, TypeScript-side-only outcome for anything that
  *  doesn't fit that two-outcome contract (subprocess failure, malformed
  *  stdout, or protocol drift), which fails closed exactly like a real deny. */
-type WardenGateOutcome =
+export type WardenGateOutcome =
   | { readonly kind: 'allow' }
   | { readonly kind: 'deny'; readonly reason: string }
   | { readonly kind: 'error' };
@@ -471,7 +471,13 @@ function extractDenyReason(parsed: unknown): string | undefined {
  * closed, never a silent allow. A single-settlement guard means a stdin
  * error and a callback error can never both resolve this promise.
  */
-function runWardenBehavior(
+/**
+ * Exported (LIA-454 EP-002 step 7) so `mcp-tool-gate.ts` can invoke the SAME
+ * real Python gate runner the LangChain `wardens` middleware below does —
+ * one shared implementation, not a duplicated re-shell-out, for both the
+ * LangChain and MCP-tool-handler enforcement seams.
+ */
+export function runWardenBehavior(
   behavior: string,
   event: { cwd: string; tool_name: string; tool_input: unknown },
   repoRoot: string,
@@ -553,7 +559,7 @@ function runWardenBehavior(
  *  patch contents, and the attempted shell command. The layer-wide
  *  `wardens: false` toggle is the explicit operational recovery switch;
  *  this message must never invent an implicit bypass. */
-function fallbackRevisedMessage(behavior: string): string {
+export function fallbackRevisedMessage(behavior: string): string {
   return (
     `[${behavior}] REVISE: the warden gate could not be evaluated; the ` +
     `protected action was not executed. Restore the gate runner and retry.`

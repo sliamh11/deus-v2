@@ -148,6 +148,64 @@ export function processExists(pid: number): boolean {
   }
 }
 
+/**
+ * Result of a process-identity query used to distinguish a still-live
+ * process from a PID-reuse impersonator (a new, unrelated process that
+ * happens to have been assigned the same PID after the original exited).
+ * `unverifiable` is returned on platforms where the underlying query has
+ * no equivalent — callers MUST treat that as "cannot confirm identity",
+ * never as a pass.
+ */
+export type ProcessIdentityResult =
+  | { status: 'found'; value: string }
+  | { status: 'not_found' }
+  | { status: 'unverifiable' };
+
+/**
+ * Query a process's start-time fingerprint (POSIX `ps -o lstart=`).
+ * Combined with the PID, this is stable for the process's whole lifetime
+ * and changes on PID reuse — the standard "pid + start time" identity
+ * fingerprint used by lock managers that can't rely on the PID alone.
+ * Returns `unverifiable` on Windows (no equivalent query wired here).
+ */
+export function getProcessStartIdentity(pid: number): ProcessIdentityResult {
+  if (IS_WINDOWS) return { status: 'unverifiable' };
+  try {
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString('utf8')
+      .trim();
+    if (!out) return { status: 'not_found' };
+    return { status: 'found', value: out };
+  } catch {
+    return { status: 'not_found' };
+  }
+}
+
+/**
+ * Query a process's full command line (POSIX `ps -o args=`). Used as a
+ * secondary identity check — a PID-reuse impersonator that happens to
+ * share the recorded start-time granularity (rare, but `lstart` is only
+ * second-precision) is still very unlikely to share the exact command
+ * line of a `claude` CLI subprocess invocation.
+ * Returns `unverifiable` on Windows (no equivalent query wired here).
+ */
+export function getProcessCommandLine(pid: number): ProcessIdentityResult {
+  if (IS_WINDOWS) return { status: 'unverifiable' };
+  try {
+    const out = execFileSync('ps', ['-o', 'args=', '-p', String(pid)], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString('utf8')
+      .trim();
+    if (!out) return { status: 'not_found' };
+    return { status: 'found', value: out };
+  } catch {
+    return { status: 'not_found' };
+  }
+}
+
 // ── Utilities ──────────────────────────────────────────────────────────────
 
 /** Platform-appropriate startup hint for building the container image. */

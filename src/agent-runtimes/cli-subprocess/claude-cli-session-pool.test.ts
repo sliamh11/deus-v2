@@ -272,6 +272,61 @@ describe('buildClaudeCliArgs', () => {
     });
     expect(args.slice(-2)).toEqual(['--model', 'claude-sonnet-5']);
   });
+
+  it('LIA-454 EP-002 step 11: omits --append-system-prompt-file when not supplied (default-unchanged)', () => {
+    const args = buildClaudeCliArgs({
+      mcpConfigPath: '/scratch/mcp-config.json',
+      allowedTool: 'mcp__deus_lia449__check_permission',
+      model: 'claude-sonnet-5',
+    });
+    expect(args).not.toContain('--append-system-prompt-file');
+  });
+
+  it('LIA-454 EP-002 step 11: appends --append-system-prompt-file <path> as the last two args when supplied, preserving every existing arg exactly', () => {
+    const withoutHistory = buildClaudeCliArgs({
+      mcpConfigPath: '/scratch/mcp-config.json',
+      allowedTool: 'mcp__deus_lia449__check_permission',
+      model: 'claude-sonnet-5',
+    });
+    const withHistory = buildClaudeCliArgs({
+      mcpConfigPath: '/scratch/mcp-config.json',
+      allowedTool: 'mcp__deus_lia449__check_permission',
+      model: 'claude-sonnet-5',
+      appendSystemPromptFile: '/scratch/history.txt',
+    });
+    expect(withHistory.slice(-2)).toEqual([
+      '--append-system-prompt-file',
+      '/scratch/history.txt',
+    ]);
+    expect(withHistory.slice(0, -2)).toEqual(withoutHistory);
+  });
+
+  it('LIA-454 EP-002 step 6: omits --mcp-config/--strict-mcp-config/--allowedTools entirely in no-tools mode (no mcpConfigPath)', () => {
+    const args = buildClaudeCliArgs({ model: 'claude-sonnet-5' });
+    expect(args).not.toContain('--mcp-config');
+    expect(args).not.toContain('--strict-mcp-config');
+    expect(args).not.toContain('--allowedTools');
+    // --tools '' still fires unconditionally — a no-tools conversation is
+    // genuinely tool-free, not merely MCP-server-free.
+    expect(args).toEqual([
+      '--print',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--setting-sources',
+      '',
+      '--no-session-persistence',
+      '--disable-slash-commands',
+      '--tools',
+      '',
+      '--permission-mode',
+      'dontAsk',
+      '--model',
+      'claude-sonnet-5',
+    ]);
+  });
 });
 
 // ── Checkpoint 2: spawn + single-turn round-trip ─────────────────────────
@@ -455,6 +510,237 @@ describe('ClaudeCliSessionPool: spawn + single-turn round-trip', () => {
     await expect(pool.sendTurn('nope', 'hi')).rejects.toMatchObject({
       code: 'not_found',
     });
+  });
+});
+
+// ── EP-002 step 3: TurnResult.turnEvents / timing / overflow / sequence
+//    validation (LIA-454 parent-loop wiring) ─────────────────────────────
+
+function assistantToolUseLine(toolUseId: string): string {
+  return (
+    JSON.stringify({
+      type: 'assistant',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: toolUseId,
+            name: 'web_search',
+            input: { query: 'x' },
+          },
+        ],
+      },
+    }) + '\n'
+  );
+}
+
+function toolResultLine(toolUseId: string): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: [{ type: 'text', text: 'result text' }],
+          },
+        ],
+      },
+    }) + '\n'
+  );
+}
+
+function fakeClock(startAt = 1000): {
+  now: () => number;
+  advance: (ms: number) => void;
+} {
+  let current = startAt;
+  return { now: () => current, advance: (ms) => (current += ms) };
+}
+
+describe('ClaudeCliSessionPool: TurnResult.turnEvents / timing', () => {
+  it("turnEvents excludes system/init but includes this turn's assistant/user/result events", async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    child.emitStdout(SYSTEM_INIT_LINE);
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(assistantToolUseLine('tc-1'));
+    child.emitStdout(toolResultLine('tc-1'));
+    child.emitStdout(resultLine('ok'));
+    const resolved = await turnPromise;
+
+    expect(resolved.turnEvents.some((e) => e.type === 'system')).toBe(false);
+    expect(resolved.turnEvents.map((e) => e.type)).toEqual([
+      'assistant',
+      'user',
+      'result',
+    ]);
+    // The wider session-level `events` log still includes init (unchanged
+    // behavior — see the pre-existing "TurnResult.events includes the
+    // session system/init event" test above).
+    expect(resolved.events.some((e) => e.type === 'system')).toBe(true);
+  });
+
+  it('computes spawnToInitMs, spawnToFirstAssistantMs, and totalTurnMs from the injected clock', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const clock = fakeClock();
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+      now: clock.now,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a')); // spawnedAt = 1000
+    clock.advance(50);
+    child.emitStdout(SYSTEM_INIT_LINE); // initReceivedAt = 1050 -> spawnToInitMs = 50
+    clock.advance(10);
+    const turnPromise = pool.sendTurn('conv-a', 'hi'); // turnStartedAt = 1060
+    clock.advance(200);
+    child.emitStdout(assistantToolUseLine('tc-1')); // firstAssistantEventAt = 1260 -> spawnToFirstAssistantMs = 260
+    child.emitStdout(toolResultLine('tc-1'));
+    clock.advance(30);
+    child.emitStdout(resultLine('ok')); // resolved at 1290 -> totalTurnMs = 1290 - 1060 = 230
+    const resolved = await turnPromise;
+
+    expect(resolved.timing.spawnToInitMs).toBe(50);
+    expect(resolved.timing.spawnToFirstAssistantMs).toBe(260);
+    expect(resolved.timing.totalTurnMs).toBe(230);
+  });
+
+  it('omits spawnToInitMs/spawnToFirstAssistantMs when neither was observed before the turn resolved, never fabricating a value', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    // No system/init line emitted before the turn resolves (unusual but
+    // must not crash or fabricate a timing value).
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(resultLine('ok'));
+    const resolved = await turnPromise;
+
+    expect(resolved.timing.spawnToInitMs).toBeUndefined();
+    expect(resolved.timing.spawnToFirstAssistantMs).toBeUndefined();
+    expect(typeof resolved.timing.totalTurnMs).toBe('number');
+  });
+});
+
+describe('ClaudeCliSessionPool: turn event buffer overflow', () => {
+  it('fails the turn with protocol_error once maxTurnEvents is exceeded, rather than silently truncating', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+      maxTurnEvents: 2,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(assistantToolUseLine('tc-1'));
+    child.emitStdout(toolResultLine('tc-1'));
+    // A third event (the result itself) exceeds maxTurnEvents=2.
+    child.emitStdout(resultLine('ok'));
+    await expect(turnPromise).rejects.toMatchObject({ code: 'protocol_error' });
+  });
+
+  it('fails the turn with protocol_error once maxTurnEventBytes is exceeded', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+      maxTurnEventBytes: 10, // far smaller than one real event line
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(assistantToolUseLine('tc-1'));
+    await expect(turnPromise).rejects.toMatchObject({ code: 'protocol_error' });
+  });
+});
+
+describe('ClaudeCliSessionPool: turn protocol-violation rejection', () => {
+  it('fails the turn with protocol_error on an orphan tool_result (no matching tool_use this turn)', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(toolResultLine('never-emitted-tool-use-id'));
+    child.emitStdout(resultLine('ok'));
+    await expect(turnPromise).rejects.toMatchObject({ code: 'protocol_error' });
+  });
+
+  it('fails the turn with protocol_error on a duplicate tool_use id within the same turn', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(assistantToolUseLine('tc-dup'));
+    child.emitStdout(assistantToolUseLine('tc-dup'));
+    child.emitStdout(toolResultLine('tc-dup'));
+    child.emitStdout(resultLine('ok'));
+    await expect(turnPromise).rejects.toMatchObject({ code: 'protocol_error' });
+  });
+
+  it('a clean tool_use/tool_result pairing resolves normally', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(assistantToolUseLine('tc-1'));
+    child.emitStdout(toolResultLine('tc-1'));
+    child.emitStdout(resultLine('ok'));
+    const resolved = await turnPromise;
+    expect(resolved.result.result).toBe('ok');
   });
 });
 
@@ -914,6 +1200,69 @@ describe('ClaudeCliSessionPool: createConversation threads model + mcpServerEnv 
     expect(written.mcpServers.deus_lia449.env).toEqual({
       DEUS_NESTED_DISPATCH_CONTEXT: '{"permissionProfile":"default"}',
     });
+  });
+});
+
+describe('ClaudeCliSessionPool: no-tools conversation mode (LIA-454 EP-002 step 6)', () => {
+  it('spawns with no --mcp-config when mcpServerName is omitted, and still creates scratchDir', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn, calls } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    const noToolsScratchDir = path.join(scratchDir, 'summary-conv');
+    await pool.createConversation('summary-conv', {
+      scratchDir: noToolsScratchDir,
+      repoRoot,
+      model: 'claude-sonnet-5',
+    });
+    expect(calls[0].args).not.toContain('--mcp-config');
+    expect(calls[0].args).not.toContain('--allowedTools');
+    expect(fs.existsSync(noToolsScratchDir)).toBe(true);
+  });
+
+  it('throws rather than silently spawning when mcpServerName is given without mcpServerScriptPath/allowedTool', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await expect(
+      pool.createConversation('conv-a', {
+        scratchDir: path.join(scratchDir, 'bad'),
+        repoRoot,
+        mcpServerName: 'deus_partial',
+        // mcpServerScriptPath/allowedTool deliberately omitted
+      }),
+    ).rejects.toMatchObject({ code: 'spawn_error' });
+  });
+
+  it('throws for the OTHER partial combination too — allowedTool alone, with no mcpServerName (code-review: the original guard only checked one direction)', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await expect(
+      pool.createConversation('conv-a', {
+        scratchDir: path.join(scratchDir, 'bad2'),
+        repoRoot,
+        allowedTool: 'mcp__deus_lia449__check_permission',
+        // mcpServerName/mcpServerScriptPath deliberately omitted
+      }),
+    ).rejects.toMatchObject({ code: 'spawn_error' });
   });
 });
 
