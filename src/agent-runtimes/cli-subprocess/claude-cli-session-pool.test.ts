@@ -272,6 +272,33 @@ describe('buildClaudeCliArgs', () => {
     });
     expect(args.slice(-2)).toEqual(['--model', 'claude-sonnet-5']);
   });
+
+  it('LIA-454 EP-002 step 6: omits --mcp-config/--strict-mcp-config/--allowedTools entirely in no-tools mode (no mcpConfigPath)', () => {
+    const args = buildClaudeCliArgs({ model: 'claude-sonnet-5' });
+    expect(args).not.toContain('--mcp-config');
+    expect(args).not.toContain('--strict-mcp-config');
+    expect(args).not.toContain('--allowedTools');
+    // --tools '' still fires unconditionally — a no-tools conversation is
+    // genuinely tool-free, not merely MCP-server-free.
+    expect(args).toEqual([
+      '--print',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--setting-sources',
+      '',
+      '--no-session-persistence',
+      '--disable-slash-commands',
+      '--tools',
+      '',
+      '--permission-mode',
+      'dontAsk',
+      '--model',
+      'claude-sonnet-5',
+    ]);
+  });
 });
 
 // ── Checkpoint 2: spawn + single-turn round-trip ─────────────────────────
@@ -1145,6 +1172,69 @@ describe('ClaudeCliSessionPool: createConversation threads model + mcpServerEnv 
     expect(written.mcpServers.deus_lia449.env).toEqual({
       DEUS_NESTED_DISPATCH_CONTEXT: '{"permissionProfile":"default"}',
     });
+  });
+});
+
+describe('ClaudeCliSessionPool: no-tools conversation mode (LIA-454 EP-002 step 6)', () => {
+  it('spawns with no --mcp-config when mcpServerName is omitted, and still creates scratchDir', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn, calls } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    const noToolsScratchDir = path.join(scratchDir, 'summary-conv');
+    await pool.createConversation('summary-conv', {
+      scratchDir: noToolsScratchDir,
+      repoRoot,
+      model: 'claude-sonnet-5',
+    });
+    expect(calls[0].args).not.toContain('--mcp-config');
+    expect(calls[0].args).not.toContain('--allowedTools');
+    expect(fs.existsSync(noToolsScratchDir)).toBe(true);
+  });
+
+  it('throws rather than silently spawning when mcpServerName is given without mcpServerScriptPath/allowedTool', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await expect(
+      pool.createConversation('conv-a', {
+        scratchDir: path.join(scratchDir, 'bad'),
+        repoRoot,
+        mcpServerName: 'deus_partial',
+        // mcpServerScriptPath/allowedTool deliberately omitted
+      }),
+    ).rejects.toMatchObject({ code: 'spawn_error' });
+  });
+
+  it('throws for the OTHER partial combination too — allowedTool alone, with no mcpServerName (code-review: the original guard only checked one direction)', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await expect(
+      pool.createConversation('conv-a', {
+        scratchDir: path.join(scratchDir, 'bad2'),
+        repoRoot,
+        allowedTool: 'mcp__deus_lia449__check_permission',
+        // mcpServerName/mcpServerScriptPath deliberately omitted
+      }),
+    ).rejects.toMatchObject({ code: 'spawn_error' });
   });
 });
 

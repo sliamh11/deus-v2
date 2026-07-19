@@ -191,8 +191,12 @@ export function writeMcpScratchConfig(
 // ── CLI argument construction ─
 
 export interface ClaudeCliArgsOptions {
-  mcpConfigPath: string;
-  allowedTool: string;
+  /** Omitted entirely (along with `allowedTool`) for a NO-TOOLS conversation
+   *  (LIA-454 EP-002 step 6: the CLI-backed compaction summarizer) — no MCP
+   *  server exists to connect to, so `--mcp-config`/`--strict-mcp-config`/
+   *  `--allowedTools` are all omitted rather than pointed at a fake server. */
+  mcpConfigPath?: string;
+  allowedTool?: string;
   permissionMode?: string;
   /** Model id passed via `--model`. Omitted => the CLI's own default model
    *  (unchanged behavior — every pre-existing caller that doesn't pass this
@@ -205,7 +209,10 @@ export interface ClaudeCliArgsOptions {
  * before relying on them (the committed ADR (`docs/decisions/deus-native-cli-subprocess-mcp-seam.md`) "CLI flag
  * verification"). `--print` is required for both stream-json formats;
  * persistence across turns comes from leaving stdin open after a `result`,
- * not from omitting `--print`.
+ * not from omitting `--print`. `--tools ''` is unconditional (disables ALL
+ * built-in tools regardless of MCP-server presence) — it is what makes a
+ * no-`mcpConfigPath` conversation genuinely tool-free, not merely
+ * MCP-server-free.
  */
 export function buildClaudeCliArgs(options: ClaudeCliArgsOptions): string[] {
   return [
@@ -215,17 +222,18 @@ export function buildClaudeCliArgs(options: ClaudeCliArgsOptions): string[] {
     '--output-format',
     'stream-json',
     '--verbose',
-    '--mcp-config',
-    options.mcpConfigPath,
-    '--strict-mcp-config',
+    ...(options.mcpConfigPath !== undefined
+      ? ['--mcp-config', options.mcpConfigPath, '--strict-mcp-config']
+      : []),
     '--setting-sources',
     '',
     '--no-session-persistence',
     '--disable-slash-commands',
     '--tools',
     '',
-    '--allowedTools',
-    options.allowedTool,
+    ...(options.allowedTool !== undefined
+      ? ['--allowedTools', options.allowedTool]
+      : []),
     '--permission-mode',
     options.permissionMode ?? 'dontAsk',
     ...(options.model !== undefined ? ['--model', options.model] : []),
@@ -396,18 +404,24 @@ export interface TurnResult {
 export interface CreateConversationOptions {
   /** Isolated scratch working directory for this one conversation's process. */
   scratchDir: string;
-  mcpServerName: string;
-  mcpServerScriptPath: string;
+  /** Omitted entirely (along with `mcpServerScriptPath`/`allowedTool`) for a
+   *  NO-TOOLS conversation (LIA-454 EP-002 step 6: the CLI-backed compaction
+   *  summarizer) — no MCP server is ever spawned or configured, matching
+   *  `buildClaudeCliArgs`'s own no-`mcpConfigPath` behavior. `repoRoot` is
+   *  still accepted but goes unused (only needed to resolve the tsx loader
+   *  for an MCP server that, in this mode, does not exist). */
+  mcpServerName?: string;
+  mcpServerScriptPath?: string;
   /** Repo root, used only to resolve the tsx loader (never the scratch cwd). */
   repoRoot: string;
-  allowedTool: string;
+  allowedTool?: string;
   permissionMode?: string;
   /** Model id passed to `buildClaudeCliArgs` as `--model`. Omitted => the
    *  CLI's own default model, unchanged from today. */
   model?: string;
   /** Extra environment variables for the spawned MCP server subprocess (see
    *  `McpScratchConfigOptions.serverEnv`). Omitted => no extra env, unchanged
-   *  from today's behavior. */
+   *  from today's behavior. Meaningless (and ignored) in no-tools mode. */
   mcpServerEnv?: Record<string, string>;
 }
 
@@ -569,19 +583,55 @@ export class ClaudeCliSessionPool {
 
     const env = buildChildEnv();
     assertNoAmbiguousAuthOverride(env);
-    const mcpConfig = buildMcpScratchConfig({
-      serverName: createOptions.mcpServerName,
-      serverScriptPath: createOptions.mcpServerScriptPath,
-      repoRoot: createOptions.repoRoot,
-      serverEnv: createOptions.mcpServerEnv,
-    });
-    const mcpConfigPath = writeMcpScratchConfig(
-      createOptions.scratchDir,
-      mcpConfig,
-    );
+
+    // No-tools mode (LIA-454 EP-002 step 6): no `mcpServerName` means no MCP
+    // server is configured at all, matching `buildClaudeCliArgs`'s own
+    // no-`mcpConfigPath` behavior — `writeMcpScratchConfig` (which also
+    // creates `scratchDir` as a side effect) is skipped entirely, so the
+    // directory must still be created explicitly here.
+    let mcpConfigPath: string | undefined;
+    // mcpServerName/mcpServerScriptPath/allowedTool are required TOGETHER —
+    // any partial combination (code-review finding: the original guard only
+    // checked the mcpServerName-present direction, silently letting e.g.
+    // `allowedTool` alone through to `buildClaudeCliArgs` as a nonsensical
+    // "--allowedTools with no --mcp-config" spawn) fails visibly instead.
+    const mcpFieldsProvided = [
+      createOptions.mcpServerName !== undefined,
+      createOptions.mcpServerScriptPath !== undefined,
+      createOptions.allowedTool !== undefined,
+    ].filter(Boolean).length;
+    if (mcpFieldsProvided !== 0 && mcpFieldsProvided !== 3) {
+      throw new ClaudeCliSessionError(
+        'createConversation: mcpServerName/mcpServerScriptPath/allowedTool ' +
+          'are required together — all three (or none, for a no-tools ' +
+          'conversation) must be provided',
+        'spawn_error',
+      );
+    }
+    if (
+      createOptions.mcpServerName !== undefined &&
+      createOptions.mcpServerScriptPath !== undefined &&
+      createOptions.allowedTool !== undefined
+    ) {
+      const mcpConfig = buildMcpScratchConfig({
+        serverName: createOptions.mcpServerName,
+        serverScriptPath: createOptions.mcpServerScriptPath,
+        repoRoot: createOptions.repoRoot,
+        serverEnv: createOptions.mcpServerEnv,
+      });
+      mcpConfigPath = writeMcpScratchConfig(
+        createOptions.scratchDir,
+        mcpConfig,
+      );
+    } else {
+      fs.mkdirSync(createOptions.scratchDir, { recursive: true });
+    }
+
     const args = buildClaudeCliArgs({
-      mcpConfigPath,
-      allowedTool: createOptions.allowedTool,
+      ...(mcpConfigPath !== undefined ? { mcpConfigPath } : {}),
+      ...(createOptions.allowedTool !== undefined
+        ? { allowedTool: createOptions.allowedTool }
+        : {}),
       permissionMode: createOptions.permissionMode,
       model: createOptions.model,
     });
