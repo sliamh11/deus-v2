@@ -382,3 +382,169 @@ is sound end-to-end.
    call, so reusing them would have been a mismatched convention. This
    wasn't explicitly specified in the plan file and is called out here as a
    judgment call, not a plan violation.
+
+## Addendum (2026-07-20): `claude-cli-subprocess` leg — a fresh H1/LIA-433 re-run
+
+**Production-impact statement, up front**: this addendum documents a BENCHMARK re-run only. It
+does not change, gate, or unblock any production deploy decision by itself — the CLI-subprocess
+transport (LIA-454) is already live in this install independent of this benchmark's outcome. What
+this addendum DOES produce is fresh, real, mechanically-scored evidence toward the H1/LIA-433
+base-harness-migration GO/NO-GO criterion for the CLI-subprocess transport specifically. It does
+NOT resolve the 2026-07-15 NO-PASS-YET verdict in full — that verdict covered the raw-HTTP `claude`
+and `gpt` legs, both still unexecuted (unchanged since that run, both still blocked the same way).
+This addendum adds a genuinely new data point (a 3rd, different transport) to the same GO/NO-GO
+question, not a re-decision of the original two legs' insufficient-evidence finding.
+
+### Why a 4th leg, not a re-run of the existing 3
+
+`setUpClaudeLeg`/`setUpGptLeg` are still hardcoded to raw-HTTP clients
+(`buildProxyRoutedChatAnthropic`, `ChatOpenAI`) — unchanged since the original NO-PASS-YET run. A
+blind re-run would reproduce the identical 429s, testing nothing new. Today's session hardened a
+genuinely different transport (LIA-454's CLI-subprocess mechanism, via LIA-457/458/459/460 —
+compaction, memory-recall, lease observability, nested-dispatch usage propagation), which spawns
+the real `claude` CLI binary through real OAuth subscription auth instead of the blocked raw-HTTP
+credential-proxy path. A 4th `claude-cli-subprocess` leg was added (PR #55) — a new
+benchmark-only MCP server (`lia400-cli-subprocess-benchmark-mcp-server.ts`) exposing the same 6
+chains' tools, driven through `ClaudeCliSessionPool` (the same class production uses) — reusing the
+existing scoring/kill-switch-rubric pipeline unchanged. Full design rationale: PR #55's description
+and the plan history in that PR's review thread.
+
+### A real scoring bug found and fixed before any run counted as evidence
+
+The first live run (this session, pre-fix) showed the CLI-subprocess leg scoring FAIL on every
+chain — but inspecting the raw tool sequences showed several cells where the model correctly called
+the right tool(s) in the right order (e.g. `[mcp__lia400_bench_tools__get_weather ->
+mcp__lia400_bench_tools__convert_temperature]` for `sequential_two_tool`) yet still scored FAIL.
+Root cause: the real `claude` CLI reports a tool_use block's `name` as the fully qualified
+`mcp__<serverName>__<toolName>` string, not the bare name `expectedToolSequence` uses —
+`extractCliToolSequence` was comparing the qualified name directly against the bare one, so
+`sequencesEqual` never matched regardless of correctness. Fixed via a `stripMcpToolPrefix` helper
+(PR follow-up, same-day), with a new regression test using the real qualified-name shape. **No run
+before this fix landed counts as valid reliability evidence for this leg** — only counted post-fix.
+
+A second, unrelated, pre-existing environment gap was also hit and resolved: `packages/mcp-x`'s
+built `dist/` referenced an unresolvable workspace package (`@deus-ai/channel-core`) because
+`packages/mcp-channel-core` had never been installed+built in this checkout — a documented
+prerequisite (AC5 above) that had simply never been run here. Running it
+(`cd packages/mcp-channel-core && npm install && npm run build && cd ../mcp-x && npm install && npm
+run build`) resolved it for both legs identically; this is an environment-setup gap, not a code
+defect in either leg.
+
+### Real data: 4 post-fix runs, `--providers=ollama,claude-cli-subprocess`
+
+Four independent real, credentialed runs were executed after the scoring fix (one `claude-only`,
+three with both legs). Per-run grids (`PASS`/`FAIL`/`NOT-EXEC`):
+
+```
+Run 2 (mcp-x not yet locally built — mcp_get_status NOT-EXEC for both, real infra gap):
+chain                   ollama    claude-cli-subprocess
+single_tool_lookup      PASS      FAIL
+sequential_two_tool     PASS      PASS
+calculation_chain       PASS      PASS
+delegate_to_subagent    PASS      PASS
+error_recovery          PASS      FAIL
+mcp_get_status          NOT-EXEC  NOT-EXEC
+
+Run 3 (mcp-x built):
+chain                   ollama    claude-cli-subprocess
+single_tool_lookup      PASS      FAIL
+sequential_two_tool     PASS      FAIL
+calculation_chain       PASS      FAIL
+delegate_to_subagent    PASS      FAIL
+error_recovery          PASS      FAIL
+mcp_get_status          PASS      PASS
+
+Run 4 (claude-cli-subprocess only):
+chain                   claude-cli-subprocess
+single_tool_lookup      FAIL
+sequential_two_tool     PASS
+calculation_chain       FAIL
+delegate_to_subagent    PASS
+error_recovery          PASS
+mcp_get_status          FAIL
+
+Run 5:
+chain                   ollama    claude-cli-subprocess
+single_tool_lookup      PASS      PASS
+sequential_two_tool     PASS      FAIL
+calculation_chain       PASS      FAIL
+delegate_to_subagent    PASS      FAIL
+error_recovery          PASS      PASS
+mcp_get_status          PASS      PASS
+```
+
+**Aggregated per-chain tally, `claude-cli-subprocess`, real attempts only (excludes Run 2's
+infra-blocked `mcp_get_status` NOT-EXEC on both sides):**
+
+| chain | PASS / real attempts |
+| --- | --- |
+| single_tool_lookup | 1/4 |
+| sequential_two_tool | 2/4 |
+| calculation_chain | 1/4 |
+| delegate_to_subagent | 2/4 |
+| error_recovery | 2/4 |
+| mcp_get_status | 2/3 |
+| **total** | **10/23 (~43%)** |
+
+**`ollama` baseline, real attempts only: 17/17 (100%)** — ollama ran in Runs 2, 3, and 5 only (Run 4
+was `claude-cli-subprocess`-only); 5 real attempts in Run 2 (its `mcp_get_status` was the same
+infra-blocked NOT-EXEC excluded above) + 6 in Run 3 + 6 in Run 5 = 17, all PASS, no exceptions. This
+is the same clean signal the original 2026-07-15 run already established; included here only as the
+same-session comparison point.
+
+**Every chain passed with fully correct tool-call formatting and sequencing at least once**,
+including the multi-hop chains (`sequential_two_tool`, `calculation_chain`), the real nested
+CLI-to-CLI dispatch (`delegate_to_subagent` — a genuine second `claude` CLI conversation spawned and
+returning a coherent answer), and the real external MCP round-trip (`mcp_get_status`, hitting the
+same real `mcp-x` server as the Ollama leg). Tool results visibly reached the model and were
+correctly incorporated into final answers on every PASS. On FAIL cells, the model either stopped
+after narrating intent without calling the tool, or (on several cells) produced a response
+describing generic Claude-Code-like capabilities ("file/shell/editing tools", one explicitly
+mentioning PowerShell) unrelated to the actual restricted MCP-only tool set it was given — a
+plausible-sounding but fabricated explanation rather than an honest "no tool available" response.
+This is CONSISTENT with a real model behavior under an unusually bare, single-purpose MCP tool
+catalog (no built-in tools at all, per `--tools ''`) rather than a persistent wiring defect —
+`system/init` events captured during this same investigation confirmed the MCP server successfully
+connects and correctly lists all 8 intended tools when probed directly (a raw non-benchmark
+diagnostic call, `'ping'` prompt, showed `mcp_servers: [{name: "lia400_bench_tools", status:
+"connected"}]`). This rules out a PERSISTENT/ALWAYS-BROKEN wiring defect, but does not rule out an
+INTERMITTENT one coincident with specific FAIL cells — the diagnostic ping confirms the mechanism
+CAN connect correctly, not that it did on every FAIL cell in these 4 runs. Distinguishing "genuine
+model unreliability" from "occasional connection-timing flakiness" with confidence would need
+per-cell `system/init` capture added to the benchmark itself — not done here, flagged as a
+follow-up rather than asserted as resolved.
+
+### Applying the frozen kill-switch rubric literally, then flagging a judgment call beyond it
+
+The rubric defines exactly three outcomes for criterion 4 — PASS, FAIL, NO-PASS-YET — via two named
+criteria, quoted verbatim from the AC6 section above:
+
+- **Structural failure trigger — NOT met.** Requires an executed provider to show "never emitting a
+  valid tool_call on ANY chain, tool results never reaching the model, or the harness erroring
+  before the model." `claude-cli-subprocess` demonstrably does none of these — 10 real,
+  correctly-sequenced, correctly-marshaled tool-call successes spanning every chain type across 4
+  independent runs. This trigger does not fire.
+- **Pass bar — met.** "Valid tool_call formatting, correct sequencing on at least the simpler
+  chains, tool results visibly reaching the model" — demonstrated for every chain type at least
+  once, and the rubric's own text explicitly states "6/6 chains on 3/3 providers is explicitly not
+  required" for a pass, i.e. it does not set a success-rate threshold at all.
+
+**A strictly literal reading of the rubric's own two named criteria therefore yields PASS** — the
+rubric does not encode a reliability-rate bar, so it has no textual basis to withhold PASS over a
+~43% success rate on its own terms. **This literal PASS is not the whole story, and I am adding a
+judgment call beyond what the rubric's text covers, not deriving a different verdict FROM it**: a
+~43% real-attempt success rate with zero clean 6/6 runs across 4 independent attempts, next to
+Ollama's clean 100% baseline in the same runs, is a real, measured reliability gap the rubric simply
+wasn't written to weigh (it anticipated "occasional" imperfection, not near-coinflip reliability on
+several chains). Recommendation: treat criterion 4 as **PASS per the rubric's literal text, with an
+explicit, quantified reliability caveat (10/23, no clean run) that should be weighed by whoever makes
+the actual production-readiness call** — not silently absorbed into an unqualified GO, and not
+misrepresented as a rubric-derived FAIL or NO-PASS-YET either, since neither of those is what the
+rubric's own criteria actually produce here.
+
+**Confidence and what would raise it**: this addendum's ~43% figure rests on only 23 real
+chain-attempts across 4 runs — enough to establish "not structurally broken" and "meaningfully less
+reliable than Ollama" with confidence, but not enough to pin down a precise success rate with a
+tight confidence interval. A larger-N follow-up run (e.g. 10+ repetitions per chain) would sharpen
+this from "a real, qualitative reliability gap" to a specific, comparable number — filed as a
+follow-up rather than run here, given the real API cost of each repetition.

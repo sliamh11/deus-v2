@@ -594,6 +594,31 @@ describe('extractCliToolSequence (CLI-subprocess leg scoring adapter)', () => {
       'convert_temperature',
     ]);
   });
+
+  it('regression (real credentialed run, 2026-07-20): strips the mcp__<server>__ qualification prefix the real CLI actually reports, so the result is directly comparable to expectedToolSequence\'s bare names', () => {
+    const events: StreamJsonEvent[] = [
+      assistantEvent([
+        {
+          type: 'tool_use',
+          id: 't1',
+          name: 'mcp__lia400_bench_tools__get_weather',
+          input: {},
+        },
+      ]),
+      assistantEvent([
+        {
+          type: 'tool_use',
+          id: 't2',
+          name: 'mcp__lia400_bench_tools__convert_temperature',
+          input: {},
+        },
+      ]),
+    ];
+    expect(extractCliToolSequence(events)).toEqual([
+      'get_weather',
+      'convert_temperature',
+    ]);
+  });
 });
 
 describe('shared framework-agnostic tool handlers (direct invocation, reused by both the LangChain tool() wrappers and the CLI-subprocess benchmark MCP server)', () => {

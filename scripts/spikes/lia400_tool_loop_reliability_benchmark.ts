@@ -430,11 +430,25 @@ export function extractFinalAnswer(messages: BaseMessage[]): string {
   return stringifyContent(last.content);
 }
 
+// The real CLI reports a tool_use block's `name` as the fully qualified
+// `mcp__<serverName>__<toolName>` string, not the bare tool name — must be
+// stripped before comparing against `expectedToolSequence`'s bare names.
+const BENCH_MCP_TOOL_PREFIX = `mcp__${BENCH_MCP_SERVER_NAME}__`;
+
+function stripMcpToolPrefix(qualifiedName: string): string {
+  return qualifiedName.startsWith(BENCH_MCP_TOOL_PREFIX)
+    ? qualifiedName.slice(BENCH_MCP_TOOL_PREFIX.length)
+    : qualifiedName;
+}
+
 /** CLI-subprocess-leg equivalent of `extractToolSequence` — the CLI has no
  *  LangChain `BaseMessage[]`, only its own stream-json `turnEvents`. Reuses
  *  the same already-exported extraction helpers `checkpoint-translation.ts`
  *  relies on, so no new scoring logic is invented — just a different input
- *  shape feeding the SAME `sequencesEqual`/`cellStatus` used by every leg. */
+ *  shape feeding the SAME `sequencesEqual`/`cellStatus` used by every leg.
+ *  Strips the MCP qualification prefix (see `stripMcpToolPrefix`'s doc
+ *  comment) so the result is directly comparable to `expectedToolSequence`'s
+ *  bare tool names, exactly like the other 3 legs' `extractToolSequence`. */
 export function extractCliToolSequence(
   turnEvents: StreamJsonEvent[],
 ): string[] {
@@ -442,7 +456,7 @@ export function extractCliToolSequence(
   for (const event of turnEvents) {
     if (isAssistantEvent(event)) {
       for (const block of extractToolUseBlocks(event)) {
-        names.push(block.name);
+        names.push(stripMcpToolPrefix(block.name));
       }
     }
   }

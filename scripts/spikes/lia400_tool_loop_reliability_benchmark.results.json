@@ -1,184 +1,26 @@
 {
-  "generatedAt": "2026-07-18T00:25:33.505Z",
+  "generatedAt": "2026-07-20T10:27:55.845Z",
   "flags": {
     "smoke": false,
     "dry": false,
     "providers": [
-      "claude",
-      "gpt",
-      "ollama"
+      "ollama",
+      "claude-cli-subprocess"
     ]
   },
   "providerLegs": [
     {
-      "name": "claude",
-      "available": true,
-      "modelId": "claude via proxy (authMode=oauth)"
-    },
-    {
-      "name": "gpt",
-      "available": true,
-      "modelId": "gpt-4o"
-    },
-    {
       "name": "ollama",
       "available": true,
       "modelId": "gemma4:e2b"
+    },
+    {
+      "name": "claude-cli-subprocess",
+      "available": true,
+      "modelId": "claude-cli-subprocess (claude-sonnet-5)"
     }
   ],
   "results": [
-    {
-      "chainId": "single_tool_lookup",
-      "provider": "claude",
-      "expectedToolSequence": [
-        "lookup_fact"
-      ],
-      "succeeded": false,
-      "actualToolSequence": [],
-      "matched": false,
-      "error": "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Error\"},\"request_id\":\"req_011Cd8a2mx2yR77ycyESqxz5\"}\n\nTroubleshooting URL: https://docs.langchain.com/oss/javascript/langchain/errors/MODEL_RATE_LIMIT/\n",
-      "latencyMs": 2701,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)"
-    },
-    {
-      "chainId": "sequential_two_tool",
-      "provider": "claude",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "get_weather",
-        "convert_temperature"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "calculation_chain",
-      "provider": "claude",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "add",
-        "multiply"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "delegate_to_subagent",
-      "provider": "claude",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "delegate_to_subagent"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "error_recovery",
-      "provider": "claude",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "fetch_record",
-        "fetch_record"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "mcp_get_status",
-      "provider": "claude",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "get_status"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "single_tool_lookup",
-      "provider": "gpt",
-      "expectedToolSequence": [
-        "lookup_fact"
-      ],
-      "succeeded": false,
-      "actualToolSequence": [],
-      "matched": false,
-      "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.\n\nTroubleshooting URL: https://docs.langchain.com/oss/javascript/langchain/errors/MODEL_RATE_LIMIT/\n",
-      "latencyMs": 465,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)"
-    },
-    {
-      "chainId": "sequential_two_tool",
-      "provider": "gpt",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "get_weather",
-        "convert_temperature"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "calculation_chain",
-      "provider": "gpt",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "add",
-        "multiply"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "delegate_to_subagent",
-      "provider": "gpt",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "delegate_to_subagent"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "error_recovery",
-      "provider": "gpt",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "fetch_record",
-        "fetch_record"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
-    {
-      "chainId": "mcp_get_status",
-      "provider": "gpt",
-      "succeeded": false,
-      "actualToolSequence": [],
-      "expectedToolSequence": [
-        "get_status"
-      ],
-      "matched": false,
-      "notExecutedReason": "not executed due to persistent rate-limiting (still 429 after 2 runner-level retries on top of the SDK's internal retries)",
-      "latencyMs": 0
-    },
     {
       "chainId": "single_tool_lookup",
       "provider": "ollama",
@@ -190,8 +32,8 @@
         "lookup_fact"
       ],
       "matched": true,
-      "finalAnswer": "The aurora is caused by charged solar-wind particles colliding with gases in the upper atmosphere.",
-      "latencyMs": 4488
+      "finalAnswer": "Auroras are caused by charged solar-wind particles colliding with gases in the upper atmosphere.",
+      "latencyMs": 7104
     },
     {
       "chainId": "sequential_two_tool",
@@ -207,7 +49,7 @@
       ],
       "matched": true,
       "finalAnswer": "The current temperature in Reykjavik is 20 celsius.",
-      "latencyMs": 8577
+      "latencyMs": 8556
     },
     {
       "chainId": "calculation_chain",
@@ -223,7 +65,7 @@
       ],
       "matched": true,
       "finalAnswer": "The final product is 42.",
-      "latencyMs": 6589
+      "latencyMs": 6302
     },
     {
       "chainId": "delegate_to_subagent",
@@ -236,8 +78,8 @@
         "delegate_to_subagent"
       ],
       "matched": true,
-      "finalAnswer": "I apologize, but the subagent could not complete the request because it did not know *whose* favorite fruit it was supposed to find out.\n\nPlease provide the subject you are referring to so I can try to delegate the task again!",
-      "latencyMs": 8311
+      "finalAnswer": "I was unable to find the favorite fruit because you did not specify who \"it\" is. Please tell me what you would like me to find out the favorite fruit of.",
+      "latencyMs": 8577
     },
     {
       "chainId": "error_recovery",
@@ -253,7 +95,7 @@
       ],
       "matched": true,
       "finalAnswer": "The value of record \"r-17\" is \"blue-harbor\".",
-      "latencyMs": 7910
+      "latencyMs": 5424
     },
     {
       "chainId": "mcp_get_status",
@@ -266,8 +108,90 @@
         "get_status"
       ],
       "matched": true,
+      "finalAnswer": "X credentials are not currently configured.",
+      "latencyMs": 5980
+    },
+    {
+      "chainId": "single_tool_lookup",
+      "provider": "claude-cli-subprocess",
+      "expectedToolSequence": [
+        "lookup_fact"
+      ],
+      "succeeded": true,
+      "actualToolSequence": [
+        "lookup_fact"
+      ],
+      "matched": true,
+      "finalAnswer": "Auroras are caused by charged solar-wind particles colliding with gases in the upper atmosphere.",
+      "latencyMs": 4683
+    },
+    {
+      "chainId": "sequential_two_tool",
+      "provider": "claude-cli-subprocess",
+      "expectedToolSequence": [
+        "get_weather",
+        "convert_temperature"
+      ],
+      "succeeded": true,
+      "actualToolSequence": [],
+      "matched": false,
+      "finalAnswer": "I don't have access to `get_weather` or `convert_temperature` tools in this session — my available tools are limited to file/code operations (Read, Edit, Bash, etc.) and don't include a weather API. I can't look up live weather data or perform that conversion via tool call here.\n\nIf you tell me the Fahrenheit temperature, I can convert it to Celsius for you directly.",
+      "latencyMs": 5341
+    },
+    {
+      "chainId": "calculation_chain",
+      "provider": "claude-cli-subprocess",
+      "expectedToolSequence": [
+        "add",
+        "multiply"
+      ],
+      "succeeded": true,
+      "actualToolSequence": [],
+      "matched": false,
+      "finalAnswer": "I don't have access to dedicated \"add\" or \"multiply\" tools in this environment — my available tools are for file editing, search, and shell commands, not arithmetic operations. I can't fabricate tool calls that don't exist.\n\nIf you'd like, I can compute this via the shell (e.g., using `PowerShell`/`bc`) instead, or you can point me to where these add/multiply tools are defined if they should be available. How would you like to proceed?",
+      "latencyMs": 8147
+    },
+    {
+      "chainId": "delegate_to_subagent",
+      "provider": "claude-cli-subprocess",
+      "expectedToolSequence": [
+        "delegate_to_subagent"
+      ],
+      "succeeded": true,
+      "actualToolSequence": [],
+      "matched": false,
+      "finalAnswer": "I don't have a subagent/Task tool available in this environment to delegate to, and \"favorite fruit\" isn't something a coding subagent would meaningfully determine anyway — it'd just fabricate an answer. Let me know if you meant something else, like delegating an actual code task.",
+      "latencyMs": 7379
+    },
+    {
+      "chainId": "error_recovery",
+      "provider": "claude-cli-subprocess",
+      "expectedToolSequence": [
+        "fetch_record",
+        "fetch_record"
+      ],
+      "succeeded": true,
+      "actualToolSequence": [
+        "fetch_record",
+        "fetch_record"
+      ],
+      "matched": true,
+      "finalAnswer": "Record \"r-17\" fetched successfully — its value is **blue-harbor**.",
+      "latencyMs": 6805
+    },
+    {
+      "chainId": "mcp_get_status",
+      "provider": "claude-cli-subprocess",
+      "expectedToolSequence": [
+        "get_status"
+      ],
+      "succeeded": true,
+      "actualToolSequence": [
+        "get_status"
+      ],
+      "matched": true,
       "finalAnswer": "X credentials are not configured.",
-      "latencyMs": 7234
+      "latencyMs": 4775
     }
   ]
 }
