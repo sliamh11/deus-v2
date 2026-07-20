@@ -513,6 +513,11 @@ export interface ChainResult {
     toolsAtInit?: string[];
     spawnToInitMs?: number;
     spawnToFirstAssistantMs?: number;
+    /** LIA-461: mirrors `ClaudeCliSessionPool`'s own `TurnTiming` fields of
+     *  the same name — only present when `--waitForMcpReady` was requested
+     *  for this run. */
+    spawnToMcpReadyMs?: number;
+    mcpReadyTimedOut?: boolean;
   };
 }
 
@@ -614,6 +619,13 @@ export async function runChainAgainstCliSubprocess(
      *  never required for normal (non-diagnostic) chain runs. */
     sleep?: Sleep;
     preTurnDelayMs?: number;
+    /** LIA-461: alternative to `preTurnDelayMs` — passes straight through to
+     *  `pool.createConversation()`'s own opt-in adaptive MCP-ready wait
+     *  (marker-file based, not a flat delay). The CLI layer (`parseArgs`)
+     *  enforces this is mutually exclusive with `--preTurnDelayMs`; `main()`
+     *  passes `preTurnDelayMs: 0` here when this is set, so a run testing
+     *  this mechanism isn't also paying the flat-delay's latency tax. */
+    waitForMcpReady?: { timeoutMs: number; pollIntervalMs?: number };
   },
 ): Promise<ChainResult> {
   const started = Date.now();
@@ -643,6 +655,9 @@ export async function runChainAgainstCliSubprocess(
       allowedTool: allowedNames
         .map((name) => `mcp__${BENCH_MCP_SERVER_NAME}__${name}`)
         .join(','),
+      ...(deps.waitForMcpReady !== undefined
+        ? { waitForMcpReady: deps.waitForMcpReady }
+        : {}),
     });
     await (deps.sleep ?? defaultSleep)(preTurnDelayMs);
     const turnResult = await pool.sendTurn(conversationId, chain.seedPrompt);
@@ -667,15 +682,24 @@ export async function runChainAgainstCliSubprocess(
     // silently omitting cliMcpDiagnostics there would undocument the exact
     // cells that matter most.
     const initEvent = turnResult.events?.find(isSystemInitEvent);
+    // LIA-461: spawnToMcpReadyMs/mcpReadyTimedOut come from the pool's own
+    // marker-wait tracking (record.mcpReadyObservedAt/mcpReadyTimedOut),
+    // independent of whether a system/init event was ever observed — both
+    // branches below include them.
+    const mcpReadyFields = {
+      spawnToMcpReadyMs: turnResult.timing?.spawnToMcpReadyMs,
+      mcpReadyTimedOut: turnResult.timing?.mcpReadyTimedOut,
+    };
     const cliMcpDiagnostics =
       initEvent === undefined
-        ? { preTurnDelayMs }
+        ? { preTurnDelayMs, ...mcpReadyFields }
         : {
             mcpServers: initEvent.mcp_servers,
             toolsAtInit: initEvent.tools,
             spawnToInitMs: turnResult.timing?.spawnToInitMs,
             spawnToFirstAssistantMs: turnResult.timing?.spawnToFirstAssistantMs,
             preTurnDelayMs,
+            ...mcpReadyFields,
           };
     return {
       chainId: chain.id,
@@ -991,8 +1015,13 @@ export interface CliArgs {
   providers: ProviderName[];
   /** Diagnostic-only override for `runChainAgainstCliSubprocess`'s pre-turn delay experiment
    *  (2026-07-20 MCP-init-race investigation) — undefined => the implementation's own default
-   *  applies. See CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS. */
+   *  applies. See CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS. Mutually exclusive with
+   *  --waitForMcpReady (LIA-461) — parseArgs rejects both being set together. */
   preTurnDelayMs?: number;
+  /** LIA-461: alternative to preTurnDelayMs — exercises the pool's adaptive
+   *  marker-based MCP-ready wait instead of a flat delay. undefined => not
+   *  requested (the flat-delay path, with its own default, applies instead). */
+  waitForMcpReadyTimeoutMs?: number;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -1025,11 +1054,30 @@ export function parseArgs(argv: string[]): CliArgs {
         );
       }
       args.preTurnDelayMs = parsed;
+    } else if (raw.startsWith('--waitForMcpReady=')) {
+      const rawValue = raw.slice('--waitForMcpReady='.length);
+      const parsed = Number(rawValue);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error(
+          `invalid --waitForMcpReady value "${rawValue}" (expected a positive number)`,
+        );
+      }
+      args.waitForMcpReadyTimeoutMs = parsed;
     } else {
       throw new Error(
-        `unknown flag "${raw}" (expected --smoke, --dry, --providers=..., --preTurnDelayMs=...)`,
+        `unknown flag "${raw}" (expected --smoke, --dry, --providers=..., ` +
+          `--preTurnDelayMs=..., --waitForMcpReady=...)`,
       );
     }
+  }
+  if (
+    args.preTurnDelayMs !== undefined &&
+    args.waitForMcpReadyTimeoutMs !== undefined
+  ) {
+    throw new Error(
+      '--preTurnDelayMs and --waitForMcpReady are mutually exclusive — ' +
+        'pick one mechanism to test per run',
+    );
   }
   return args;
 }
@@ -1162,7 +1210,21 @@ export async function main(
                       conversationId,
                     ),
                   modelId: CLI_SUBPROCESS_MODEL_ID,
-                  preTurnDelayMs: args.preTurnDelayMs,
+                  // LIA-461: mutually exclusive (parseArgs already enforces
+                  // this) — when --waitForMcpReady is requested, force the
+                  // flat delay to 0 so this run tests the marker mechanism
+                  // alone, not delay+marker combined.
+                  preTurnDelayMs:
+                    args.waitForMcpReadyTimeoutMs !== undefined
+                      ? 0
+                      : args.preTurnDelayMs,
+                  ...(args.waitForMcpReadyTimeoutMs !== undefined
+                    ? {
+                        waitForMcpReady: {
+                          timeoutMs: args.waitForMcpReadyTimeoutMs,
+                        },
+                      }
+                    : {}),
                 },
                 { maxRetries: 2, backoffMs: 20_000 },
               )

@@ -18,6 +18,7 @@ import {
   type SessionLifecycleEvent,
   type SpawnFn,
 } from './claude-cli-session-pool.js';
+import { MCP_READY_MARKER_ENV_VAR } from './mcp-ready-marker.js';
 
 // ── Fakes ────────────────────────────────────────────────────────────────
 
@@ -645,6 +646,221 @@ describe('ClaudeCliSessionPool: TurnResult.turnEvents / timing', () => {
     expect(resolved.timing.spawnToInitMs).toBeUndefined();
     expect(resolved.timing.spawnToFirstAssistantMs).toBeUndefined();
     expect(typeof resolved.timing.totalTurnMs).toBe('number');
+  });
+});
+
+describe('ClaudeCliSessionPool: waitForMcpReady (LIA-461)', () => {
+  it('is a no-op when omitted -- unchanged behavior, no wait, no new timing fields', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    await pool.createConversation('conv-a', createOptionsFor('a'));
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(resultLine('ok'));
+    const resolved = await turnPromise;
+    expect(resolved.timing.spawnToMcpReadyMs).toBeUndefined();
+    expect(resolved.timing.mcpReadyTimedOut).toBeUndefined();
+  });
+
+  it('is ignored (not an error) when set without mcpServerName -- no-tools mode has nothing to wait for', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    const handle = await pool.createConversation('conv-a', {
+      scratchDir: path.join(scratchDir, 'a'),
+      repoRoot,
+      waitForMcpReady: { timeoutMs: 5000 },
+    });
+    expect(handle.conversationId).toBe('conv-a');
+  });
+
+  it("merges the marker-path env var into mcpServerEnv alongside the caller's own vars", async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    const options = createOptionsFor('a');
+    // The mcp-config.json is written synchronously, before the wait loop
+    // even starts -- a short timeout (no real MCP server writes the marker
+    // back in this test) is enough to resolve quickly via the timeout path
+    // without needing to wait out a long real delay; this test only cares
+    // about the written config file's contents, not the wait outcome.
+    await pool.createConversation('conv-a', {
+      ...options,
+      mcpServerEnv: { CUSTOM_VAR: 'x' },
+      waitForMcpReady: { timeoutMs: 20, pollIntervalMs: 10 },
+    });
+    const config = JSON.parse(
+      fs.readFileSync(path.join(options.scratchDir, 'mcp-config.json'), 'utf8'),
+    );
+    expect(config.mcpServers.deus_lia449.env).toEqual({
+      CUSTOM_VAR: 'x',
+      [MCP_READY_MARKER_ENV_VAR]: path.join(
+        options.scratchDir,
+        'mcp-ready.marker',
+      ),
+    });
+  });
+
+  it('clears a stale pre-existing marker before spawn -- a leftover from a prior reused scratchDir must not falsely signal readiness (code-review finding)', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    const options = createOptionsFor('a');
+    fs.mkdirSync(options.scratchDir, { recursive: true });
+    const markerPath = path.join(options.scratchDir, 'mcp-ready.marker');
+    fs.writeFileSync(markerPath, ''); // stale marker from a hypothetical prior launch
+    const promise = pool.createConversation('conv-a', {
+      ...options,
+      waitForMcpReady: { timeoutMs: 200, pollIntervalMs: 10 },
+    });
+    // If the stale marker were NOT cleared, this would resolve almost
+    // instantly (the marker "exists" from the moment createConversation is
+    // called) instead of genuinely waiting -- assert the file is gone by the
+    // time the wait loop starts, proving the pre-existing marker cannot
+    // falsely satisfy the check.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fs.existsSync(markerPath)).toBe(false);
+    // No real MCP server ever writes it back in this test -- times out.
+    const handle = await promise;
+    expect(handle.conversationId).toBe('conv-a');
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(resultLine('ok'));
+    const resolved = await turnPromise;
+    expect(resolved.timing.mcpReadyTimedOut).toBe(true);
+  });
+
+  it('resolves once the MCP server writes the marker after spawn, and records spawnToMcpReadyMs', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    const options = createOptionsFor('a');
+    const markerPath = path.join(options.scratchDir, 'mcp-ready.marker');
+    const promise = pool.createConversation('conv-a', {
+      ...options,
+      waitForMcpReady: { timeoutMs: 5000, pollIntervalMs: 10 },
+    });
+    // Simulate the real MCP server writing its marker shortly after spawn,
+    // once its own transport connects (see mcp-ready-marker.ts).
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    fs.mkdirSync(options.scratchDir, { recursive: true });
+    fs.writeFileSync(markerPath, '');
+    const handle = await promise;
+    expect(handle.conversationId).toBe('conv-a');
+    const turnPromise = pool.sendTurn('conv-a', 'hi');
+    child.emitStdout(resultLine('ok'));
+    const resolved = await turnPromise;
+    expect(typeof resolved.timing.spawnToMcpReadyMs).toBe('number');
+    expect(resolved.timing.mcpReadyTimedOut).toBeUndefined();
+  });
+
+  it('throws mcp_ready_wait_aborted when the MCP server subprocess crashes before signaling readiness (not a generic spawn_error)', async () => {
+    const child = new FakeChildProcess(1);
+    const { spawnFn } = createFakeSpawnFn([child]);
+    const pool = new ClaudeCliSessionPool({
+      maxProcesses: 1,
+      idleTimeoutMs: 60_000,
+      terminationGraceMs: 50,
+      onEvent: () => {},
+      spawnFn,
+    });
+    const promise = pool.createConversation('conv-a', {
+      ...createOptionsFor('a'),
+      waitForMcpReady: { timeoutMs: 5000, pollIntervalMs: 10 },
+    });
+    // Let the pool's own pre-existing immediate-spawn-error check (a single
+    // setImmediate tick) resolve first, so this exercises the NEW
+    // "crashed while waiting for the marker" path specifically -- not the
+    // pre-existing "crashed before even completing spawn" check, which would
+    // otherwise swallow this as a generic spawn_error instead.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    child.emitExit(1, null); // MCP server (and its parent CLI) crash before writing the marker
+    let caught: unknown;
+    try {
+      await promise;
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ClaudeCliSessionError);
+    expect((caught as ClaudeCliSessionError).code).toBe(
+      'mcp_ready_wait_aborted',
+    );
+    expect((caught as Error).message).toContain(
+      'exited before signaling readiness',
+    );
+  });
+
+  it('sets mcpReadyTimedOut and proceeds (does not throw) when the marker never appears within timeoutMs', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const child = new FakeChildProcess(1);
+      const { spawnFn } = createFakeSpawnFn([child]);
+      const clock = fakeClock();
+      const pool = new ClaudeCliSessionPool({
+        maxProcesses: 1,
+        idleTimeoutMs: 60_000,
+        terminationGraceMs: 50,
+        onEvent: () => {},
+        spawnFn,
+        now: clock.now,
+      });
+      const timeoutMs = 50;
+      const pollIntervalMs = 25;
+      const promise = pool.createConversation('conv-a', {
+        ...createOptionsFor('a'),
+        waitForMcpReady: { timeoutMs, pollIntervalMs },
+      });
+      // Combined-clock technique (this file's `now:` override moves only via
+      // `clock.advance`; the wait loop's real `this.sleep()` timer only
+      // resolves via `vi.advanceTimersByTimeAsync` -- neither pattern alone
+      // drives both mechanisms, so interleave them each tick until the
+      // loop's deadline check fires. Never writes the marker -- that's the
+      // scenario under test.
+      for (let i = 0; i < 5; i++) {
+        clock.advance(pollIntervalMs);
+        await vi.advanceTimersByTimeAsync(pollIntervalMs);
+      }
+      const handle = await promise;
+      expect(handle.conversationId).toBe('conv-a');
+      const turnPromise = pool.sendTurn('conv-a', 'hi');
+      child.emitStdout(resultLine('ok'));
+      const resolved = await turnPromise;
+      expect(resolved.timing.mcpReadyTimedOut).toBe(true);
+      expect(resolved.timing.spawnToMcpReadyMs).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
