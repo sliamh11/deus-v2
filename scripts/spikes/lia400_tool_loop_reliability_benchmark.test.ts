@@ -13,20 +13,72 @@ import {
   CHAINS,
   OLLAMA_BENCH_MODEL_ID,
   PROVIDERS,
+  add,
   cellStatus,
+  convertTemperature,
+  createFlakyFetchRecord,
+  extractCliToolSequence,
   extractFinalAnswer,
   extractToolSequence,
   formatSummaryTable,
+  getWeather,
   isOllamaModelAvailable,
   isRateLimitError,
+  lookupFact,
   makeFlakyFetchRecordTool,
+  multiply,
   notExecutedResult,
   parseArgs,
+  runChainAgainstCliSubprocess,
   runChainAgainstProvider,
   runChainWithRetry,
+  runCliSubprocessChainWithRetry,
   sequencesEqual,
+  setUpProviderLeg,
   type ChainResult,
 } from './lia400_tool_loop_reliability_benchmark.js';
+import { createLia400BenchToolsMcpServer } from './lia400-cli-subprocess-benchmark-mcp-server.js';
+import type { ClaudeCliSessionPool } from '../../src/agent-runtimes/cli-subprocess/claude-cli-session-pool.js';
+import type { StreamJsonEvent } from '../../src/agent-runtimes/cli-subprocess/stream-json-protocol.js';
+
+/** Same fake-pool pattern `cli-subprocess-nested-dispatcher.test.ts` already
+ *  established — a plain object cast through `unknown`, since
+ *  `ClaudeCliSessionPool` is a class with private fields (nominal typing). */
+function fakeCliPool(overrides: {
+  sendTurn?: (
+    id: string,
+    prompt: string,
+  ) => Promise<{
+    result: { is_error: boolean; result?: string };
+    turnEvents: StreamJsonEvent[];
+  }>;
+}): { pool: ClaudeCliSessionPool; terminateCalls: string[] } {
+  const terminateCalls: string[] = [];
+  const pool = {
+    createConversation: vi.fn(async (id: string) => ({
+      conversationId: id,
+      pid: 1,
+    })),
+    sendTurn: vi.fn(async (id: string, prompt: string) => {
+      if (overrides.sendTurn) return overrides.sendTurn(id, prompt);
+      return {
+        result: { is_error: false, result: 'ok' },
+        turnEvents: [],
+      };
+    }),
+    terminate: vi.fn(async (id: string) => {
+      terminateCalls.push(id);
+    }),
+  } as unknown as ClaudeCliSessionPool;
+  return { pool, terminateCalls };
+}
+
+const cliDeps = {
+  repoRoot: '/repo',
+  mcpServerScriptPath: '/repo/lia400-cli-subprocess-benchmark-mcp-server.ts',
+  scratchDirFor: (conversationId: string) => `/tmp/scratch/${conversationId}`,
+  modelId: 'claude-sonnet-5',
+};
 
 /**
  * Live gates, mirroring A3/A5's established convention: the suite adapts to
@@ -492,6 +544,221 @@ describe('summary table', () => {
     expect(row).toContain('single_tool_lookup');
     expect(row).toContain('NOT-EXEC');
     expect(row).toContain('PASS');
+  });
+});
+
+describe('extractCliToolSequence (CLI-subprocess leg scoring adapter)', () => {
+  function assistantEvent(
+    blocks: Array<{ type: string; [key: string]: unknown }>,
+  ): StreamJsonEvent {
+    return {
+      type: 'assistant',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: { role: 'assistant', content: blocks },
+    };
+  }
+
+  it('returns [] for events with no tool_use blocks', () => {
+    expect(
+      extractCliToolSequence([assistantEvent([{ type: 'text', text: 'hi' }])]),
+    ).toEqual([]);
+  });
+
+  it('ignores non-assistant events (e.g. system/init, user, result)', () => {
+    expect(
+      extractCliToolSequence([
+        { type: 'system', subtype: 'init' },
+        { type: 'result', is_error: false, subtype: 'success' },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('extracts one tool name per tool_use block, across multiple assistant events, in order', () => {
+    const events: StreamJsonEvent[] = [
+      assistantEvent([
+        { type: 'tool_use', id: 't1', name: 'get_weather', input: {} },
+      ]),
+      assistantEvent([
+        { type: 'text', text: 'converting now' },
+        {
+          type: 'tool_use',
+          id: 't2',
+          name: 'convert_temperature',
+          input: {},
+        },
+      ]),
+    ];
+    expect(extractCliToolSequence(events)).toEqual([
+      'get_weather',
+      'convert_temperature',
+    ]);
+  });
+});
+
+describe('shared framework-agnostic tool handlers (direct invocation, reused by both the LangChain tool() wrappers and the CLI-subprocess benchmark MCP server)', () => {
+  it('lookupFact returns the canned fact and a fallback for unknown topics', async () => {
+    expect(await lookupFact({ topic: 'Aurora' })).toContain('solar-wind');
+    expect(await lookupFact({ topic: 'nonexistent' })).toContain(
+      'no fact recorded',
+    );
+  });
+
+  it('getWeather returns a fixed 68F reading', async () => {
+    const parsed = JSON.parse(await getWeather({ city: 'Reykjavik' })) as {
+      temperature: number;
+      unit: string;
+    };
+    expect(parsed).toEqual({
+      city: 'Reykjavik',
+      temperature: 68,
+      unit: 'fahrenheit',
+    });
+  });
+
+  it('convertTemperature converts 68F to 20C and rejects unsupported units', async () => {
+    const converted = JSON.parse(
+      await convertTemperature({
+        value: 68,
+        from: 'fahrenheit',
+        to: 'celsius',
+      }),
+    ) as { value: number };
+    expect(converted.value).toBe(20);
+    expect(
+      await convertTemperature({ value: 1, from: 'kelvin', to: 'celsius' }),
+    ).toContain('ERROR');
+  });
+
+  it('add and multiply compose to the expected 6-hop total', async () => {
+    expect(await add({ a: 3, b: 4 })).toBe('7');
+    expect(await multiply({ a: 7, b: 6 })).toBe('42');
+  });
+
+  it('createFlakyFetchRecord gives every fresh handler its own failure counter', async () => {
+    const first = createFlakyFetchRecord();
+    const second = createFlakyFetchRecord();
+    expect(await first({ id: 'r-17' })).toContain('transient backend failure');
+    // A second, independently-created handler is NOT affected by the first's
+    // call count — proves the counter is per-handler-instance, matching the
+    // guarantee a fresh MCP server process gives the CLI-subprocess leg.
+    expect(await second({ id: 'r-17' })).toContain('transient backend failure');
+    expect(JSON.parse(await first({ id: 'r-17' }))).toEqual({
+      id: 'r-17',
+      value: 'blue-harbor',
+    });
+  });
+});
+
+describe('runChainAgainstCliSubprocess / runCliSubprocessChainWithRetry (code-review finding: preserving the real is_error text)', () => {
+  const chain = chainById('single_tool_lookup');
+
+  it("an is_error turn preserves the CLI's real reported text as `error`, not a generic placeholder", async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: {
+          is_error: true,
+          result: '429 rate_limit_error: overloaded, please retry',
+        },
+        turnEvents: [],
+      }),
+    });
+    const result = await runChainAgainstCliSubprocess(chain, pool, cliDeps);
+    expect(result.succeeded).toBe(false);
+    expect(result.matched).toBe(false);
+    expect(result.finalAnswer).toBe('');
+    // The regression this guards: forcing `error` to a fixed constant here
+    // would make isRateLimitError never match, and the cell would score a
+    // hard FAIL instead of NOT-EXEC for an external/environmental blocker.
+    expect(result.error).toBe('429 rate_limit_error: overloaded, please retry');
+    expect(isRateLimitError(result.error!)).toBe(true);
+  });
+
+  it('runCliSubprocessChainWithRetry reclassifies a persistent rate-limit error to NOT-EXEC, never FAIL', async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: true, result: '429 overloaded' },
+        turnEvents: [],
+      }),
+    });
+    const result = await runCliSubprocessChainWithRetry(chain, pool, cliDeps, {
+      maxRetries: 1,
+      backoffMs: 0,
+      sleep: async () => {},
+    });
+    expect(cellStatus(result)).toBe('NOT-EXEC');
+    expect(result.notExecutedReason).toBeDefined();
+  });
+
+  it('a non-rate-limit is_error turn scores a real FAIL (not silently swallowed as NOT-EXEC)', async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: true, result: 'tool schema validation failed' },
+        turnEvents: [],
+      }),
+    });
+    const result = await runCliSubprocessChainWithRetry(chain, pool, cliDeps, {
+      maxRetries: 1,
+      backoffMs: 0,
+      sleep: async () => {},
+    });
+    expect(cellStatus(result)).toBe('FAIL');
+  });
+
+  it('a successful turn extracts the tool sequence and final answer correctly', async () => {
+    const { pool, terminateCalls } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: false, result: 'the aurora fact' },
+        turnEvents: [
+          {
+            type: 'assistant',
+            session_id: 's1',
+            parent_tool_use_id: null,
+            message: {
+              role: 'assistant',
+              content: [
+                { type: 'tool_use', id: 't1', name: 'lookup_fact', input: {} },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    const result = await runChainAgainstCliSubprocess(chain, pool, cliDeps);
+    expect(result.succeeded).toBe(true);
+    expect(result.actualToolSequence).toEqual(['lookup_fact']);
+    expect(result.matched).toBe(true);
+    expect(result.finalAnswer).toBe('the aurora fact');
+    // terminate() must be called even on the success path (finally block).
+    expect(terminateCalls.length).toBe(1);
+  });
+});
+
+describe('claude-cli-subprocess provider leg', () => {
+  it('setUpProviderLeg("claude-cli-subprocess") returns an available leg with a pool, not a LangChain model', async () => {
+    const leg = await setUpProviderLeg('claude-cli-subprocess');
+    expect(leg.name).toBe('claude-cli-subprocess');
+    expect(leg.available).toBe(true);
+    expect(leg.model).toBeUndefined();
+    expect(leg.pool).toBeDefined();
+    expect(leg.modelId).toContain('claude-cli-subprocess');
+    // cleanup must resolve without throwing even though no conversation was
+    // ever created against this pool (mirrors the other 3 legs' cleanup
+    // being safe to call unconditionally in main()'s finally block).
+    await expect(leg.cleanup?.()).resolves.toBeUndefined();
+  });
+});
+
+describe('lia400-cli-subprocess-benchmark-mcp-server (construction smoke, no real subprocess)', () => {
+  it('constructs a server registering all 8 benchmark tools and shuts down cleanly with no calls made', async () => {
+    const { server, shutdown } = createLia400BenchToolsMcpServer();
+    expect(server).toBeDefined();
+    // No tool was ever invoked, so neither the nested pool nor the mcp-x
+    // client should have been constructed — shutdown must still resolve
+    // cleanly against that all-undefined state (mirrors
+    // parent-turn-mcp-server.ts's own shutdown()'s `nestedPool?.shutdownAll()`
+    // optional-chaining posture).
+    await expect(shutdown()).resolves.toBeUndefined();
   });
 });
 

@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +38,15 @@ import {
   assertMcpXBuilt,
   createMcpXClient,
 } from './lia398_mcp_adapter_walking_skeleton.js';
+// LIA-454's CLI-subprocess transport primitives, reused read-only — the new
+// 4th leg spawns a REAL `claude` CLI conversation via the same pool class
+// production uses, instead of a raw-HTTP LangChain client.
+import { ClaudeCliSessionPool } from '../../src/agent-runtimes/cli-subprocess/claude-cli-session-pool.js';
+import {
+  isAssistantEvent,
+  extractToolUseBlocks,
+  type StreamJsonEvent,
+} from '../../src/agent-runtimes/cli-subprocess/stream-json-protocol.js';
 
 const spikeDirectory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,8 +66,30 @@ export const GPT_MODEL_ID = process.env.DEUS_OPENAI_MODEL ?? 'gpt-4o';
 // validated as OLLAMA_SUB_MODEL_ID (gemma4:e2b).
 export const OLLAMA_BENCH_MODEL_ID = OLLAMA_SUB_MODEL_ID;
 
-export const PROVIDERS = ['claude', 'gpt', 'ollama'] as const;
+export const PROVIDERS = [
+  'claude',
+  'gpt',
+  'ollama',
+  'claude-cli-subprocess',
+] as const;
 export type ProviderName = (typeof PROVIDERS)[number];
+
+// Resolved once, used to pin BOTH the CLI-subprocess leg's main conversation
+// and its delegate_to_subagent sub-conversation to the same model id (see
+// setUpCliSubprocessLeg's doc comment for why this must be a real model id,
+// not the CLI's ambient default).
+export const CLI_SUBPROCESS_MODEL_ID =
+  process.env.DEUS_LIA400_MODEL_ID ?? 'claude-sonnet-5';
+
+const BENCH_MCP_SERVER_NAME = 'lia400_bench_tools';
+const BENCH_MCP_SERVER_SCRIPT_PATH = path.join(
+  spikeDirectory,
+  'lia400-cli-subprocess-benchmark-mcp-server.ts',
+);
+// scripts/spikes/ -> scripts/ -> repo root — only used to resolve the tsx
+// loader (never the scratch cwd), same convention every other
+// ClaudeCliSessionPool caller in this codebase follows.
+const REPO_ROOT = path.resolve(spikeDirectory, '..', '..');
 
 // createAgent's model parameter type, borrowed the same way A3 does for its
 // placeholder-model plumbing.
@@ -121,133 +153,157 @@ const FACT_KB: Record<string, string> = {
     'Auroras are caused by charged solar-wind particles colliding with gases in the upper atmosphere.',
 };
 
-function makeLookupFactTool() {
-  return tool(
-    async (args: { topic: string }) =>
-      FACT_KB[args.topic.toLowerCase()] ??
-      `no fact recorded for topic "${args.topic}"`,
-    {
-      name: 'lookup_fact',
-      description: 'Looks up a canned fact by topic keyword.',
-      schema: {
-        type: 'object',
-        properties: { topic: { type: 'string' } },
-        required: ['topic'],
-        additionalProperties: false,
-      },
-    },
+// Framework-agnostic handler bodies, extracted (LIA-400/A7 CLI-subprocess leg)
+// so the LangChain `tool()` wrappers below AND the new benchmark MCP server
+// (`lia400-cli-subprocess-benchmark-mcp-server.ts`) call the identical logic
+// — single source of truth per chain, not duplicated business logic across
+// transports (same practice as LIA-460's `buildTranscriptUsageEvent`).
+
+export async function lookupFact(args: { topic: string }): Promise<string> {
+  return (
+    FACT_KB[args.topic.toLowerCase()] ??
+    `no fact recorded for topic "${args.topic}"`
   );
 }
 
-function makeWeatherTools() {
-  const getWeather = tool(
-    async (args: { city: string }) =>
-      JSON.stringify({ city: args.city, temperature: 68, unit: 'fahrenheit' }),
-    {
-      name: 'get_weather',
-      description: 'Returns the current temperature for a city, in fahrenheit.',
-      schema: {
-        type: 'object',
-        properties: { city: { type: 'string' } },
-        required: ['city'],
-        additionalProperties: false,
-      },
-    },
-  );
-  const convertTemperature = tool(
-    async (args: { value: number; from: string; to: string }) => {
-      const from = args.from.toLowerCase();
-      const to = args.to.toLowerCase();
-      let converted: number;
-      if (from.startsWith('f') && to.startsWith('c')) {
-        converted = ((args.value - 32) * 5) / 9;
-      } else if (from.startsWith('c') && to.startsWith('f')) {
-        converted = (args.value * 9) / 5 + 32;
-      } else {
-        return `ERROR: unsupported conversion ${args.from} -> ${args.to}`;
-      }
-      return JSON.stringify({
-        value: Math.round(converted * 100) / 100,
-        unit: to,
-      });
-    },
-    {
-      name: 'convert_temperature',
-      description:
-        'Converts a temperature value between fahrenheit and celsius.',
-      schema: {
-        type: 'object',
-        properties: {
-          value: { type: 'number' },
-          from: { type: 'string' },
-          to: { type: 'string' },
-        },
-        required: ['value', 'from', 'to'],
-        additionalProperties: false,
-      },
-    },
-  );
-  return [getWeather, convertTemperature];
+export async function getWeather(args: { city: string }): Promise<string> {
+  return JSON.stringify({
+    city: args.city,
+    temperature: 68,
+    unit: 'fahrenheit',
+  });
 }
 
-function makeCalculationTools() {
-  const add = tool(
-    async (args: { a: number; b: number }) => String(args.a + args.b),
-    {
-      name: 'add',
-      description: 'Adds two numbers.',
-      schema: {
-        type: 'object',
-        properties: { a: { type: 'number' }, b: { type: 'number' } },
-        required: ['a', 'b'],
-        additionalProperties: false,
-      },
-    },
-  );
-  const multiply = tool(
-    async (args: { a: number; b: number }) => String(args.a * args.b),
-    {
-      name: 'multiply',
-      description: 'Multiplies two numbers.',
-      schema: {
-        type: 'object',
-        properties: { a: { type: 'number' }, b: { type: 'number' } },
-        required: ['a', 'b'],
-        additionalProperties: false,
-      },
-    },
-  );
-  return [add, multiply];
+export async function convertTemperature(args: {
+  value: number;
+  from: string;
+  to: string;
+}): Promise<string> {
+  const from = args.from.toLowerCase();
+  const to = args.to.toLowerCase();
+  let converted: number;
+  if (from.startsWith('f') && to.startsWith('c')) {
+    converted = ((args.value - 32) * 5) / 9;
+  } else if (from.startsWith('c') && to.startsWith('f')) {
+    converted = (args.value * 9) / 5 + 32;
+  } else {
+    return `ERROR: unsupported conversion ${args.from} -> ${args.to}`;
+  }
+  return JSON.stringify({
+    value: Math.round(converted * 100) / 100,
+    unit: to,
+  });
+}
+
+export async function add(args: { a: number; b: number }): Promise<string> {
+  return String(args.a + args.b);
+}
+
+export async function multiply(args: {
+  a: number;
+  b: number;
+}): Promise<string> {
+  return String(args.a * args.b);
 }
 
 /**
- * Stateful per-setup closure: fails on the FIRST invocation with an
+ * Stateful per-call closure: fails on the FIRST invocation with an
  * explicitly retryable error message, succeeds on every subsequent one —
  * checks whether the provider retries appropriately vs gives up. Returned
- * as a factory so every benchmark run gets a fresh failure counter.
+ * as a factory so every benchmark run (and every fresh MCP server process,
+ * for the CLI-subprocess leg) gets a fresh failure counter.
  */
-export function makeFlakyFetchRecordTool() {
+export function createFlakyFetchRecord(): (args: {
+  id: string;
+}) => Promise<string> {
   let calls = 0;
-  return tool(
-    async (args: { id: string }) => {
-      calls += 1;
-      if (calls === 1) {
-        return 'ERROR: transient backend failure — please call fetch_record again with the same id.';
-      }
-      return JSON.stringify({ id: args.id, value: 'blue-harbor' });
+  return async (args: { id: string }) => {
+    calls += 1;
+    if (calls === 1) {
+      return 'ERROR: transient backend failure — please call fetch_record again with the same id.';
+    }
+    return JSON.stringify({ id: args.id, value: 'blue-harbor' });
+  };
+}
+
+function makeLookupFactTool() {
+  return tool(lookupFact, {
+    name: 'lookup_fact',
+    description: 'Looks up a canned fact by topic keyword.',
+    schema: {
+      type: 'object',
+      properties: { topic: { type: 'string' } },
+      required: ['topic'],
+      additionalProperties: false,
     },
-    {
-      name: 'fetch_record',
-      description:
-        'Fetches a record by id. The backend is flaky and may report a transient error; retrying the same call succeeds.',
-      schema: {
-        type: 'object',
-        properties: { id: { type: 'string' } },
-        required: ['id'],
-        additionalProperties: false,
+  });
+}
+
+function makeWeatherTools() {
+  const getWeatherTool = tool(getWeather, {
+    name: 'get_weather',
+    description: 'Returns the current temperature for a city, in fahrenheit.',
+    schema: {
+      type: 'object',
+      properties: { city: { type: 'string' } },
+      required: ['city'],
+      additionalProperties: false,
+    },
+  });
+  const convertTemperatureTool = tool(convertTemperature, {
+    name: 'convert_temperature',
+    description: 'Converts a temperature value between fahrenheit and celsius.',
+    schema: {
+      type: 'object',
+      properties: {
+        value: { type: 'number' },
+        from: { type: 'string' },
+        to: { type: 'string' },
       },
+      required: ['value', 'from', 'to'],
+      additionalProperties: false,
     },
-  );
+  });
+  return [getWeatherTool, convertTemperatureTool];
+}
+
+function makeCalculationTools() {
+  const addTool = tool(add, {
+    name: 'add',
+    description: 'Adds two numbers.',
+    schema: {
+      type: 'object',
+      properties: { a: { type: 'number' }, b: { type: 'number' } },
+      required: ['a', 'b'],
+      additionalProperties: false,
+    },
+  });
+  const multiplyTool = tool(multiply, {
+    name: 'multiply',
+    description: 'Multiplies two numbers.',
+    schema: {
+      type: 'object',
+      properties: { a: { type: 'number' }, b: { type: 'number' } },
+      required: ['a', 'b'],
+      additionalProperties: false,
+    },
+  });
+  return [addTool, multiplyTool];
+}
+
+export function makeFlakyFetchRecordTool() {
+  const handler = createFlakyFetchRecord();
+  return tool(handler, {
+    name: 'fetch_record',
+    description:
+      'Fetches a record by id. The backend is flaky and may report a transient error; retrying the same call succeeds.',
+    schema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  });
 }
 
 export const CHAINS: ToolChainDefinition[] = [
@@ -373,6 +429,25 @@ export function extractFinalAnswer(messages: BaseMessage[]): string {
   return stringifyContent(last.content);
 }
 
+/** CLI-subprocess-leg equivalent of `extractToolSequence` — the CLI has no
+ *  LangChain `BaseMessage[]`, only its own stream-json `turnEvents`. Reuses
+ *  the same already-exported extraction helpers `checkpoint-translation.ts`
+ *  relies on, so no new scoring logic is invented — just a different input
+ *  shape feeding the SAME `sequencesEqual`/`cellStatus` used by every leg. */
+export function extractCliToolSequence(
+  turnEvents: StreamJsonEvent[],
+): string[] {
+  const names: string[] = [];
+  for (const event of turnEvents) {
+    if (isAssistantEvent(event)) {
+      for (const block of extractToolUseBlocks(event)) {
+        names.push(block.name);
+      }
+    }
+  }
+  return names;
+}
+
 export interface ChainResult {
   chainId: string;
   provider: ProviderName;
@@ -466,6 +541,82 @@ export async function runChainAgainstProvider(
   }
 }
 
+/**
+ * The CLI-subprocess leg's execution path — parallel to (not built on)
+ * `runChainAgainstProvider`, since the CLI-subprocess transport has no
+ * LangChain agent loop at all: it spawns a real `claude` CLI process that
+ * runs its OWN tool-calling loop, with tools exposed only via one stdio MCP
+ * server (`lia400-cli-subprocess-benchmark-mcp-server.ts`). Doesn't call
+ * `chain.setup()` (LangChain-specific) — the per-chain tool allowlist is
+ * derived directly from `expectedToolSequence`'s unique tool names, which
+ * already exactly equals each chain's own tool set.
+ */
+export async function runChainAgainstCliSubprocess(
+  chain: ToolChainDefinition,
+  pool: ClaudeCliSessionPool,
+  deps: {
+    repoRoot: string;
+    mcpServerScriptPath: string;
+    scratchDirFor: (conversationId: string) => string;
+    modelId: string;
+  },
+): Promise<ChainResult> {
+  const started = Date.now();
+  const allowedNames = [...new Set(chain.expectedToolSequence)];
+  const conversationId = `lia400-${chain.id}-${Date.now()}`;
+  try {
+    await pool.createConversation(conversationId, {
+      scratchDir: deps.scratchDirFor(conversationId),
+      mcpServerName: BENCH_MCP_SERVER_NAME,
+      mcpServerScriptPath: deps.mcpServerScriptPath,
+      repoRoot: deps.repoRoot,
+      model: deps.modelId,
+      mcpServerEnv: { DEUS_LIA400_MODEL: deps.modelId },
+      allowedTool: allowedNames
+        .map((name) => `mcp__${BENCH_MCP_SERVER_NAME}__${name}`)
+        .join(','),
+    });
+    const turnResult = await pool.sendTurn(conversationId, chain.seedPrompt);
+    const actualToolSequence = extractCliToolSequence(turnResult.turnEvents);
+    // code-review finding: the CLI's own reported text (turnResult.result.result)
+    // must be preserved as the ERROR text on an is_error turn — `sendTurn`
+    // RESOLVES (never rejects) on an is_error result event, so a real
+    // billing/rate-limit 429 the CLI surfaces this way reaches here, and
+    // `runCliSubprocessChainWithRetry`'s reclassification to NOT-EXEC depends
+    // on `isRateLimitError` matching that REAL text, not a generic constant.
+    const rawResultText = turnResult.result.result ?? '';
+    const finalAnswer = turnResult.result.is_error ? '' : rawResultText;
+    return {
+      chainId: chain.id,
+      provider: 'claude-cli-subprocess',
+      expectedToolSequence: chain.expectedToolSequence,
+      succeeded: !turnResult.result.is_error,
+      actualToolSequence,
+      matched:
+        sequencesEqual(actualToolSequence, chain.expectedToolSequence) &&
+        finalAnswer.length > 0,
+      finalAnswer,
+      latencyMs: Date.now() - started,
+      ...(turnResult.result.is_error
+        ? { error: rawResultText || 'CLI turn reported is_error' }
+        : {}),
+    };
+  } catch (error) {
+    return {
+      chainId: chain.id,
+      provider: 'claude-cli-subprocess',
+      expectedToolSequence: chain.expectedToolSequence,
+      succeeded: false,
+      actualToolSequence: [],
+      matched: false,
+      error: errorMessage(error),
+      latencyMs: Date.now() - started,
+    };
+  } finally {
+    await pool.terminate(conversationId).catch(() => {});
+  }
+}
+
 export function isRateLimitError(message: string): boolean {
   return /(^|\D)429(\D|$)|rate.?limit|overloaded/i.test(message);
 }
@@ -529,6 +680,42 @@ export async function runChainWithRetry(
   return result;
 }
 
+/** Same bounded-retry/NOT-EXEC-reclassification policy as `runChainWithRetry`,
+ *  calling `runChainAgainstCliSubprocess` instead — kept as a small separate
+ *  function rather than threading a fake `BenchModel` through the
+ *  LangChain-typed `runChainWithRetry` signature. */
+export async function runCliSubprocessChainWithRetry(
+  chain: ToolChainDefinition,
+  pool: ClaudeCliSessionPool,
+  deps: Parameters<typeof runChainAgainstCliSubprocess>[2],
+  options: RetryOptions,
+): Promise<ChainResult> {
+  const sleep = options.sleep ?? defaultSleep;
+  let result = await runChainAgainstCliSubprocess(chain, pool, deps);
+  let attempt = 0;
+  while (
+    !result.succeeded &&
+    result.error !== undefined &&
+    isRateLimitError(result.error) &&
+    attempt < options.maxRetries
+  ) {
+    attempt += 1;
+    await sleep(options.backoffMs * attempt);
+    result = await runChainAgainstCliSubprocess(chain, pool, deps);
+  }
+  if (
+    !result.succeeded &&
+    result.error !== undefined &&
+    isRateLimitError(result.error)
+  ) {
+    return {
+      ...result,
+      notExecutedReason: `not executed due to persistent rate-limiting (still 429 after ${options.maxRetries} runner-level retries on top of the SDK's internal retries)`,
+    };
+  }
+  return result;
+}
+
 export function notExecutedResult(
   chain: ToolChainDefinition,
   provider: ProviderName,
@@ -553,7 +740,11 @@ export interface ProviderLeg {
   available: boolean;
   reason?: string;
   modelId?: string;
+  /** Populated for the 3 LangChain-driven legs (claude/gpt/ollama). */
   model?: BenchModel;
+  /** Populated ONLY for the claude-cli-subprocess leg — mutually exclusive
+   *  with `model`, never both set on the same leg. */
+  pool?: ClaudeCliSessionPool;
   cleanup?: () => void | Promise<void>;
 }
 
@@ -653,12 +844,47 @@ async function setUpOllamaLeg(): Promise<ProviderLeg> {
   };
 }
 
+/**
+ * The CLI-subprocess leg — spawns real `claude` CLI conversations via the
+ * SAME `ClaudeCliSessionPool` production uses (LIA-454), instead of a
+ * raw-HTTP LangChain client. Owns the top-level pool for this leg's whole
+ * run: constructed here, torn down via `cleanup` (reuses the exact
+ * `leg.cleanup?.()` teardown path `main()`'s `finally` already calls for the
+ * other 3 legs — no new teardown call site needed).
+ */
+async function setUpCliSubprocessLeg(): Promise<ProviderLeg> {
+  const modelId = CLI_SUBPROCESS_MODEL_ID;
+  const pool = new ClaudeCliSessionPool({
+    maxProcesses: 3,
+    idleTimeoutMs: 120_000,
+    terminationGraceMs: 3_000,
+    onEvent: () => {},
+  });
+  return {
+    name: 'claude-cli-subprocess',
+    available: true,
+    modelId: `claude-cli-subprocess (${modelId})`,
+    pool,
+    cleanup: () => pool.shutdownAll(),
+  };
+}
+
 export async function setUpProviderLeg(
   name: ProviderName,
 ): Promise<ProviderLeg> {
   if (name === 'claude') return setUpClaudeLeg();
   if (name === 'gpt') return setUpGptLeg();
-  return setUpOllamaLeg();
+  if (name === 'claude-cli-subprocess') return setUpCliSubprocessLeg();
+  if (name === 'ollama') return setUpOllamaLeg();
+  // ProviderName is a closed union; every real value is handled above.
+  // Throwing here (rather than an implicit fallback) makes a future 5th
+  // provider name a loud compile-time/runtime error instead of silently
+  // resolving to the wrong leg (plan-review finding: the original
+  // if/if/return-ollama shape was a silent-false-positive trap for exactly
+  // this kind of addition).
+  throw new Error(
+    `setUpProviderLeg: unhandled provider "${name satisfies never}"`,
+  );
 }
 
 // ── CLI (flags mirror eval/quality_bench.py: --smoke / --dry) ────────────
@@ -776,6 +1002,12 @@ export async function main(
           results.push(notExecutedResult(chain, leg.name, rateLimitLatch));
           continue;
         }
+        // NOT exempted for the claude-cli-subprocess leg (unlike the Ollama
+        // gate below) — that leg's own get_status tool ALSO calls
+        // assertMcpXBuilt()/createMcpXClient() internally
+        // (lia400-cli-subprocess-benchmark-mcp-server.ts), so it shares the
+        // same mcp-x-build dependency every other leg has. Do not "fix" this
+        // into a broader exemption.
         if (chain.requiresMcp && mcpClient === undefined) {
           results.push(
             notExecutedResult(
@@ -786,7 +1018,16 @@ export async function main(
           );
           continue;
         }
-        if (chain.requiresOllamaSubLeg && !ollamaSubLegUp) {
+        // The claude-cli-subprocess leg's delegate_to_subagent never touches
+        // Ollama at all (its sub is a second real `claude` CLI conversation,
+        // not an Ollama routing target) — exempted so an environment without
+        // a running Ollama daemon doesn't falsely NOT-EXEC this leg's cell
+        // for a dependency it never has.
+        if (
+          chain.requiresOllamaSubLeg &&
+          providerName !== 'claude-cli-subprocess' &&
+          !ollamaSubLegUp
+        ) {
           results.push(
             notExecutedResult(
               chain,
@@ -797,17 +1038,31 @@ export async function main(
           continue;
         }
 
-        const deps: ChainDependencies = { mcpClient };
-        const result = await runChainWithRetry(
-          chain,
-          leg.name,
-          leg.model!,
-          deps,
-          {
-            maxRetries: 2,
-            backoffMs: 20_000,
-          },
-        );
+        const result =
+          providerName === 'claude-cli-subprocess'
+            ? await runCliSubprocessChainWithRetry(
+                chain,
+                leg.pool!,
+                {
+                  repoRoot: REPO_ROOT,
+                  mcpServerScriptPath: BENCH_MCP_SERVER_SCRIPT_PATH,
+                  scratchDirFor: (conversationId) =>
+                    path.join(
+                      os.tmpdir(),
+                      'lia400-cli-subprocess-bench',
+                      conversationId,
+                    ),
+                  modelId: CLI_SUBPROCESS_MODEL_ID,
+                },
+                { maxRetries: 2, backoffMs: 20_000 },
+              )
+            : await runChainWithRetry(
+                chain,
+                leg.name,
+                leg.model!,
+                { mcpClient },
+                { maxRetries: 2, backoffMs: 20_000 },
+              );
         results.push(result);
         console.log(
           `[${leg.name}] ${chain.id}: ${cellStatus(result)} ` +
