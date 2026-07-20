@@ -84,6 +84,14 @@ export type ProviderName = (typeof PROVIDERS)[number];
 export const CLI_SUBPROCESS_MODEL_ID =
   process.env.DEUS_LIA400_MODEL_ID ?? 'claude-sonnet-5';
 
+// 2026-07-20 MCP-init-race investigation: a flat, unconditional delay inserted
+// between createConversation() and sendTurn() in runChainAgainstCliSubprocess,
+// testing whether the CLI's one-time system/init snapshot (mcp_servers status)
+// is sensitive to when the first turn's stdin write happens. ~2.5-4x the real
+// observed spawnToInitMs range (660-1190ms) from the instrumented run that
+// added cliMcpDiagnostics (see that field's own doc comment on ChainResult).
+export const CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS = 3000;
+
 const BENCH_MCP_SERVER_NAME = 'lia400_bench_tools';
 const BENCH_MCP_SERVER_SCRIPT_PATH = path.join(
   spikeDirectory,
@@ -490,8 +498,19 @@ export interface ChainResult {
    *  ~43% reliability figure is a model property or an MCP-readiness race.
    *  Purely additive: never read by `matched`/`cellStatus`/`sequencesEqual`. */
   cliMcpDiagnostics?: {
-    mcpServers: McpServerStatus[];
-    toolsAtInit: string[];
+    /** 2026-07-20 MCP-init-race investigation: the pre-turn delay actually
+     *  applied before this cell's `sendTurn()` call. ALWAYS set whenever
+     *  `cliMcpDiagnostics` is present — including when no `system/init`
+     *  event was ever observed (the exact failure mode this experiment
+     *  targets) — so results stay self-documenting regardless of outcome.
+     *  See CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS. */
+    preTurnDelayMs: number;
+    /** Absent when no `system/init` event was found in the turn's retained
+     *  events — e.g. a spawn/protocol error before the CLI ever emitted one,
+     *  or (the case under direct investigation) the MCP handshake never
+     *  completing within the turn's lifetime. Never a false "connected". */
+    mcpServers?: McpServerStatus[];
+    toolsAtInit?: string[];
     spawnToInitMs?: number;
     spawnToFirstAssistantMs?: number;
   };
@@ -590,11 +609,18 @@ export async function runChainAgainstCliSubprocess(
     mcpServerScriptPath: string;
     scratchDirFor: (conversationId: string) => string;
     modelId: string;
+    /** 2026-07-20 MCP-init-race investigation. Defaults below when omitted —
+     *  both are diagnostic-only overrides for the pre-turn-delay experiment,
+     *  never required for normal (non-diagnostic) chain runs. */
+    sleep?: Sleep;
+    preTurnDelayMs?: number;
   },
 ): Promise<ChainResult> {
   const started = Date.now();
   const allowedNames = [...new Set(chain.expectedToolSequence)];
   const conversationId = `lia400-${chain.id}-${Date.now()}`;
+  const preTurnDelayMs =
+    deps.preTurnDelayMs ?? CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS;
   try {
     await pool.createConversation(conversationId, {
       scratchDir: deps.scratchDirFor(conversationId),
@@ -602,11 +628,23 @@ export async function runChainAgainstCliSubprocess(
       mcpServerScriptPath: deps.mcpServerScriptPath,
       repoRoot: deps.repoRoot,
       model: deps.modelId,
-      mcpServerEnv: { DEUS_LIA400_MODEL: deps.modelId },
+      // TSX_DISABLE_CACHE: only load-bearing for the pre-turn-delay
+      // diagnostic runs (removes tsx's persistent, content-hash-keyed
+      // module-transform cache as a confound between a preTurnDelayMs=0
+      // control run and a preTurnDelayMs=<n> treatment run — a control and a
+      // treatment run must not differ in whether the MCP server's own JIT
+      // compilation is warm, since that alone could explain a timing
+      // difference unrelated to the delay). Harmless for normal chain runs;
+      // only costs extra JIT-recompile latency per spawn.
+      mcpServerEnv: {
+        DEUS_LIA400_MODEL: deps.modelId,
+        TSX_DISABLE_CACHE: '1',
+      },
       allowedTool: allowedNames
         .map((name) => `mcp__${BENCH_MCP_SERVER_NAME}__${name}`)
         .join(','),
     });
+    await (deps.sleep ?? defaultSleep)(preTurnDelayMs);
     const turnResult = await pool.sendTurn(conversationId, chain.seedPrompt);
     const actualToolSequence = extractCliToolSequence(turnResult.turnEvents);
     // code-review finding: the CLI's own reported text (turnResult.result.result)
@@ -623,15 +661,21 @@ export async function runChainAgainstCliSubprocess(
     // ClaudeCliSessionPool` and its `sendTurn` overrides return neither
     // field — so at runtime these ARE `undefined` in every pre-existing
     // test, despite the type saying otherwise.
+    // code-review finding: preTurnDelayMs must be recorded regardless of
+    // whether a system/init event was ever observed — the "no init event at
+    // all" case is itself the failure mode this experiment investigates, and
+    // silently omitting cliMcpDiagnostics there would undocument the exact
+    // cells that matter most.
     const initEvent = turnResult.events?.find(isSystemInitEvent);
     const cliMcpDiagnostics =
       initEvent === undefined
-        ? undefined
+        ? { preTurnDelayMs }
         : {
             mcpServers: initEvent.mcp_servers,
             toolsAtInit: initEvent.tools,
             spawnToInitMs: turnResult.timing?.spawnToInitMs,
             spawnToFirstAssistantMs: turnResult.timing?.spawnToFirstAssistantMs,
+            preTurnDelayMs,
           };
     return {
       chainId: chain.id,
@@ -647,7 +691,7 @@ export async function runChainAgainstCliSubprocess(
       ...(turnResult.result.is_error
         ? { error: rawResultText || 'CLI turn reported is_error' }
         : {}),
-      ...(cliMcpDiagnostics !== undefined ? { cliMcpDiagnostics } : {}),
+      cliMcpDiagnostics,
     };
   } catch (error) {
     return {
@@ -659,6 +703,10 @@ export async function runChainAgainstCliSubprocess(
       matched: false,
       error: errorMessage(error),
       latencyMs: Date.now() - started,
+      // Same rationale as the success path: preTurnDelayMs is computed
+      // before the try block, so it's always available even on a
+      // spawn/protocol failure that never reaches sendTurn() at all.
+      cliMcpDiagnostics: { preTurnDelayMs },
     };
   } finally {
     await pool.terminate(conversationId).catch(() => {});
@@ -941,6 +989,10 @@ export interface CliArgs {
   smoke: boolean;
   dry: boolean;
   providers: ProviderName[];
+  /** Diagnostic-only override for `runChainAgainstCliSubprocess`'s pre-turn delay experiment
+   *  (2026-07-20 MCP-init-race investigation) — undefined => the implementation's own default
+   *  applies. See CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS. */
+  preTurnDelayMs?: number;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -964,9 +1016,18 @@ export function parseArgs(argv: string[]): CliArgs {
         }
       }
       args.providers = requested as ProviderName[];
+    } else if (raw.startsWith('--preTurnDelayMs=')) {
+      const rawValue = raw.slice('--preTurnDelayMs='.length);
+      const parsed = Number(rawValue);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(
+          `invalid --preTurnDelayMs value "${rawValue}" (expected a non-negative number)`,
+        );
+      }
+      args.preTurnDelayMs = parsed;
     } else {
       throw new Error(
-        `unknown flag "${raw}" (expected --smoke, --dry, --providers=...)`,
+        `unknown flag "${raw}" (expected --smoke, --dry, --providers=..., --preTurnDelayMs=...)`,
       );
     }
   }
@@ -1101,6 +1162,7 @@ export async function main(
                       conversationId,
                     ),
                   modelId: CLI_SUBPROCESS_MODEL_ID,
+                  preTurnDelayMs: args.preTurnDelayMs,
                 },
                 { maxRetries: 2, backoffMs: 20_000 },
               )
