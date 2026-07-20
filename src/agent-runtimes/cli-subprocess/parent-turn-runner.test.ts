@@ -778,3 +778,93 @@ describe('runParentTurnViaCliSubprocess: context-compaction integration (LIA-457
     expect(releaseCount()).toBe(1);
   });
 });
+
+describe('runParentTurnViaCliSubprocess: control-group memory-recall (LIA-458)', () => {
+  it('appends recalledMemoryContext to the LIVE prompt sent to the CLI, while the persisted current-turn message stays the bare, unaugmented prompt', async () => {
+    let capturedLivePrompt: string | undefined;
+    const { pool } = fakePool({
+      sendTurn: async (id, prompt) => {
+        capturedLivePrompt = prompt;
+        return {
+          result: { is_error: false, result: 'hi there', session_id: 's1' },
+          events: [],
+          turnEvents: [assistantTextEvent('hi there'), resultEvent('hi there')],
+          timing: { totalTurnMs: 10 },
+          pid: 1,
+        };
+      },
+    });
+    const { saver } = tempSaver();
+    const { lease } = fakeLease();
+    const { slot } = fakeSlot();
+
+    await runParentTurnViaCliSubprocess(
+      baseOptions({
+        prompt: 'what is the weather',
+        recalledMemoryContext: 'recalled: user likes cats',
+      }),
+      baseDeps(pool, saver, lease, slot),
+    );
+
+    expect(capturedLivePrompt).toBe(
+      'what is the weather\n\nrecalled: user likes cats',
+    );
+
+    // The persisted current-turn HumanMessage is the bare prompt, NOT the
+    // augmented live string -- this is the exact split round-1 plan-review
+    // caught missing (recalled context reaching only the checkpoint, never
+    // this same turn's live CLI call).
+    const tuple = await saver.getTuple({
+      configurable: { thread_id: 'thread-1', checkpoint_ns: '' },
+    });
+    const messages = tuple?.checkpoint.channel_values[
+      'messages'
+    ] as BaseMessage[];
+    const currentTurnMessage = messages.find(
+      (m) => m.id === 'msg_1',
+    ) as HumanMessage;
+    expect(currentTurnMessage.content).toBe('what is the weather');
+
+    // The recalled context still separately persists (pre-existing,
+    // unchanged mechanism) as its own HumanMessage, for next-turn history.
+    expect(
+      messages.some((m) => m.content === 'recalled: user likes cats'),
+    ).toBe(true);
+  });
+
+  it('omitted/empty recalledMemoryContext leaves the live prompt byte-identical to today', async () => {
+    let capturedLivePrompt: string | undefined;
+    const { pool } = fakePool({
+      sendTurn: async (id, prompt) => {
+        capturedLivePrompt = prompt;
+        return {
+          result: { is_error: false, result: 'hi there', session_id: 's1' },
+          events: [],
+          turnEvents: [assistantTextEvent('hi there'), resultEvent('hi there')],
+          timing: { totalTurnMs: 10 },
+          pid: 1,
+        };
+      },
+    });
+    const { saver } = tempSaver();
+    const { lease } = fakeLease();
+    const { slot } = fakeSlot();
+
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ prompt: 'hello, no recall' }),
+      baseDeps(pool, saver, lease, slot),
+    );
+    expect(capturedLivePrompt).toBe('hello, no recall');
+
+    // Empty string is a no-op too, same as undefined.
+    await runParentTurnViaCliSubprocess(
+      baseOptions({
+        threadId: 'thread-2',
+        prompt: 'hello again',
+        recalledMemoryContext: '',
+      }),
+      baseDeps(pool, saver, lease, slot),
+    );
+    expect(capturedLivePrompt).toBe('hello again');
+  });
+});
