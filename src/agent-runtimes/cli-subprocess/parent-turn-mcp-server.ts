@@ -55,6 +55,7 @@ import {
 import { gateAndExecuteMcpTool, type McpToolResult } from './mcp-tool-gate.js';
 import { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
 import { createCliSubprocessNestedDispatcher } from './cli-subprocess-nested-dispatcher.js';
+import { writeMcpReadyMarkerIfRequested } from './mcp-ready-marker.js';
 
 const WEB_SEARCH = 'web_search';
 const WEB_FETCH = 'web_fetch';
@@ -515,5 +516,14 @@ if (invokedDirectly) {
   process.on('SIGINT', handleShutdown);
   process.stdin.on('close', handleShutdown);
 
+  // code-review finding (LIA-461): server.connect() resolving only means our
+  // OWN stdio transport has started — it does NOT wait for the CLIENT (the
+  // claude CLI process) to complete its side of the initialize/initialized
+  // handshake (confirmed directly against the MCP SDK's Protocol.connect()
+  // source: it awaits only transport.start(), never a handshake response).
+  // oninitialized fires only once the client's `notifications/initialized`
+  // arrives — the genuine handshake-complete signal — so it must be
+  // registered BEFORE connect() (the notification could arrive quickly).
+  server.server.oninitialized = () => writeMcpReadyMarkerIfRequested();
   await server.connect(transport);
 }

@@ -42,6 +42,7 @@ import {
   type ToolBrokerContext,
 } from '../tool-broker-langchain-adapter.js';
 import { gateAndExecuteMcpTool, type McpToolResult } from './mcp-tool-gate.js';
+import { writeMcpReadyMarkerIfRequested } from './mcp-ready-marker.js';
 
 /** Shape of `DEUS_NESTED_DISPATCH_CONTEXT` — built by `deus-native-backend.ts`
  *  from values already in scope there (see module doc above). */
@@ -261,5 +262,10 @@ const invokedDirectly =
 if (invokedDirectly) {
   const server = createNestedDispatchMcpServer();
   const transport = new StdioServerTransport();
+  // code-review finding (LIA-461): see parent-turn-mcp-server.ts's identical
+  // comment — connect() only starts our own transport, not the client's
+  // handshake; oninitialized is the genuine completion signal and must be
+  // registered before connect() in case the notification arrives quickly.
+  server.server.oninitialized = () => writeMcpReadyMarkerIfRequested();
   await server.connect(transport);
 }

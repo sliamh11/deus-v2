@@ -51,6 +51,7 @@ import {
   type ResultEvent,
   type StreamJsonEvent,
 } from './stream-json-protocol.js';
+import { MCP_READY_MARKER_ENV_VAR } from './mcp-ready-marker.js';
 
 // ── Environment handling ──────────────────────────────
 
@@ -359,7 +360,12 @@ export type ClaudeCliSessionErrorCode =
   | 'busy'
   | 'spawn_error'
   | 'unexpected_exit'
-  | 'protocol_error';
+  | 'protocol_error'
+  /** LIA-461: the MCP server subprocess exited (crashed) while
+   *  `createConversation()` was waiting for its readiness marker — distinct
+   *  from `unexpected_exit` (a crash mid-turn) so callers/telemetry can tell
+   *  the two apart. */
+  | 'mcp_ready_wait_aborted';
 
 export class ClaudeCliSessionError extends Error {
   constructor(
@@ -397,6 +403,14 @@ export interface TurnTiming {
   spawnToFirstAssistantMs?: number;
   /** From `sendTurn()` to this turn's resolution. */
   totalTurnMs: number;
+  /** LIA-461: from spawn to the MCP-ready marker being observed, only set
+   *  when `CreateConversationOptions.waitForMcpReady` was requested and the
+   *  marker appeared before the wait's timeout. `undefined` when the wait
+   *  wasn't requested, or the marker never appeared (see `mcpReadyTimedOut`). */
+  spawnToMcpReadyMs?: number;
+  /** LIA-461: true only when `waitForMcpReady` was requested and the marker
+   *  never appeared within `timeoutMs` — surfaced, never silently swallowed. */
+  mcpReadyTimedOut?: boolean;
 }
 
 export interface TurnResult {
@@ -443,6 +457,21 @@ export interface CreateConversationOptions {
   /** Passed straight through to `buildClaudeCliArgs` — see its own doc
    *  comment (LIA-454 EP-002 step 11). Omitted => unchanged behavior. */
   appendSystemPromptFile?: string;
+  /** LIA-461: opt-in adaptive MCP-init-race mitigation. Only meaningful
+   *  alongside `mcpServerName` (ignored, not an error, if set without one —
+   *  no-tools mode has no marker to wait for). When present,
+   *  `createConversation()` merges a marker-path env var into the spawned
+   *  MCP server's environment and blocks its own return until either the
+   *  server signals readiness (see `mcp-ready-marker.ts`), the MCP server
+   *  subprocess crashes first (throws `mcp_ready_wait_aborted`), or
+   *  `timeoutMs` elapses (`TurnTiming.mcpReadyTimedOut` on the eventual
+   *  `TurnResult`). Omitted => unchanged behavior — every existing caller
+   *  that doesn't pass this keeps today's exact timing, byte-for-byte. */
+  waitForMcpReady?: {
+    timeoutMs: number;
+    /** Default 25ms when omitted. */
+    pollIntervalMs?: number;
+  };
 }
 
 // ── Internal session record (module-private — no public constructor) ──────
@@ -501,6 +530,13 @@ interface SessionRecord {
    *  shutdownAll), so `exited` finalization can tell "we asked for this"
    *  apart from a genuine crash (`unexpected_exit`). */
   terminationReason?: TerminationReason;
+  /** LIA-461: set once the MCP-ready marker was observed during
+   *  `createConversation()`'s wait loop (only meaningful when
+   *  `waitForMcpReady` was requested). Surfaced via `TurnTiming.spawnToMcpReadyMs`. */
+  mcpReadyObservedAt?: number;
+  /** LIA-461: true only when `waitForMcpReady` was requested and its wait
+   *  loop hit `timeoutMs` without observing the marker. */
+  mcpReadyTimedOut?: boolean;
 }
 
 export interface ClaudeCliSessionPoolOptions {
@@ -610,6 +646,14 @@ export class ClaudeCliSessionPool {
     // creates `scratchDir` as a side effect) is skipped entirely, so the
     // directory must still be created explicitly here.
     let mcpConfigPath: string | undefined;
+    // LIA-461: only meaningful alongside a real MCP server — a no-tools
+    // conversation has no marker to wait for, so this is silently ignored
+    // (not an error) rather than validated against mcpServerName's presence.
+    const mcpReadyMarkerPath =
+      createOptions.mcpServerName !== undefined &&
+      createOptions.waitForMcpReady !== undefined
+        ? path.join(createOptions.scratchDir, 'mcp-ready.marker')
+        : undefined;
     // mcpServerName/mcpServerScriptPath/allowedTool are required TOGETHER —
     // any partial combination (code-review finding: the original guard only
     // checked the mcpServerName-present direction, silently letting e.g.
@@ -637,7 +681,21 @@ export class ClaudeCliSessionPool {
         serverName: createOptions.mcpServerName,
         serverScriptPath: createOptions.mcpServerScriptPath,
         repoRoot: createOptions.repoRoot,
-        serverEnv: createOptions.mcpServerEnv,
+        // Must stay `undefined` (not `{}`) when neither is set —
+        // buildMcpScratchConfig gates the config's `env` key presence on
+        // `serverEnv !== undefined`, so always passing an object here would
+        // add an empty `env: {}` to every MCP server's config, a behavior
+        // change for every existing caller that passes neither field today.
+        serverEnv:
+          createOptions.mcpServerEnv !== undefined ||
+          mcpReadyMarkerPath !== undefined
+            ? {
+                ...createOptions.mcpServerEnv,
+                ...(mcpReadyMarkerPath !== undefined
+                  ? { [MCP_READY_MARKER_ENV_VAR]: mcpReadyMarkerPath }
+                  : {}),
+              }
+            : undefined,
       });
       mcpConfigPath = writeMcpScratchConfig(
         createOptions.scratchDir,
@@ -645,6 +703,16 @@ export class ClaudeCliSessionPool {
       );
     } else {
       fs.mkdirSync(createOptions.scratchDir, { recursive: true });
+    }
+    // code-review finding: a scratchDir reused across conversations (e.g. a
+    // future caller that doesn't derive it from a fresh id per attempt, or a
+    // stale directory left behind by an earlier crashed run) could already
+    // contain a marker file from a PRIOR launch — fs.existsSync would then
+    // report ready immediately, defeating the entire wait this feature exists
+    // to provide. Clear any pre-existing marker before spawn so the wait loop
+    // can only observe one written by THIS launch's own MCP server.
+    if (mcpReadyMarkerPath !== undefined) {
+      fs.rmSync(mcpReadyMarkerPath, { force: true });
     }
 
     const args = buildClaudeCliArgs({
@@ -712,6 +780,43 @@ export class ClaudeCliSessionPool {
           `${immediateSpawnError?.message ?? 'process exited immediately'}`,
         'spawn_error',
       );
+    }
+
+    // LIA-461: adaptive MCP-init-race mitigation. A single loop (not a
+    // Promise.race over independently-running promises, which would leak the
+    // losing side's poll forever — JS never cancels a race's losers) checks
+    // all three exit conditions each tick: marker observed, MCP server
+    // subprocess crashed (record.finalized), or timeoutMs elapsed. Only runs
+    // when the caller both configured a real MCP server AND opted in via
+    // waitForMcpReady — every other caller's timing is completely unaffected.
+    if (mcpReadyMarkerPath !== undefined) {
+      const pollMs = createOptions.waitForMcpReady!.pollIntervalMs ?? 25;
+      const deadline = this.now() + createOptions.waitForMcpReady!.timeoutMs;
+      while (true) {
+        if (fs.existsSync(mcpReadyMarkerPath)) {
+          record.mcpReadyObservedAt = this.now();
+          break;
+        }
+        if (record.finalized) {
+          // finalizeSession() has already synchronously removed this record
+          // from `this.sessions` and decremented occupiedSlotsCount by this
+          // point (wireProcessHandlers wires 'exit'/'error' straight to it) —
+          // throwing here rather than falling through to emit('spawned')/
+          // armIdleTimer/return avoids handing the caller a ConversationHandle
+          // for an already-deleted session, whose very next sendTurn() would
+          // otherwise throw a confusing not_found instead of a clear signal.
+          throw new ClaudeCliSessionError(
+            `MCP server for conversation "${conversationId}" exited before ` +
+              `signaling readiness`,
+            'mcp_ready_wait_aborted',
+          );
+        }
+        if (this.now() >= deadline) {
+          record.mcpReadyTimedOut = true;
+          break;
+        }
+        await this.sleep(pollMs);
+      }
     }
 
     this.emit({
@@ -961,6 +1066,14 @@ export class ClaudeCliSessionPool {
                 spawnToFirstAssistantMs:
                   pending.firstAssistantEventAt - record.spawnedAt,
               }
+            : {}),
+          ...(record.mcpReadyObservedAt !== undefined
+            ? {
+                spawnToMcpReadyMs: record.mcpReadyObservedAt - record.spawnedAt,
+              }
+            : {}),
+          ...(record.mcpReadyTimedOut === true
+            ? { mcpReadyTimedOut: true }
             : {}),
           totalTurnMs: completedAt - pending.turnStartedAt,
         },

@@ -53,7 +53,12 @@ function fakeCliPool(overrides: {
     result: { is_error: boolean; result?: string };
     turnEvents: StreamJsonEvent[];
     events?: StreamJsonEvent[];
-    timing?: { spawnToInitMs?: number; spawnToFirstAssistantMs?: number };
+    timing?: {
+      spawnToInitMs?: number;
+      spawnToFirstAssistantMs?: number;
+      spawnToMcpReadyMs?: number;
+      mcpReadyTimedOut?: boolean;
+    };
   }>;
 }): { pool: ClaudeCliSessionPool; terminateCalls: string[] } {
   const terminateCalls: string[] = [];
@@ -543,6 +548,28 @@ describe('CLI arg parsing (flags mirror eval/quality_bench.py)', () => {
       /invalid --preTurnDelayMs value/,
     );
   });
+
+  it('parses --waitForMcpReady and rejects invalid values (LIA-461)', () => {
+    expect(parseArgs(['--waitForMcpReady=5000']).waitForMcpReadyTimeoutMs).toBe(
+      5000,
+    );
+    expect(parseArgs([]).waitForMcpReadyTimeoutMs).toBeUndefined();
+    expect(() => parseArgs(['--waitForMcpReady=0'])).toThrow(
+      /invalid --waitForMcpReady value/,
+    );
+    expect(() => parseArgs(['--waitForMcpReady=-1'])).toThrow(
+      /invalid --waitForMcpReady value/,
+    );
+    expect(() => parseArgs(['--waitForMcpReady=notanumber'])).toThrow(
+      /invalid --waitForMcpReady value/,
+    );
+  });
+
+  it('rejects --preTurnDelayMs and --waitForMcpReady together (mutually exclusive, LIA-461)', () => {
+    expect(() =>
+      parseArgs(['--preTurnDelayMs=3000', '--waitForMcpReady=5000']),
+    ).toThrow(/mutually exclusive/);
+  });
 });
 
 describe('summary table', () => {
@@ -914,6 +941,50 @@ describe('runChainAgainstCliSubprocess / runCliSubprocessChainWithRetry (code-re
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('threads waitForMcpReady straight through to createConversation and skips the flat delay (LIA-461)', async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: false, result: 'the aurora fact' },
+        turnEvents: [],
+        timing: { spawnToMcpReadyMs: 812 },
+      }),
+    });
+    const sleep = vi.fn(async (_ms: number) => {});
+    const result = await runChainAgainstCliSubprocess(chain, pool, {
+      ...cliDeps,
+      sleep,
+      preTurnDelayMs: 0,
+      waitForMcpReady: { timeoutMs: 5000 },
+    });
+    expect(pool.createConversation).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        waitForMcpReady: { timeoutMs: 5000 },
+      }),
+    );
+    // preTurnDelayMs: 0 means the sleep resolves instantly regardless — this
+    // just confirms the wiring doesn't ALSO force a real wait when the
+    // marker-based mechanism is what's under test.
+    expect(sleep).toHaveBeenCalledWith(0);
+    expect(result.cliMcpDiagnostics?.spawnToMcpReadyMs).toBe(812);
+  });
+
+  it('omits waitForMcpReady from createConversation when not requested (default-unchanged)', async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: false, result: 'the aurora fact' },
+        turnEvents: [],
+      }),
+    });
+    await runChainAgainstCliSubprocess(chain, pool, cliDeps);
+    const call = (
+      pool.createConversation as unknown as {
+        mock: { calls: unknown[][] };
+      }
+    ).mock.calls[0]![1] as Record<string, unknown>;
+    expect(call).not.toHaveProperty('waitForMcpReady');
   });
 });
 

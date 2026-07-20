@@ -25,6 +25,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import { ClaudeCliSessionPool } from '../../src/agent-runtimes/cli-subprocess/claude-cli-session-pool.js';
+import { writeMcpReadyMarkerIfRequested } from '../../src/agent-runtimes/cli-subprocess/mcp-ready-marker.js';
 import {
   createMcpXClient,
   assertMcpXBuilt,
@@ -272,5 +273,10 @@ if (invokedDirectly) {
   process.on('SIGINT', handleShutdown);
   process.stdin.on('close', handleShutdown);
 
+  // code-review finding (LIA-461): see parent-turn-mcp-server.ts's identical
+  // comment — connect() only starts our own transport, not the client's
+  // handshake; oninitialized is the genuine completion signal and must be
+  // registered before connect() in case the notification arrives quickly.
+  server.server.oninitialized = () => writeMcpReadyMarkerIfRequested();
   await server.connect(transport);
 }
