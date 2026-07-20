@@ -10,6 +10,8 @@
 
 A personal AI that understands you - not just recalls things you've said. It learns what you care about, how you think, and what you'll actually find useful. The longer you use it, the more it feels like it gets you. Everything runs on your computer. Your data stays yours.
 
+**This is Deus V2** — the same product, rebuilt around a backend-neutral agent runtime so Deus is no longer tied to one AI provider's CLI. Claude remains the default and most battle-tested backend; OpenAI/Codex, llama.cpp, and Deus's own host-side `deus-native` runtime are available as opt-ins. See [Architecture](#architecture) for how that fits together, and [Migrating from Deus V1](#migrating-from-deus-v1) if you're coming from the original repo.
+
 ---
 
 ## What it does
@@ -26,6 +28,8 @@ A personal AI that understands you - not just recalls things you've said. It lea
 
 6. **Works on your code too** - Run `deus` in any project directory for a coding assistant that already knows your preferences and past work. `deus init` indexes a repo for code intelligence (codegraph + semantic search), and `deus arch` opens an interactive 3D map of its architecture.
 
+7. **Isn't locked to one AI provider** - Claude, OpenAI/Codex, a fully local llama.cpp model, or Deus's own host-side `deus-native` runtime — the memory, tone, personal context, chat commands, and channels stay the same regardless of which one is running underneath. See [AI backends](#ai-backends) below.
+
 <details>
 <summary>And more</summary>
 
@@ -37,6 +41,7 @@ A personal AI that understands you - not just recalls things you've said. It lea
 - **Web & video** - Summarize YouTube videos, fetch web pages, or research a topic, all from a chat message.
 - **Self-maintaining docs** - A weekly background agent scans for stale documentation and opens fix PRs automatically.
 - **Reliable long sessions** - Detects infinite tool-call loops and auto-summarizes large tool outputs so long sessions stay coherent.
+- **Linear-driven autonomous coding** - Move an issue to "Ready for Agent" and Deus scopes it, implements it in an isolated container, opens a PR, and (optionally) merges it once CI passes. See [Linear Automation](#linear-automation).
 
 </details>
 
@@ -59,8 +64,8 @@ A personal AI that understands you - not just recalls things you've said. It lea
 ### Install
 
 ```bash
-git clone https://github.com/sliamh11/Deus.git
-cd Deus
+git clone https://github.com/sliamh11/deus-v2.git
+cd deus-v2
 claude            # or: codex
 ```
 
@@ -108,46 +113,89 @@ See [AGENTS.md](AGENTS.md#commands-and-skills) for all available skills.
 
 ---
 
-## Deus V2 runtime (opt-in)
+## Architecture
 
-Deus V2 includes `deus-native`, a Deus-owned, host-side agent runtime built on
-LangChain. Claude remains the current default and compatibility baseline;
-`deus-native` is available by explicit opt-in through
-`DEUS_AGENT_BACKEND=deus-native` or a per-group/task backend override. The
-default flip remains tracked by H2/LIA-434 and is blocked on H1/LIA-433's
-reliability evidence.
+Deus V2's core architectural change from V1: the assistant runtime is no longer defined by any one AI provider's CLI. A **backend-neutral `AgentRuntime` registry** owns session routing, the credential boundary, and the canonical tool plane; each supported AI ("backend") is an adapter that plugs into it, not the architecture itself. See [Backend-Neutral Agent Runtime (ADR)](docs/decisions/backend-neutral-agent-runtime.md) for the full contract.
 
-See [Using different AI backends](docs/MULTI_BACKEND.md) for configuration,
-rollback, and current capability gaps.
+**Backend selection resolves in order**: per-task override → per-group override → global `DEUS_AGENT_BACKEND` default (`claude`). Regardless of which backend answers a message, Deus preserves the same tone, memory recall, chat commands, session management, and channel support — see [What Stays the Same](docs/MULTI_BACKEND.md#what-stays-the-same) for the exact parity contract and current gaps.
+
+### The four backends
+
+| Backend           | Where it runs                   | Status                      |
+| ----------------- | ------------------------------- | --------------------------- |
+| **Claude**        | Containerized (Claude Code SDK) | Default, most battle-tested |
+| **OpenAI/Codex**  | Containerized (Responses API)   | Opt-in, approaching parity  |
+| **llama.cpp**     | Containerized, fully local      | Opt-in, no per-turn cost    |
+| **`deus-native`** | Host-side (not containerized)   | Opt-in, see below           |
+
+`deus-native` is Deus's own agent loop, built on LangChain JS `createAgent` with LangGraph `SqliteSaver` checkpointing, running in-process on the host rather than inside a per-conversation container. It's the newest backend and the one under active development — see [LangChain-Based Host-Side Agent Runtime (ADR)](docs/decisions/deus-v2-langchain-runtime.md) for why host-side, and [Deus v2.0.0 release notes](docs/releases/v2.0.0.md) for exactly what ships and what doesn't yet (today: `web_search`, allowlisted `web_fetch`, and nested subagent dispatch; no shell/filesystem tools, no multimodal, no streaming). The default backend flip to `deus-native` (H2/LIA-434) remains **blocked**: H1/LIA-433's tool-loop reliability benchmark recorded an evidence-based **NO-GO** (both the Claude and GPT legs hit external account-level rate-limit/quota issues, not a code defect — see [h1-parity-signoff-lia433.md](docs/decisions/h1-parity-signoff-lia433.md)). Claude stays the default until that's re-run and clears.
+
+Full backend comparison table (tool streaming, session protocol, model defaults, MCP bridging, `/compact` behavior, credential routing) and setup instructions: [Using Different AI Backends](docs/MULTI_BACKEND.md).
+
+### Everything else
+
+- **Container isolation** - Each conversation on a containerized backend (Claude, OpenAI, llama.cpp) runs in its own isolated container with its own filesystem and credential scope. `deus-native` runs host-side instead, so it's excluded from public-ingress groups to keep that isolation guarantee intact for anything reachable from outside.
+- **Memory system** - Tiered retrieval over a fact-level knowledge base (not raw transcript search), with enforcement layers that keep personal context scoped correctly per group. See [Architecture — Memory System](docs/ARCHITECTURE.md#memory-system).
+- **Evolution loop** - The self-improvement mechanism behind "adapts to how you think": scores responses, generates self-critiques, and feeds back into prompt/behavior tuning. See [Architecture — Evolution Loop](docs/ARCHITECTURE.md#evolution-loop).
+- **Event hub** - An in-process pub/sub bus that decouples the Linear pipeline, webhook gates, and message path from each other — a listener reacts to a typed event instead of every producer hardcoding every consumer. See [Orchestrator Event Hub (ADR)](docs/decisions/event-hub.md).
+- **Channel system, security model, eval layer, developer tools** (CodeGraph, code_search, the `deus arch` 3D explorer) - all covered in the full [Architecture](docs/ARCHITECTURE.md) doc, which is backend-agnostic and applies regardless of which AI is answering.
+
+### Migrating from Deus V1
+
+If you're coming from the original [`sliamh11/Deus`](https://github.com/sliamh11/Deus) repo: the product, memory system, channels, and most of `src/` are shared history with V1 — this isn't a rewrite. What changed is that the agent loop is no longer Claude-Code-specific; V1's Claude-only assumptions are now one backend adapter among several. Claude stays the default, so an existing V1-style setup keeps working unchanged after switching repos. See [Known Limitations](docs/KNOWN_LIMITATIONS.md) for the current V2-specific gaps and [Deus v2.0.0 release notes](docs/releases/v2.0.0.md) for the full "what ships" list.
+
+---
+
+## AI Backends
+
+Deus ships with Claude configured by default. Switching backends — globally, for one group, or for one scheduled task — is a config change, not a reinstall:
+
+```bash
+# Globally, via .env
+echo 'DEUS_AGENT_BACKEND=openai' >> .env      # or: llama-cpp, deus-native
+deus auth                                      # rebuild + restart
+
+# One-off session
+deus codex        # Force Codex (OpenAI) for this session
+deus fcc           # Launch with a local proxy model (Ollama, llama-server, Gemini)
+
+# One group only, without touching the global default
+# send in-chat: /settings backend=openai   (or deus-native, llama-cpp, claude)
+```
+
+Verify the active backend at any time with `/context`. Full setup per backend (including OS-specific restart commands and the `deus-native` opt-in walkthrough), the complete parity/comparison table, and known gaps: **[Using Different AI Backends](docs/MULTI_BACKEND.md)**.
 
 ---
 
 ## CLI
 
-| Command | What it does |
-|---------|-------------|
-| `deus` | Launch in the current directory (project mode if outside `~/deus`) |
-| `deus home` | Launch in home mode regardless of current directory |
-| `deus web` | Launch the local web UI (Open WebUI) and open it in the browser |
-| `deus init` / `deus onboard` | Index the current project for code intelligence (codegraph + code_search) and register it (`--seed` adds a memory note) |
-| `deus arch` | Visualize a project's architecture in an interactive 3D explorer |
-| `deus codex` | Use OpenAI/Codex backend for this session |
-| `deus fcc` | Launch with a local proxy model (Ollama, llama-server, Gemini) |
-| `deus provider <name>` | Switch proxy provider (`ollama`, `llamacpp`, `gemini`) |
-| `deus model <name>` | Switch proxy model (auto-prefixes active provider) |
-| `deus model dashboard` | Open proxy admin UI in browser |
-| `deus auth` | Rebuild and restart background services |
-| `deus build` | Build without the Claude-OAuth credential check `deus auth` performs; restarts automatically on macOS, Linux requires a manual `systemctl --user restart deus` afterward, see [Using different AI backends](docs/MULTI_BACKEND.md) for the Windows gap |
-| `deus gcal` | Google Calendar token management (`status`, `auth`, `ping`) |
-| `deus listen` | Record from mic, transcribe locally, copy to clipboard |
-| `deus chat` | Interactive terminal chat over the daemon-owned `deus-native` runtime; `deus chat model set\|show` for model selection, `/plan on\|off` in-chat for read-only mode |
-| `deus pipeline` | Live pipeline monitor (default), or one-shot audit (`PROJ-123`, `--failed`, `--active`) |
-| `deus usage` | Token-efficiency + cost report across all projects (`--since`, `--project`, `--pricing`, `--json`) |
-| `deus backend` | Show active agent backend (`claude`, `codex`, `llama-cpp`) |
-| `deus backend set <name>` | Switch backend for all future sessions |
-| `deus sync` | Update the live install to `origin/main` (`deus sync upstream` for forks) |
-| `deus preflight` | Detect whether another live session is working the current git tree (read-only; exit 6 on collision) |
-| `deus root` | Print the resolved Deus clone directory (a cwd-independent anchor for user-scope skills) |
+| Command                                               | What it does                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deus`                                                | Launch in the current directory (project mode if outside `~/deus`)                                                                                                                                                                                                                                   |
+| `deus home`                                           | Launch in home mode regardless of current directory                                                                                                                                                                                                                                                  |
+| `deus web`                                            | Launch the local web UI (Open WebUI) and open it in the browser                                                                                                                                                                                                                                      |
+| `deus init` / `deus onboard`                          | Index the current project for code intelligence (codegraph + code_search) and register it (`--seed` adds a memory note)                                                                                                                                                                              |
+| `deus arch`                                           | Visualize a project's architecture in an interactive 3D explorer                                                                                                                                                                                                                                     |
+| `deus codex`                                          | Use OpenAI/Codex backend for this session                                                                                                                                                                                                                                                            |
+| `deus fcc`                                            | Launch with a local proxy model (Ollama, llama-server, Gemini)                                                                                                                                                                                                                                       |
+| `deus provider <name>`                                | Switch proxy provider (`ollama`, `llamacpp`, `gemini`)                                                                                                                                                                                                                                               |
+| `deus model <name>`                                   | Switch proxy model (auto-prefixes active provider)                                                                                                                                                                                                                                                   |
+| `deus model dashboard`                                | Open proxy admin UI in browser                                                                                                                                                                                                                                                                       |
+| `deus auth`                                           | Rebuild and restart background services                                                                                                                                                                                                                                                              |
+| `deus build`                                          | Build without the Claude-OAuth credential check `deus auth` performs; restarts automatically on macOS, Linux requires a manual `systemctl --user restart deus` afterward, see [Using different AI backends](docs/MULTI_BACKEND.md) for the Windows gap                                               |
+| `deus deploy`                                         | Diff-driven conditional deploy of the live main tree — like `deus sync` but rebuilds only what the incoming diff actually touched (host build only if `src/` changed, container rebuild only if container inputs changed); see [live-command-freshness.md](docs/decisions/live-command-freshness.md) |
+| `deus gcal`                                           | Google Calendar token management (`status`, `auth`, `ping`)                                                                                                                                                                                                                                          |
+| `deus listen`                                         | Record from mic, transcribe locally, copy to clipboard                                                                                                                                                                                                                                               |
+| `deus chat`                                           | Interactive terminal chat over the daemon-owned `deus-native` runtime; `deus chat model set\|show` for model selection, `/plan on\|off` in-chat for read-only mode                                                                                                                                   |
+| `deus pipeline`                                       | Live pipeline monitor (default), or one-shot audit (`PROJ-123`, `--failed`, `--active`)                                                                                                                                                                                                              |
+| `deus usage`                                          | Token-efficiency + cost report across all projects (`--since`, `--project`, `--pricing`, `--json`)                                                                                                                                                                                                   |
+| `deus backend`                                        | Show active agent backend                                                                                                                                                                                                                                                                            |
+| `deus backend set <claude\|codex\|ollama\|llama-cpp>` | Switch backend for all future sessions — `deus-native` isn't reachable through this command; opt in via `DEUS_AGENT_BACKEND=deus-native` in `.env` or in-chat `/settings backend=deus-native` (see [AI Backends](#ai-backends))                                                                      |
+| `deus sync`                                           | Update the live install to `origin/main` (`deus sync upstream` for forks)                                                                                                                                                                                                                            |
+| `deus recall --source <path>`                         | Decompress a `/compress` session log back to its exact source transcript                                                                                                                                                                                                                             |
+| `deus logs [summary\|pinned\|rotate\|review]`         | Log review, rotation, and health reporting                                                                                                                                                                                                                                                           |
+| `deus preflight`                                      | Detect whether another live session is working the current git tree (read-only; exit 6 on collision)                                                                                                                                                                                                 |
+| `deus root`                                           | Print the resolved Deus clone directory (a cwd-independent anchor for user-scope skills)                                                                                                                                                                                                             |
 
 For direct Codex CLI sessions outside the `deus` launcher, register Deus memory
 recall as an MCP tool through the repo launcher:
@@ -197,13 +245,13 @@ Use [Linear](https://linear.app) as a Kanban command center for autonomous agent
 
 Issues move through five stages: **Todo → Ready for Agent → Agent Working → In Review → Done**. Three quality checks fire automatically as issues move through the board:
 
-| Check | Fires on | What it does |
-|-------|----------|--------------|
-| **agent-readiness-gate** | Todo → Ready for Agent | Scopes the issue: implementation plan, acceptance criteria, effort/complexity ratings |
-| **output-quality-gate** | Agent Working → In Review | Verifies the agent produced a real deliverable (PR, document, etc.) |
-| **completion-gate** | In Review → Done | Checks all acceptance criteria are met and PR is merged |
+| Check                    | Fires on                  | What it does                                                                          |
+| ------------------------ | ------------------------- | ------------------------------------------------------------------------------------- |
+| **agent-readiness-gate** | Todo → Ready for Agent    | Scopes the issue: implementation plan, acceptance criteria, effort/complexity ratings |
+| **output-quality-gate**  | Agent Working → In Review | Verifies the agent produced a real deliverable (PR, document, etc.)                   |
+| **completion-gate**      | In Review → Done          | Checks all acceptance criteria are met and PR is merged                               |
 
-When `LINEAR_AUTO_MERGE=1`, Deus automatically merges the agent's PR once CI passes.
+When `LINEAR_AUTO_MERGE=1`, Deus automatically merges the agent's PR once CI passes. Backend selection for dispatched work follows a capability-readiness guard — a `deus-native`-backed issue that needs mutation/commit tools it doesn't have yet is routed to Manual Review Required instead of being reported as a false success.
 
 Each issue gets a single rolling **Pipeline Log** comment that tracks every event (gate verdicts, agent dispatch, PR creation, merge) -- no comment spam.
 
@@ -211,7 +259,7 @@ Each issue gets a single rolling **Pipeline Log** comment that tracks every even
 
 The pipeline is **event-driven**. Instead of each step writing directly to Linear and the event log, the orchestrator emits typed events onto an in-process **event bus**, and independent listeners react:
 
-- one listener **acts** on Linear (e.g. moves an issue to *In Review* when an agent finishes),
+- one listener **acts** on Linear (e.g. moves an issue to _In Review_ when an agent finishes),
 - another **records** every event to the pipeline log that backs `deus pipeline` and the rolling comment.
 
 This pub/sub seam keeps the dispatcher, webhook gates, and message path decoupled -- new behavior plugs in as a listener without touching the producers. See [Event hub architecture](docs/decisions/event-hub.md) for the bus contract, the strangler migration, and the phase roadmap.
@@ -285,9 +333,9 @@ Gates are plain markdown files in `.claude/agents/wardens/`. Adding a gate is on
 ```yaml
 ---
 name: my-custom-gate
-gate_to: "In Review"
-allowed_from: ["Agent Working"]
-mode: advise          # or strict (reverts on non-SHIP)
+gate_to: 'In Review'
+allowed_from: ['Agent Working']
+mode: advise # or strict (reverts on non-SHIP)
 cooldown_minutes: 60
 ---
 Your gate prompt here...
@@ -299,15 +347,15 @@ Select review wardens (`plan-reviewer`, `code-reviewer`, `ai-eng-warden`) can ru
 
 ## Comparison
 
-|  | **Deus** | **[OpenClaw](https://github.com/openclaw/openclaw)** | **[NemoClaw](https://github.com/NVIDIA/NemoClaw)** | **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** | **Plain Claude** |
-|---|---|---|---|---|---|
-| **Memory** | Understands you - indexes facts by meaning, recalls in context | Markdown files | Via OpenClaw | Full-text search + preference profiling | Conversation only |
-| **Learning** | Adapts at the personality level - tone, judgment, suggestions | No | No | Auto-creates & refines skills | No |
-| **Channels** | 7 (WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook) | 10+ | Via OpenClaw | 15+ (WhatsApp, Telegram, Signal, Matrix...) | None |
-| **Isolation** | Container per conversation (Claude, OpenAI, llama.cpp; deus-native runs in-process) | Opt-in Docker | Landlock + seccomp | Per-session | None |
-| **LLM support** | Claude default; deus-native, OpenAI, and llama.cpp opt-in | Any provider | Any (via OpenClaw) | Any (10+ providers) | Claude only |
-| **Setup** | ~5 min | ~15 min | ~20 min | ~10 min | N/A |
-| **Repo size** | ~13 MB | ~592 MB | ~22 MB | ~147 MB | N/A |
+|                 | **Deus**                                                                            | **[OpenClaw](https://github.com/openclaw/openclaw)** | **[NemoClaw](https://github.com/NVIDIA/NemoClaw)** | **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** | **Plain Claude**  |
+| --------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------- | ----------------- |
+| **Memory**      | Understands you - indexes facts by meaning, recalls in context                      | Markdown files                                       | Via OpenClaw                                       | Full-text search + preference profiling                          | Conversation only |
+| **Learning**    | Adapts at the personality level - tone, judgment, suggestions                       | No                                                   | No                                                 | Auto-creates & refines skills                                    | No                |
+| **Channels**    | 7 (WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook)                       | 10+                                                  | Via OpenClaw                                       | 15+ (WhatsApp, Telegram, Signal, Matrix...)                      | None              |
+| **Isolation**   | Container per conversation (Claude, OpenAI, llama.cpp; deus-native runs in-process) | Opt-in Docker                                        | Landlock + seccomp                                 | Per-session                                                      | None              |
+| **LLM support** | Claude default; deus-native, OpenAI, and llama.cpp opt-in                           | Any provider                                         | Any (via OpenClaw)                                 | Any (10+ providers)                                              | Claude only       |
+| **Setup**       | ~5 min                                                                              | ~15 min                                              | ~20 min                                            | ~10 min                                                          | N/A               |
+| **Repo size**   | ~18 MB (tracked source)                                                             | ~592 MB                                              | ~22 MB                                             | ~147 MB                                                          | N/A               |
 
 Deus goes deep on understanding you and adapting over time. Hermes goes wide on channels and LLM flexibility. See [docs/benchmarks.md](docs/benchmarks.md) for detailed numbers.
 
@@ -315,29 +363,31 @@ Deus goes deep on understanding you and adapting over time. Hermes goes wide on 
 
 ## Docs
 
-| Topic | |
-|-------|-|
-| How it works | [Architecture](docs/ARCHITECTURE.md) |
-| Memory system | [Architecture - Memory](docs/ARCHITECTURE.md#memory-system) |
-| Self-improvement loop | [Architecture - Evolution](docs/ARCHITECTURE.md#evolution-loop) |
-| Developer tools (CodeGraph, code_search, etc.) | [Architecture - Developer Tools](docs/ARCHITECTURE.md#developer-tools) |
-| 3D architecture explorer (`deus arch`) | [Architecture explorer](tools/architecture-explorer/README.md) |
-| Security model | [Security](docs/SECURITY.md) |
-| Benchmarks & token costs | [Benchmarks](docs/benchmarks.md) |
-| Environment variables | [Environment](docs/ENVIRONMENT.md) |
-| Using different AI backends | [Multi-backend](docs/MULTI_BACKEND.md) |
-| Local backend (llama.cpp) | [Multi-backend — llama.cpp](docs/MULTI_BACKEND.md#llamacpp-local-backend) |
-| Product runtime vs optional development clients | [Development Client Tiers](docs/DEVELOPMENT_CLIENT_TIERS.md) |
-| v2.0.0 release notes | [Deus v2.0.0](docs/releases/v2.0.0.md) |
-| Use Deus in your editor (Zed, ACP/MCP) | [Editor integration](docs/EDITOR_INTEGRATION.md) |
-| Backend quality benchmark | [Claude vs Codex parity report](docs/research/backend-quality-benchmark-2026-04-26.md) |
-| Cross-model review co-gate | [Warden co-gate](docs/WARDEN_CO_GATE.md) |
-| Development setup | [Development](docs/DEVELOPMENT.md) |
-| Contributing | [Contributing](CONTRIBUTING.md) |
-| Known limitations | [Limitations](docs/KNOWN_LIMITATIONS.md) |
-| Linear automation | [Setup, gates, and pipeline](docs/decisions/linear-webhook-pipeline.md) |
-| Event hub architecture | [Orchestrator Event Hub](docs/decisions/event-hub.md) |
-| Hook dispatch architecture | [Hook Dispatch System](docs/decisions/hook-dispatch-system.md) |
+| Topic                                           |                                                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------- |
+| How it works                                    | [Architecture](docs/ARCHITECTURE.md)                                                   |
+| Backend-neutral runtime (the core V2 change)    | [Backend-Neutral Agent Runtime](docs/decisions/backend-neutral-agent-runtime.md)       |
+| `deus-native` host-side runtime                 | [LangChain-Based Host-Side Agent Runtime](docs/decisions/deus-v2-langchain-runtime.md) |
+| Orchestrator event bus                          | [Event hub architecture](docs/decisions/event-hub.md)                                  |
+| Memory system                                   | [Architecture - Memory](docs/ARCHITECTURE.md#memory-system)                            |
+| Self-improvement loop                           | [Architecture - Evolution](docs/ARCHITECTURE.md#evolution-loop)                        |
+| Developer tools (CodeGraph, code_search, etc.)  | [Architecture - Developer Tools](docs/ARCHITECTURE.md#developer-tools)                 |
+| 3D architecture explorer (`deus arch`)          | [Architecture explorer](tools/architecture-explorer/README.md)                         |
+| Security model                                  | [Security](docs/SECURITY.md)                                                           |
+| Benchmarks & token costs                        | [Benchmarks](docs/benchmarks.md)                                                       |
+| Environment variables                           | [Environment](docs/ENVIRONMENT.md)                                                     |
+| Using different AI backends                     | [Multi-backend](docs/MULTI_BACKEND.md)                                                 |
+| Local backend (llama.cpp)                       | [Multi-backend — llama.cpp](docs/MULTI_BACKEND.md#llamacpp-local-backend)              |
+| Product runtime vs optional development clients | [Development Client Tiers](docs/DEVELOPMENT_CLIENT_TIERS.md)                           |
+| v2.0.0 release notes                            | [Deus v2.0.0](docs/releases/v2.0.0.md)                                                 |
+| Use Deus in your editor (Zed, ACP/MCP)          | [Editor integration](docs/EDITOR_INTEGRATION.md)                                       |
+| Backend quality benchmark                       | [Claude vs Codex parity report](docs/research/backend-quality-benchmark-2026-04-26.md) |
+| Cross-model review co-gate                      | [Warden co-gate](docs/WARDEN_CO_GATE.md)                                               |
+| Development setup                               | [Development](docs/DEVELOPMENT.md)                                                     |
+| Contributing                                    | [Contributing](CONTRIBUTING.md)                                                        |
+| Known limitations                               | [Limitations](docs/KNOWN_LIMITATIONS.md)                                               |
+| Linear automation                               | [Setup, gates, and pipeline](docs/decisions/linear-webhook-pipeline.md)                |
+| Hook dispatch architecture                      | [Hook Dispatch System](docs/decisions/hook-dispatch-system.md)                         |
 
 ---
 
