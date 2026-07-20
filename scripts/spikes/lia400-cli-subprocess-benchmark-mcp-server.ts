@@ -200,6 +200,7 @@ export function createLia400BenchToolsMcpServer(): {
       // extra-spawn risk to exactly one nested process per call.
       const pool = getNestedPool();
       const conversationId = nextDelegateConversationId();
+      // LIA-400: set by the leg via mcpServerEnv, pins the sub to the same model as main.
       const modelId = process.env.DEUS_LIA400_MODEL;
       try {
         await pool.createConversation(conversationId, {

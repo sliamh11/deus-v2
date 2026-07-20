@@ -78,6 +78,7 @@ export type ProviderName = (typeof PROVIDERS)[number];
 // and its delegate_to_subagent sub-conversation to the same model id (see
 // setUpCliSubprocessLeg's doc comment for why this must be a real model id,
 // not the CLI's ambient default).
+// LIA-400: opt-in override for the CLI-subprocess leg's pinned model id.
 export const CLI_SUBPROCESS_MODEL_ID =
   process.env.DEUS_LIA400_MODEL_ID ?? 'claude-sonnet-5';
 
