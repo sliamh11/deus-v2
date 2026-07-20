@@ -104,6 +104,7 @@ import {
 } from './lifecycle-events.js';
 import { getCheckpointer } from './checkpointer.js';
 import { buildContextCompactionMiddleware } from './context-compaction.js';
+import { retrieveMemoryContext } from './memory-retrieval.js';
 import { createTurnUsageCollector } from './deus-native-usage.js';
 import { buildNestedDispatchTool } from './nested-dispatch-tool.js';
 import { loadAgentSpecs, type LoadedAgentSpec } from './agent-spec-loader.js';
@@ -455,14 +456,13 @@ export class DeusNativeRuntime implements AgentRuntime {
         // Scope carve-out (EP-002's Goal section, plan-review round 1/2):
         // fixes the severe zero-history bug in step 10's
         // parent-turn-runner.ts (prior checkpoint messages were read but
-        // never sent to the CLI). Deliberately does NOT integrate
-        // context-compaction (LIA-457) or control-group memory-recall
-        // (LIA-458) for this path, and nested-dispatch child usage from
-        // inside parent-turn-mcp-server.ts's own subprocess is not yet
-        // folded into RunResult.usage (LIA-460) — all real, named,
-        // documented gaps, not silently dropped. The raw-HTTP path's own
-        // thread-turn lease is also deliberately NOT added here (LIA-459) —
-        // see EP-002's "Chosen approach" section for why.
+        // never sent to the CLI). Context-compaction (LIA-457) and
+        // control-group memory-recall (LIA-458) are now integrated (below).
+        // Nested-dispatch child usage from inside parent-turn-mcp-server.ts's
+        // own subprocess is not yet folded into RunResult.usage (LIA-460) —
+        // a real, named, documented gap, not silently dropped. The raw-HTTP
+        // path's own thread-turn lease is also deliberately NOT added here
+        // (LIA-459) — see EP-002's "Chosen approach" section for why.
         const rawPermissionProfile =
           runContext.backendConfig?.['permissionProfile'];
         if (
@@ -496,12 +496,28 @@ export class DeusNativeRuntime implements AgentRuntime {
         const mcpServerName = 'deus_lia454_parent';
         const startedAt = new Date();
 
+        // LIA-458: same personal-vault isolation gate as the raw-HTTP
+        // branch's own memoryRequest construction below —
+        // memory_retrieval_hook.py reads the user's PERSONAL vault and is
+        // not group-scoped, so it must never even be attempted for a
+        // non-control-group turn. Eager (not lazy like the raw-HTTP path's
+        // beforeModel hook) — confirmed cosmetic, not a new latency class:
+        // the raw-HTTP path's own hook already fires unconditionally and
+        // synchronously on every control-group turn's only model call.
+        const recalledMemoryContext = runContext.isControlGroup
+          ? await retrieveMemoryContext({
+              prompt: runContext.prompt,
+              sessionId: outgoingSessionId,
+            })
+          : undefined;
+
         const outcome = await runParentTurnViaCliSubprocess(
           {
             threadId: outgoingSessionId,
             prompt: runContext.prompt,
             currentTurnMessageId,
             model: effectiveModels.main.model,
+            ...(runContext.isControlGroup ? { recalledMemoryContext } : {}),
             mcpServerContext: {
               permissionProfile: rawPermissionProfile,
               wardenCwd,

@@ -234,10 +234,22 @@ export async function runParentTurnViaCliSubprocess(
         });
         created = true;
 
-        const turnResult = await deps.pool.sendTurn(
-          conversationId,
-          options.prompt,
-        );
+        // LIA-458: the live CLI turn must actually see recalled memory
+        // context THIS turn (same-turn parity with the raw-HTTP path's
+        // `beforeModel` injection into `state.messages` before that same
+        // turn's model call) — appended after the user's own prompt,
+        // mirroring `middleware-stack.ts`'s own bare (unwrapped)
+        // `HumanMessage` positioning. `options.prompt` itself is left
+        // UNCHANGED below (translateCliTurnResult, persisted checkpoint) —
+        // only this live string sent to the CLI subprocess is augmented,
+        // so the persisted current-turn message stays the real user prompt.
+        const livePrompt =
+          options.recalledMemoryContext !== undefined &&
+          options.recalledMemoryContext !== ''
+            ? `${options.prompt}\n\n${options.recalledMemoryContext}`
+            : options.prompt;
+
+        const turnResult = await deps.pool.sendTurn(conversationId, livePrompt);
         if (turnResult.result.is_error) {
           return {
             status: 'error',
