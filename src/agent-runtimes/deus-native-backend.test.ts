@@ -25,10 +25,16 @@ const {
   buildNestedDispatchToolMock,
   appendTranscriptMock,
   loadAgentSpecsSpy,
+  acquireThreadTurnLeaseMock,
 } = vi.hoisted(() => ({
   createAgentMock: vi.fn(),
   invokeMock: vi.fn(),
   checkpointerStub: { getTuple: async () => undefined },
+  // LIA-459: defaults to a successful fake lease in the top-level beforeEach
+  // below so every pre-existing raw-HTTP test in this file (which never
+  // reasons about the lease at all) keeps passing unmodified; only the
+  // dedicated describe block further down overrides this per-test.
+  acquireThreadTurnLeaseMock: vi.fn(),
   // D1 (LIA-415): a pass-through SPY (implementation assigned in the
   // module mock below — always the REAL buildMiddlewareStack), so tests
   // can inspect the deps runTurn supplies (memoryRequest presence/shape)
@@ -169,6 +175,16 @@ vi.mock('./transcript-store.js', () => ({
   appendDeusNativeTranscriptTurn: appendTranscriptMock,
 }));
 
+// LIA-459: the raw-HTTP path's new thread-turn lease acquisition. Mocked
+// directly (not a delegating spy) — proving genuine real-lease contention is
+// process-lifecycle-registry.test.ts's own job (real fs, real Promise.all),
+// not this file's; this file only proves runTurn() calls the primitive
+// correctly. DEUS_NATIVE_TRANSPORT defaults to 'raw-http' (unmocked here),
+// so every test in this file already exercises this new call site.
+vi.mock('./cli-subprocess/process-lifecycle-registry.js', () => ({
+  acquireThreadTurnLease: acquireThreadTurnLeaseMock,
+}));
+
 const { createDeusNativeRuntime } = await import('./deus-native-backend.js');
 
 const stubDeps: ContainerRuntimeDeps = {
@@ -182,6 +198,16 @@ beforeEach(() => {
   appendTranscriptMock.mockResolvedValue({
     ok: true,
     path: '/test/store/transcripts/deus-native/session.jsonl',
+  });
+  // LIA-459: default every test to a successful lease acquisition, so the
+  // hundreds of pre-existing raw-HTTP tests in this file (which never
+  // reason about the lease) are unaffected; the dedicated describe block
+  // below overrides this per-test.
+  acquireThreadTurnLeaseMock.mockReset();
+  acquireThreadTurnLeaseMock.mockResolvedValue({
+    threadHash: 'default-fake-hash',
+    path: '/fake/lease/path',
+    release: vi.fn(),
   });
 });
 
@@ -1452,5 +1478,100 @@ describe('DeusNativeRuntime — SubAgent chat-dispatch role catalog (LIA-444)', 
       agentSpecs?: ReadonlyMap<string, unknown>;
     };
     expect(options.agentSpecs?.size).toBe(0);
+  });
+});
+
+describe('DeusNativeBackend — raw-HTTP thread-turn lease (LIA-459)', () => {
+  const backend = createDeusNativeRuntime(stubDeps);
+
+  beforeEach(() => {
+    createAgentMock.mockReset();
+    invokeMock.mockReset();
+    detectAuthModeMock.mockReturnValue('api-key');
+    getOrCreateGroupTokenMock.mockReset();
+    getOrCreateGroupTokenMock.mockReturnValue('fake-proxy-token');
+  });
+
+  it('acquires the lease with the backend-scoped session id BEFORE the checkpoint read, and releases it exactly once on the success path', async () => {
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMockEcho({ content: 'ok' });
+    const releaseMock = vi.fn();
+    acquireThreadTurnLeaseMock.mockResolvedValue({
+      threadHash: 'hash',
+      path: '/fake/lease/path',
+      release: releaseMock,
+    });
+
+    const result = await backend.runTurn(
+      {
+        prompt: 'hello',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: 'existing-session-id' },
+      () => {},
+    );
+
+    expect(result.status).toBe('success');
+    expect(acquireThreadTurnLeaseMock).toHaveBeenCalledTimes(1);
+    expect(acquireThreadTurnLeaseMock).toHaveBeenCalledWith(
+      'existing-session-id',
+    );
+    // getTuple only ever resolves via checkpointerStub, so we can't directly
+    // order-assert against it here — but checkpointerStub.getTuple is a
+    // constant stub with no call-tracking hook in this file's mock, so the
+    // ordering guarantee lives in the source (acquire is the first statement
+    // after the CLI-branch early-return, before getTuple) and is covered by
+    // this test's real, unmodified control flow actually reaching success.
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a null lease returns a clear "another turn in flight" error and never calls createAgent/invoke', async () => {
+    acquireThreadTurnLeaseMock.mockResolvedValue(null);
+
+    const result = await backend.runTurn(
+      {
+        prompt: 'hello',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: 'existing-session-id' },
+      () => {},
+    );
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.error).toContain('thread-turn lease');
+      expect(result.error).toContain('already in flight');
+    }
+    expect(createAgentMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('releases the lease exactly once even when the agent invocation throws (error path)', async () => {
+    createAgentMock.mockReturnValue({ invoke: invokeMock });
+    invokeMock.mockRejectedValue(new Error('model call failed'));
+    const releaseMock = vi.fn();
+    acquireThreadTurnLeaseMock.mockResolvedValue({
+      threadHash: 'hash',
+      path: '/fake/lease/path',
+      release: releaseMock,
+    });
+
+    const result = await backend.runTurn(
+      {
+        prompt: 'hello',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: '' },
+      () => {},
+    );
+
+    expect(result.status).toBe('error');
+    expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 });

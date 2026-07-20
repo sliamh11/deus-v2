@@ -111,6 +111,10 @@ import { DEUS_NATIVE_TRANSPORT, PROJECT_ROOT } from '../config.js';
 import { ClaudeCliSessionPool } from './cli-subprocess/claude-cli-session-pool.js';
 import { runParentTurnViaCliSubprocess } from './cli-subprocess/parent-turn-runner.js';
 import {
+  acquireThreadTurnLease,
+  type ThreadTurnLease,
+} from './cli-subprocess/process-lifecycle-registry.js';
+import {
   buildNativeModelClient,
   parseEffectiveNativeModelConfig,
   resolveEffectiveRoleModel,
@@ -279,6 +283,12 @@ export class DeusNativeRuntime implements AgentRuntime {
     // of which return path this turn takes, so no subprocess from this turn
     // ever survives the turn.
     let cliSubprocessPool: ClaudeCliSessionPool | undefined;
+    // LIA-459: the raw-HTTP path's own thread-turn lease (the CLI-subprocess
+    // path already acquires this same primitive, keyed on the identical
+    // `outgoingSessionId` — see below). Released unconditionally in the
+    // `finally` regardless of return path, mirroring `cliSubprocessPool`'s
+    // own cleanup-regardless-of-outcome pattern immediately below it.
+    let rawHttpLease: ThreadTurnLease | null = null;
     try {
       // publicIngress fail-closed guard (added after code-review: a real gap
       // the earlier drafts missed). container-runner.ts's buildContainerArgs
@@ -544,6 +554,28 @@ export class DeusNativeRuntime implements AgentRuntime {
           primaryProvider: outcome.provider,
           startedAt,
         });
+      }
+
+      // LIA-459: acquire the SAME cross-process thread-turn lease the
+      // CLI-subprocess path already uses (process-lifecycle-registry.ts),
+      // keyed on the identical `outgoingSessionId` — this closes both the
+      // raw/raw race AND the mixed raw/CLI race EP-002 already documented as
+      // a deferred gap, since both transports now key the identical lease
+      // namespace. No `leaseOptions` override — the real defaults (real
+      // STORE_DIR, the lease's own bounded internal retry) are what make
+      // this share that namespace. Acquired BEFORE the checkpoint read
+      // below, matching the CLI path's own acquire-before-read ordering.
+      // On contention, fail this turn immediately — mirrors the CLI path's
+      // own established behavior (parent-turn-runner.ts); verified no
+      // runTurn() caller retries on status:'error', so no caller needs new
+      // handling for this error shape.
+      rawHttpLease = await acquireThreadTurnLease(outgoingSessionId);
+      if (rawHttpLease === null) {
+        return {
+          status: 'error',
+          result: null,
+          error: `deus-native: could not acquire the thread-turn lease for "${outgoingSessionId}" — another turn is already in flight for this thread`,
+        };
       }
 
       // B4 (LIA-404): read the real checkpoint state ONCE to derive the
@@ -918,6 +950,10 @@ export class DeusNativeRuntime implements AgentRuntime {
       // LIA-454 EP-002 step 11: no CLI-subprocess process from this turn
       // survives the turn, on any return path (success or error above).
       await cliSubprocessPool?.shutdownAll();
+      // LIA-459: no raw-HTTP thread-turn lease from this turn survives the
+      // turn either, on any return path — same "regardless of outcome"
+      // pattern as the CLI-subprocess pool cleanup immediately above.
+      rawHttpLease?.release();
     }
   }
 

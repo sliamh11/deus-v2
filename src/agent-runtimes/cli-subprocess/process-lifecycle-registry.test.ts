@@ -14,6 +14,18 @@ import crypto from 'node:crypto';
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
+// LIA-459: matches auth-refresh.test.ts's own established mocking
+// convention for this module — a plain vi.fn() surface, no real log output.
+const { loggerWarnMock } = vi.hoisted(() => ({ loggerWarnMock: vi.fn() }));
+vi.mock('../../logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: loggerWarnMock,
+    error: vi.fn(),
+  },
+}));
+
 import {
   acquireProcessSlot,
   acquireThreadTurnLease,
@@ -27,6 +39,7 @@ beforeEach(() => {
   scratchRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), 'lia454-process-lifecycle-'),
   );
+  loggerWarnMock.mockClear();
 });
 afterEach(() => {
   fs.rmSync(scratchRoot, { recursive: true, force: true });
@@ -287,6 +300,61 @@ describe('acquireThreadTurnLease', () => {
     expect(filesInDir).toEqual([path.basename(first!.path)]);
   });
 
+  it('LIA-459: logs a warning when the residual restore-window race orphans a captured live lease (observability mitigation)', async () => {
+    // Exact same fixture as the residual-gap test above — a fresh
+    // acquirer's wx-create races into the emptied lockPath during the
+    // eviction-restore window, so the captured live lease is discarded
+    // rather than restored. This test asserts ONLY the new, additive log
+    // line fires with the right field — behavior/return-value assertions
+    // for this fixture are already covered by the sibling test above.
+    const first = await acquireThreadTurnLease('thread-orphan-logs', {
+      rootDir: scratchRoot,
+      deps: fakeDeps({ processExists: () => false }),
+    });
+    expect(first).not.toBeNull();
+
+    let processExistsCallCount = 0;
+    const flakyProcessExists = () => {
+      processExistsCallCount++;
+      return processExistsCallCount >= 2;
+    };
+
+    const originalLinkSync = fs.linkSync.bind(fs);
+    const linkSpy = vi
+      .spyOn(fs, 'linkSync')
+      .mockImplementationOnce((...args: Parameters<typeof fs.linkSync>) => {
+        fs.writeFileSync(
+          first!.path,
+          JSON.stringify({
+            kind: 'thread-turn',
+            ownerPid: 424242,
+            ownerStartIdentity: 'third-party',
+            ownerCommandLine: 'third-party-cmd',
+            nonce: 'third-party-nonce',
+            acquiredAtMs: 0,
+          }),
+          { flag: 'wx' },
+        );
+        return originalLinkSync(...args);
+      });
+
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+    await acquireThreadTurnLease('thread-orphan-logs', {
+      rootDir: scratchRoot,
+      maxAttempts: 1,
+      deps: fakeDeps({ processExists: flakyProcessExists }),
+    });
+    linkSpy.mockRestore();
+
+    expect(loggerWarnMock).toHaveBeenCalledTimes(1);
+    const [fields, message] = loggerWarnMock.mock.calls[0] as [
+      { threadHash?: string },
+      string,
+    ];
+    expect(fields.threadHash).toBe(threadHashOf('thread-orphan-logs'));
+    expect(message).toContain('orphaned a live lease');
+  });
+
   it('does NOT reclaim on unverifiable identity until the mtime-age floor is exceeded', async () => {
     // The mtime-fallback compares the injected clock against a REAL
     // filesystem mtime, so this scenario needs the real wall clock rather
@@ -369,6 +437,110 @@ describe('acquireThreadTurnLease', () => {
     });
     expect(result).toBeNull();
     expect(sleepSpy).toHaveBeenCalledTimes(2); // maxAttempts - 1
+  });
+});
+
+describe('acquireThreadTurnLease — real concurrent contention (LIA-459 gap)', () => {
+  // These three tests exercise the ACTUAL cross-process contention path this
+  // module claims to protect: genuinely concurrent async callers (Promise.all,
+  // no await between them) racing for the SAME on-disk lease file, using real
+  // fs, real process-identity checks, and real jittered retry timers — never
+  // the sequential fake-clock simulation the other 18 tests in this file use.
+  // LIA-459 wires this already-shipped primitive onto the raw-HTTP transport;
+  // this closes the primitive's own missing real-concurrency oracle that the
+  // ticket calls out ("Test real cross-process contention"). Authored by
+  // oracle-author from the spec, blind to any implementation (this function
+  // is pre-existing, unmodified code — these close a coverage gap, not a
+  // red-before-green implementation gap), then mutation-verified: reverting
+  // the atomic wx-create to a plain w-create made all three tests fail, along
+  // with 7 of the 18 pre-existing tests.
+
+  it('exactly one of N genuinely concurrent callers for the same threadId wins the lease', async () => {
+    // @oracle: LIA-459 — real Promise.all race must yield exactly 1 winner, never 0 or >1
+    const threadId = 'thread-real-race';
+    const N = 5;
+
+    const results = await Promise.all(
+      Array.from({ length: N }, () =>
+        acquireThreadTurnLease(threadId, {
+          rootDir: scratchRoot,
+          maxAttempts: 5,
+        }),
+      ),
+    );
+
+    const winners = results.filter(
+      (r): r is NonNullable<(typeof results)[number]> => r !== null,
+    );
+    expect(winners).toHaveLength(1);
+    expect(winners[0].threadHash).toBe(threadHashOf(threadId));
+  });
+
+  it('a caller still in-flight in its jittered retry loop succeeds once the live owner releases mid-race, not merely after a fully sequential hand-off', async () => {
+    // @oracle: LIA-459 — B must be genuinely racing (already called, not yet
+    // consumed) when A releases; a sequential "await A, release, then call B"
+    // rewrite would not exercise the real retry-loop interleaving this guards.
+    const threadId = 'thread-live-retry-race';
+
+    const aPromise = acquireThreadTurnLease(threadId, {
+      rootDir: scratchRoot,
+    });
+    // B is issued before A is awaited/consumed — both calls are genuinely in
+    // flight together, matching how two real concurrent turns would hit this.
+    const bPromise = acquireThreadTurnLease(threadId, {
+      rootDir: scratchRoot,
+      maxAttempts: 10,
+    });
+
+    const winnerA = await aPromise;
+    expect(winnerA).not.toBeNull();
+    const aNonce = (
+      JSON.parse(fs.readFileSync(winnerA!.path, 'utf8')) as { nonce: string }
+    ).nonce;
+
+    // B is still asleep in its real jittered backoff right now (its first
+    // attempt already lost to A synchronously; its next real timer has not
+    // yet fired) — releasing here is strictly INSIDE that in-flight window,
+    // never after B has already exhausted its attempts and given up.
+    winnerA!.release();
+
+    const winnerB = await bPromise;
+    expect(winnerB).not.toBeNull();
+    expect(winnerB!.threadHash).toBe(winnerA!.threadHash);
+
+    const bNonce = (
+      JSON.parse(fs.readFileSync(winnerB!.path, 'utf8')) as { nonce: string }
+    ).nonce;
+    expect(bNonce).not.toBe(aNonce); // a genuinely new acquisition, not stale reuse
+  });
+
+  it('losers of a real concurrent race never leave a lingering lease file on disk — exactly one file exists for the winner', async () => {
+    // @oracle: LIA-459 — a write-then-detect-conflict implementation (as
+    // opposed to atomic create-or-fail) could leave loser debris (a stray
+    // candidate/temp file, or a clobbered-then-orphaned file) even while
+    // still reporting "exactly one winner"; this checks disk state directly.
+    const threadId = 'thread-no-debris';
+    const N = 5;
+
+    const results = await Promise.all(
+      Array.from({ length: N }, () =>
+        acquireThreadTurnLease(threadId, {
+          rootDir: scratchRoot,
+          maxAttempts: 1,
+        }),
+      ),
+    );
+    expect(results.filter((r) => r !== null)).toHaveLength(1);
+
+    const threadTurnsDirPath = path.join(
+      scratchRoot,
+      'cli-subprocess',
+      'thread-turns',
+    );
+    const filesOnDisk = fs.existsSync(threadTurnsDirPath)
+      ? fs.readdirSync(threadTurnsDirPath)
+      : [];
+    expect(filesOnDisk).toEqual([`${threadHashOf(threadId)}.lease.json`]);
   });
 });
 
