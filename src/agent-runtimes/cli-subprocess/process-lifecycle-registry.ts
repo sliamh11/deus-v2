@@ -80,6 +80,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { logger } from '../../logger.js';
 import { STORE_DIR } from '../../config.js';
 import {
   getProcessCommandLine as defaultGetProcessCommandLine,
@@ -294,6 +295,14 @@ function evictViaRename(
   } catch {
     // See the residual-gap note above — the captured lease's owner is
     // orphaned here, not self-healing.
+    // LIA-459: purely additive observability for this documented, accepted
+    // residual gap — no behavior/timing change. Converts a silent rare event
+    // into a visible one now that this primitive backs the higher-traffic
+    // raw-HTTP transport too, not just the CLI path's lower-traffic rollout.
+    logger.warn(
+      { threadHash: captured?.threadHash },
+      'process-lifecycle-registry: orphaned a live lease during eviction restore — a fresh acquirer claimed the lockPath in the brief window between eviction and restore (documented residual restore-window race)',
+    );
   }
   try {
     fs.unlinkSync(quarantinePath);
@@ -362,6 +371,14 @@ function releaseLeaseFile(
   } catch {
     // See the residual-gap note above — the captured lease's owner is
     // orphaned here, not self-healing.
+    // LIA-459: purely additive observability for this documented, accepted
+    // residual gap — no behavior/timing change. Converts a silent rare event
+    // into a visible one now that this primitive backs the higher-traffic
+    // raw-HTTP transport too, not just the CLI path's lower-traffic rollout.
+    logger.warn(
+      { threadHash: captured?.threadHash },
+      'process-lifecycle-registry: orphaned a live lease during release-path restore — a fresh acquirer claimed the lockPath in the brief window between capture and restore (documented residual restore-window race)',
+    );
   }
   try {
     fs.unlinkSync(quarantinePath);
