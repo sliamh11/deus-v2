@@ -51,6 +51,8 @@ function fakeCliPool(overrides: {
   ) => Promise<{
     result: { is_error: boolean; result?: string };
     turnEvents: StreamJsonEvent[];
+    events?: StreamJsonEvent[];
+    timing?: { spawnToInitMs?: number; spawnToFirstAssistantMs?: number };
   }>;
 }): { pool: ClaudeCliSessionPool; terminateCalls: string[] } {
   const terminateCalls: string[] = [];
@@ -595,7 +597,7 @@ describe('extractCliToolSequence (CLI-subprocess leg scoring adapter)', () => {
     ]);
   });
 
-  it('regression (real credentialed run, 2026-07-20): strips the mcp__<server>__ qualification prefix the real CLI actually reports, so the result is directly comparable to expectedToolSequence\'s bare names', () => {
+  it("regression (real credentialed run, 2026-07-20): strips the mcp__<server>__ qualification prefix the real CLI actually reports, so the result is directly comparable to expectedToolSequence's bare names", () => {
     const events: StreamJsonEvent[] = [
       assistantEvent([
         {
@@ -756,6 +758,48 @@ describe('runChainAgainstCliSubprocess / runCliSubprocessChainWithRetry (code-re
     expect(result.finalAnswer).toBe('the aurora fact');
     // terminate() must be called even on the success path (finally block).
     expect(terminateCalls.length).toBe(1);
+    // code-review recommendation: assert the negative case explicitly — no
+    // `events` supplied (as in every other pre-existing test here) means no
+    // system/init event is found, so cliMcpDiagnostics stays absent.
+    expect(result.cliMcpDiagnostics).toBeUndefined();
+  });
+
+  it("attaches cliMcpDiagnostics from the turn's system/init event + timing when present", async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: false, result: 'the aurora fact' },
+        turnEvents: [
+          {
+            type: 'assistant',
+            session_id: 's1',
+            parent_tool_use_id: null,
+            message: {
+              role: 'assistant',
+              content: [
+                { type: 'tool_use', id: 't1', name: 'lookup_fact', input: {} },
+              ],
+            },
+          },
+        ],
+        events: [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 's1',
+            mcp_servers: [{ name: 'lia400_bench_tools', status: 'connected' }],
+            tools: ['lookup_fact'],
+          },
+        ],
+        timing: { spawnToInitMs: 500, spawnToFirstAssistantMs: 800 },
+      }),
+    });
+    const result = await runChainAgainstCliSubprocess(chain, pool, cliDeps);
+    expect(result.cliMcpDiagnostics).toEqual({
+      mcpServers: [{ name: 'lia400_bench_tools', status: 'connected' }],
+      toolsAtInit: ['lookup_fact'],
+      spawnToInitMs: 500,
+      spawnToFirstAssistantMs: 800,
+    });
   });
 });
 

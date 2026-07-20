@@ -44,7 +44,9 @@ import {
 import { ClaudeCliSessionPool } from '../../src/agent-runtimes/cli-subprocess/claude-cli-session-pool.js';
 import {
   isAssistantEvent,
+  isSystemInitEvent,
   extractToolUseBlocks,
+  type McpServerStatus,
   type StreamJsonEvent,
 } from '../../src/agent-runtimes/cli-subprocess/stream-json-protocol.js';
 
@@ -479,6 +481,20 @@ export interface ChainResult {
    *  as a false fail. */
   notExecutedReason?: string;
   latencyMs: number;
+  /** Diagnostic-only, populated ONLY by `runChainAgainstCliSubprocess` (the
+   *  other 3 LangChain-based legs have no CLI subprocess/MCP-init concept).
+   *  Captures the CLI session's own `system/init` state and host-side timing
+   *  at the moment this turn resolved, so a FAIL cell's actual MCP-server
+   *  connection status can be checked directly against what happened on
+   *  THAT cell — see the 2026-07-20 addendum's open question on whether the
+   *  ~43% reliability figure is a model property or an MCP-readiness race.
+   *  Purely additive: never read by `matched`/`cellStatus`/`sequencesEqual`. */
+  cliMcpDiagnostics?: {
+    mcpServers: McpServerStatus[];
+    toolsAtInit: string[];
+    spawnToInitMs?: number;
+    spawnToFirstAssistantMs?: number;
+  };
 }
 
 export function cellStatus(result: ChainResult): 'PASS' | 'FAIL' | 'NOT-EXEC' {
@@ -601,6 +617,22 @@ export async function runChainAgainstCliSubprocess(
     // on `isRateLimitError` matching that REAL text, not a generic constant.
     const rawResultText = turnResult.result.result ?? '';
     const finalAnswer = turnResult.result.is_error ? '' : rawResultText;
+    // Optional chaining is deliberate, not defensive boilerplate: the real
+    // pool type declares `events`/`timing` as required, but `fakeCliPool`
+    // (the test double) casts a plain object `as unknown as
+    // ClaudeCliSessionPool` and its `sendTurn` overrides return neither
+    // field — so at runtime these ARE `undefined` in every pre-existing
+    // test, despite the type saying otherwise.
+    const initEvent = turnResult.events?.find(isSystemInitEvent);
+    const cliMcpDiagnostics =
+      initEvent === undefined
+        ? undefined
+        : {
+            mcpServers: initEvent.mcp_servers,
+            toolsAtInit: initEvent.tools,
+            spawnToInitMs: turnResult.timing?.spawnToInitMs,
+            spawnToFirstAssistantMs: turnResult.timing?.spawnToFirstAssistantMs,
+          };
     return {
       chainId: chain.id,
       provider: 'claude-cli-subprocess',
@@ -615,6 +647,7 @@ export async function runChainAgainstCliSubprocess(
       ...(turnResult.result.is_error
         ? { error: rawResultText || 'CLI turn reported is_error' }
         : {}),
+      ...(cliMcpDiagnostics !== undefined ? { cliMcpDiagnostics } : {}),
     };
   } catch (error) {
     return {
