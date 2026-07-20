@@ -24,10 +24,12 @@ const {
   runParentTurnViaCliSubprocessMock,
   poolConstructorSpy,
   appendTranscriptMock,
+  retrieveMemoryContextMock,
 } = vi.hoisted(() => ({
   runParentTurnViaCliSubprocessMock: vi.fn(),
   poolConstructorSpy: vi.fn(),
   appendTranscriptMock: vi.fn(),
+  retrieveMemoryContextMock: vi.fn(),
 }));
 
 vi.mock('../config.js', async (importOriginal) => {
@@ -37,6 +39,14 @@ vi.mock('../config.js', async (importOriginal) => {
 
 vi.mock('./cli-subprocess/parent-turn-runner.js', () => ({
   runParentTurnViaCliSubprocess: runParentTurnViaCliSubprocessMock,
+}));
+
+// LIA-458: a plain replacement mock (no delegating spy needed — unlike the
+// raw-HTTP path's memory tests, there's no lazy hook to preserve; this call
+// site's whole point is a real, eager, unconditional call this file must be
+// able to intercept and assert on directly).
+vi.mock('./memory-retrieval.js', () => ({
+  retrieveMemoryContext: retrieveMemoryContextMock,
 }));
 
 vi.mock('./cli-subprocess/claude-cli-session-pool.js', () => ({
@@ -75,6 +85,8 @@ beforeEach(() => {
     ok: true,
     path: '/test/store/transcripts/deus-native/session.jsonl',
   });
+  retrieveMemoryContextMock.mockReset();
+  retrieveMemoryContextMock.mockResolvedValue('');
 });
 
 describe('runTurn: cli-subprocess transport routing (LIA-454 EP-002 step 11)', () => {
@@ -285,5 +297,68 @@ describe('runTurn: cli-subprocess transport routing (LIA-454 EP-002 step 11)', (
     expect(result.status).toBe('error');
     expect(result.error).toContain('publicIngress');
     expect(runParentTurnViaCliSubprocessMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('runTurn: cli-subprocess control-group memory-recall (LIA-458)', () => {
+  const backend = createDeusNativeRuntime(stubDeps);
+
+  it('a control-group turn calls retrieveMemoryContext with the submitted prompt and backend-scoped session id, and threads the result into recalledMemoryContext', async () => {
+    retrieveMemoryContextMock.mockResolvedValue('recalled: user likes cats');
+    runParentTurnViaCliSubprocessMock.mockResolvedValue({
+      status: 'success',
+      newMessages: [],
+      finalAssistantText: 'ok',
+      model: 'claude-sonnet-5',
+      provider: 'anthropic',
+    });
+
+    await backend.runTurn(
+      {
+        prompt: 'what is the weather',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: true,
+      },
+      { backend: 'deus-native', session_id: 'existing-session-id' },
+      async () => {},
+    );
+
+    expect(retrieveMemoryContextMock).toHaveBeenCalledTimes(1);
+    expect(retrieveMemoryContextMock).toHaveBeenCalledWith({
+      prompt: 'what is the weather',
+      sessionId: 'existing-session-id',
+    });
+
+    expect(runParentTurnViaCliSubprocessMock).toHaveBeenCalledTimes(1);
+    const [options] = runParentTurnViaCliSubprocessMock.mock.calls[0];
+    expect(options.recalledMemoryContext).toBe('recalled: user likes cats');
+  });
+
+  it('a non-control-group turn never calls retrieveMemoryContext, and recalledMemoryContext is omitted entirely from the options', async () => {
+    runParentTurnViaCliSubprocessMock.mockResolvedValue({
+      status: 'success',
+      newMessages: [],
+      finalAssistantText: 'ok',
+      model: 'claude-sonnet-5',
+      provider: 'anthropic',
+    });
+
+    await backend.runTurn(
+      {
+        prompt: 'what is the weather',
+        groupFolder: 'test-folder',
+        chatJid: 'test@g.us',
+        isControlGroup: false,
+      },
+      { backend: 'deus-native', session_id: '' },
+      async () => {},
+    );
+
+    expect(retrieveMemoryContextMock).not.toHaveBeenCalled();
+    const [options] = runParentTurnViaCliSubprocessMock.mock.calls[0];
+    // Omitted entirely, not just undefined -- personal-vault isolation, same
+    // assertion style as the raw-HTTP branch's own memoryRequest test.
+    expect('recalledMemoryContext' in options).toBe(false);
   });
 });
