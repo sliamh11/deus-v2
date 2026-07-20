@@ -241,7 +241,7 @@ describe('createCliSubprocessNestedDispatcher: nested-dispatch usage side channe
   it('omitted usageScratchDir -> zero fs writes (backward compatible with every pre-existing test in this file)', async () => {
     const writeSpy = vi.spyOn(fs, 'appendFileSync');
     const { pool } = fakePool({
-      sendTurn: async (id: string) =>
+      sendTurn: async (_id: string) =>
         ({
           result: { is_error: false, result: '{"answer":"ok"}' },
           turnEvents: [assistantUsageEvent({})],

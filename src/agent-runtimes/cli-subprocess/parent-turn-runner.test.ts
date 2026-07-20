@@ -943,20 +943,17 @@ describe('runParentTurnViaCliSubprocess: nested-dispatch usage side channel (LIA
     // sendTurn() resolves -- proving the reader picks up whatever the writer
     // left there, using the identical directory this function itself
     // computes (no separate path derivation to drift apart).
-    const conversationId = 'parent-thread-with-usage-1';
-    const scratchDirForConversation = (root: string) =>
-      path.join(root, conversationId);
-
-    let usageDepsResolved:
-      Parameters<typeof runParentTurnViaCliSubprocess>[1] | undefined;
+    const usageDepsRef: {
+      current?: Parameters<typeof runParentTurnViaCliSubprocess>[1];
+    } = {};
     const { pool } = fakePool({
-      sendTurn: async (id, prompt) => {
+      sendTurn: async (id) => {
         // Write the nested-dispatch usage file into the SAME scratchDir the
         // real MCP server subprocess would use, right before this fake
         // "CLI turn" resolves -- matching the real ordering (child dispatch
         // completes and writes its usage during the parent's own sendTurn).
-        if (usageDepsResolved !== undefined) {
-          const dir = usageDepsResolved.scratchDirFor(id);
+        if (usageDepsRef.current !== undefined) {
+          const dir = usageDepsRef.current.scratchDirFor(id);
           appendNestedDispatchUsage(dir, {
             provider: 'anthropic',
             model: 'claude-opus-4-8',
@@ -975,11 +972,11 @@ describe('runParentTurnViaCliSubprocess: nested-dispatch usage side channel (LIA
       },
     });
     const { saver } = tempSaver();
-    usageDepsResolved = usageDeps(pool, saver);
+    usageDepsRef.current = usageDeps(pool, saver);
 
     const outcome = await runParentTurnViaCliSubprocess(
       baseOptions({ threadId: 'thread-with-usage' }),
-      usageDepsResolved,
+      usageDepsRef.current,
     );
 
     expect(outcome.status).toBe('success');
@@ -997,8 +994,9 @@ describe('runParentTurnViaCliSubprocess: nested-dispatch usage side channel (LIA
   });
 
   it('code-review finding: a usage file written before the turn ultimately ERRORS is still cleaned up in the finally block, never orphaned', async () => {
-    let usageDepsResolved:
-      Parameters<typeof runParentTurnViaCliSubprocess>[1] | undefined;
+    const usageDepsRef: {
+      current?: Parameters<typeof runParentTurnViaCliSubprocess>[1];
+    } = {};
     let usageFilePathAtWriteTime: string | undefined;
     let existedRightAfterWrite: boolean | undefined;
     const { pool } = fakePool({
@@ -1007,8 +1005,8 @@ describe('runParentTurnViaCliSubprocess: nested-dispatch usage side channel (LIA
         // is_error result comes back -- the exact scenario the pre-fix code
         // silently orphaned (only the success-path return ever called
         // readAndClearNestedDispatchUsage).
-        if (usageDepsResolved !== undefined) {
-          const dir = usageDepsResolved.scratchDirFor(id);
+        if (usageDepsRef.current !== undefined) {
+          const dir = usageDepsRef.current.scratchDirFor(id);
           appendNestedDispatchUsage(dir, {
             provider: 'anthropic',
             model: 'claude-opus-4-8',
@@ -1035,11 +1033,11 @@ describe('runParentTurnViaCliSubprocess: nested-dispatch usage side channel (LIA
       },
     });
     const { saver } = tempSaver();
-    usageDepsResolved = usageDeps(pool, saver);
+    usageDepsRef.current = usageDeps(pool, saver);
 
     const outcome = await runParentTurnViaCliSubprocess(
       baseOptions({ threadId: 'thread-usage-then-error' }),
-      usageDepsResolved,
+      usageDepsRef.current,
     );
     expect(outcome.status).toBe('error');
     expect(existedRightAfterWrite).toBe(true);
