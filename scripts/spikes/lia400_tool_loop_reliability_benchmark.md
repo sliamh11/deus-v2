@@ -548,3 +548,124 @@ reliable than Ollama" with confidence, but not enough to pin down a precise succ
 tight confidence interval. A larger-N follow-up run (e.g. 10+ repetitions per chain) would sharpen
 this from "a real, qualitative reliability gap" to a specific, comparable number — filed as a
 follow-up rather than run here, given the real API cost of each repetition.
+
+## Addendum 2 (2026-07-20): root cause of the ~43% figure — an MCP-init race, mechanism confirmed
+
+The prior addendum above left the root cause of the ~43% figure explicitly undiagnosed. This
+addendum diagnoses it, with first-hand instrumented evidence: the leg's low reliability is
+**very likely a harness/CLI-timing artifact, not a genuine Claude Sonnet tool-calling
+deficiency** — with a concrete, empirically-confirmed mechanism, not just a correlation.
+
+### The mechanism
+
+`ClaudeCliSessionPool.createConversation()` spawns the `claude` CLI child and returns after a
+single `setImmediate` tick (only long enough to catch an immediate spawn error) — it does **not**
+wait for the CLI's own `system/init` stream-json event, which is what reports each configured MCP
+server's connection status (`mcp_servers: [{name, status}]`) and the resolved tool list
+(`tools: [...]`). The benchmark's `runChainAgainstCliSubprocess` called `sendTurn()` (writing the
+first turn to the child's stdin) immediately after `createConversation()` returned, with zero
+synchronization against MCP-server-ready state. The CLI emits `system/init` exactly **once** per
+process, with an **immutable** snapshot of `mcp_servers` status at whatever moment that snapshot
+was taken — so if the MCP stdio handshake hasn't completed by then, the model's tool catalog for
+that entire session is genuinely empty (compounded here by `--tools ''`, meaning zero built-in
+tools either), and there is no second, corrected event to arrive later.
+
+This is not speculation: it matches a documented, still-open upstream regression
+(`anthropics/claude-code`#76239, `claude-agent-sdk-typescript`#368, `claude-ai-mcp`#383) — since
+CLI 2.1.144, the first turn's tool snapshot is no longer blocked on stdio MCP servers finishing
+their connection handshake. Our installed CLI is 2.1.215, past that regression's introduction.
+
+### Instrumentation added (this PR's first commit)
+
+`ChainResult.cliMcpDiagnostics` now captures, per `claude-cli-subprocess` cell: the `system/init`
+event's `mcp_servers` status and resolved `tools` list, plus host-side timing
+(`spawnToInitMs`/`spawnToFirstAssistantMs`) `ClaudeCliSessionPool` already tracked internally but
+this benchmark previously discarded. A first real instrumented run (single run,
+`--providers=claude-cli-subprocess,ollama`, no experimental changes yet) directly confirmed the
+race, cell by cell:
+
+```
+calculation_chain (FAIL): mcp_servers=[{status:"pending"}], toolsAtInit=[], finalAnswer="I don't
+  have dedicated 'add' or 'multiply' tools available in my current toolset — only file, search,
+  and shell tools."
+error_recovery (FAIL): mcp_servers=[{status:"pending"}], toolsAtInit=[]
+single_tool_lookup / sequential_two_tool / delegate_to_subagent / mcp_get_status (all PASS):
+  mcp_servers=[{status:"connected"}], toolsAtInit=<all 8 tools>
+```
+
+Every FAIL cell showed the MCP server still `pending` (empty tool catalog) at the moment
+`system/init` was captured; every PASS cell showed `connected` with the full 8-tool list. The
+`calculation_chain` FAIL's own text is the confabulation pattern predicted by an empty-catalog
+race: rather than an honest "no tool available," the model fabricated a plausible-but-wrong
+description of generic Claude-Code-like capabilities it did not actually have in this
+maximally-restricted session (`--tools ''`, `--setting-sources ''`, MCP-only).
+
+### The pre-turn-delay experiment (this PR's second commit) — control vs. treatment
+
+To test causally (not just correlationally) whether the race is fixable from the caller side, a
+flat, unconditional delay was inserted between `createConversation()` and `sendTurn()`
+(`--preTurnDelayMs=<n>`), with `TSX_DISABLE_CACHE=1` forced on the MCP server's spawn env in both
+arms so neither run benefits from tsx's persistent module-transform cache being warmer than the
+other (a real, verified confound — this machine already had 400+ cached entries before this
+investigation began). Two runs, `--providers=claude-cli-subprocess` only, back to back in the same
+session:
+
+**Control** (`--preTurnDelayMs=0`) — reproduces the original race:
+
+```
+chain                   status      mcp_servers   tools  spawnToInitMs
+single_tool_lookup      PASS        connected     8      966
+sequential_two_tool     PASS        connected     8      916
+calculation_chain       FAIL        pending       0      709
+delegate_to_subagent    FAIL        pending       0      725
+error_recovery          PASS        connected     8      826
+mcp_get_status          PASS        connected     8      1083
+```
+
+4/6 PASS (67%) — consistent with the ~43% figure's earlier runs' variance, not an outlier.
+
+**Treatment** (`--preTurnDelayMs=3000`) — clean sweep:
+
+```
+chain                   status      mcp_servers   tools  spawnToInitMs
+single_tool_lookup      PASS        connected     8      3017
+sequential_two_tool     PASS        connected     8      3046
+calculation_chain       PASS        connected     8      3044
+delegate_to_subagent    PASS        connected     8      3049
+error_recovery          PASS        connected     8      3042
+mcp_get_status          PASS        connected     8      3044
+```
+
+**6/6 PASS (100%)**, `mcp_servers` `connected` with the full tool list on every cell.
+
+**The mechanistically decisive finding is `spawnToInitMs` itself, not just the PASS/FAIL grid**:
+in the treatment run, `spawnToInitMs` lands at ~3017-3049ms in every single cell — moving in
+lockstep with the inserted 3000ms delay, not clustering near the control run's ~700-1100ms range.
+This means the CLI's one-time `system/init` snapshot is **not** simply taken at a fixed
+spawn-relative time; its timing tracks closely with when the first turn's stdin write happens.
+Delaying that write gave the MCP stdio handshake the extra ~2-2.3s it needed to complete before
+the snapshot was taken, on every cell, including the two that failed in the control run at
+identical chain definitions.
+
+### Explicitly scoped conclusion
+
+This is one pair of runs (N=6 chains per arm) — directionally decisive given the clean 4/6→6/6
+result AND the `spawnToInitMs`-tracks-the-delay mechanism (not just an aggregate rate that could
+be attributed to noise), but **not** a statistically powered reliability figure. A larger-N
+repeated-trial run (10+ reps per chain, both arms) remains a legitimate follow-up to replace "one
+clean pair of runs" with a precise, defensible number — not done here, same real-API-cost
+rationale as the original addendum's own equivalent caveat.
+
+**What this changes for LIA-400/H1/LIA-433**: the ~43% figure from the original addendum should
+**not** be read as evidence of a Claude Sonnet tool-calling reliability ceiling. The evidence here
+points to a specific, mechanistically-explained, and — within this benchmark's own harness —
+apparently mitigable MCP-server-readiness race, not a property of the model. This does not by
+itself flip the mitigation into production (the actual `ClaudeCliSessionPool` used by
+`deus-native` in production is unmodified by either PR in this investigation — only the benchmark
+script's own diagnostic/experimental code changed), and it does not resolve H1/LIA-433's much
+broader scope (parity matrix, AAG-007b, release-scale sampling). It does mean: **whoever makes the
+production-readiness call on the CLI-subprocess transport should weigh this finding as "a
+diagnosed, plausibly-mitigable harness timing issue," not "a demonstrated model-reliability
+gap."** A genuine production mitigation (e.g. a wait-for-MCP-ready check before the first real
+turn, applied in `ClaudeCliSessionPool` or its callers, not just this benchmark) is a distinct,
+not-yet-scoped follow-up.
