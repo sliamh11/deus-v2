@@ -26,6 +26,11 @@ import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import type { ChatResult } from '@langchain/core/outputs';
 
 import { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
+import {
+  acquireProcessSlot as defaultAcquireProcessSlot,
+  type AcquireProcessSlotOptions,
+  type ProcessSlotLease,
+} from './process-lifecycle-registry.js';
 
 export class CliSummaryModelError extends Error {}
 
@@ -41,6 +46,15 @@ export interface CliSummaryModelOptions {
   /** Caller decides the actual scratch path shape (e.g. under a turn-scoped
    *  temp dir), called once per summary call with a fresh conversation id. */
   scratchDirFor: (conversationId: string) => string;
+  /** Production-wide process-slot acquisition (LIA-457) — defaults to the
+   *  real `acquireProcessSlot` import, same default-fallback pattern
+   *  `parent-turn-runner.ts` already uses for its own slot. A summary call
+   *  spawns a genuinely separate CLI subprocess from the parent's own, so it
+   *  must reserve its own slot against the same production-wide cap. */
+  acquireProcessSlot?: (
+    options?: AcquireProcessSlotOptions,
+  ) => Promise<ProcessSlotLease | null>;
+  slotOptions?: AcquireProcessSlotOptions;
 }
 
 function extractPromptText(messages: BaseMessage[]): string {
@@ -72,38 +86,61 @@ export class CliSummaryModel extends BaseChatModel {
     const promptText = extractPromptText(messages);
     const conversationId = `cli-summary-${crypto.randomUUID()}`;
 
-    await this.deps.pool.createConversation(conversationId, {
-      scratchDir: this.deps.scratchDirFor(conversationId),
-      repoRoot: this.deps.repoRoot,
-      model: this.deps.model,
-      // mcpServerName/mcpServerScriptPath/allowedTool deliberately omitted
-      // — genuinely no-tools, per claude-cli-session-pool.ts's own no-MCP
-      // mode (EP-002 step 6).
-    });
+    // LIA-457: reserve a production-wide process slot before spawning — this
+    // is a genuinely separate CLI subprocess from any parent conversation
+    // that may already hold its own slot. `null` means contention (bounded
+    // retries already exhausted, not an infinite wait — see
+    // `process-lifecycle-registry.ts`'s `acquireProcessSlot`); this throws
+    // rather than spawning anyway, which `summarizationMiddleware`'s own
+    // `createSummary()` catches and turns into a recognized failure-shape
+    // string that `context-compaction.ts`'s `containsFailedSummary()`
+    // already detects — compaction is dropped for this turn (fail open,
+    // uncompacted history), never a hang or a leaked process/slot.
+    const acquireSlot =
+      this.deps.acquireProcessSlot ?? defaultAcquireProcessSlot;
+    const slot = await acquireSlot(this.deps.slotOptions);
+    if (slot === null) {
+      throw new CliSummaryModelError(
+        'CliSummaryModel: no CLI subprocess slot available (production-wide process cap reached)',
+      );
+    }
 
     try {
-      const turnResult = await this.deps.pool.sendTurn(
-        conversationId,
-        promptText,
-      );
-      if (
-        turnResult.result.is_error ||
-        turnResult.result.result === undefined
-      ) {
-        throw new CliSummaryModelError(
-          turnResult.result.result ??
-            'CLI summary turn reported is_error with no result text',
+      await this.deps.pool.createConversation(conversationId, {
+        scratchDir: this.deps.scratchDirFor(conversationId),
+        repoRoot: this.deps.repoRoot,
+        model: this.deps.model,
+        // mcpServerName/mcpServerScriptPath/allowedTool deliberately omitted
+        // — genuinely no-tools, per claude-cli-session-pool.ts's own no-MCP
+        // mode (EP-002 step 6).
+      });
+
+      try {
+        const turnResult = await this.deps.pool.sendTurn(
+          conversationId,
+          promptText,
         );
+        if (
+          turnResult.result.is_error ||
+          turnResult.result.result === undefined
+        ) {
+          throw new CliSummaryModelError(
+            turnResult.result.result ??
+              'CLI summary turn reported is_error with no result text',
+          );
+        }
+        const text = turnResult.result.result;
+        return {
+          generations: [{ message: new AIMessage(text), text }],
+        };
+      } finally {
+        // Terminate before the parent process is spawned (plan step 3's own
+        // requirement) — a one-shot summary conversation never persists past
+        // its single call, success or failure.
+        await this.deps.pool.terminate(conversationId).catch(() => {});
       }
-      const text = turnResult.result.result;
-      return {
-        generations: [{ message: new AIMessage(text), text }],
-      };
     } finally {
-      // Terminate before the parent process is spawned (plan step 3's own
-      // requirement) — a one-shot summary conversation never persists past
-      // its single call, success or failure.
-      await this.deps.pool.terminate(conversationId).catch(() => {});
+      slot.release();
     }
   }
 }

@@ -420,6 +420,148 @@ describe('persistCliCheckpoint', () => {
     }
   });
 
+  describe('replacePriorMessages (LIA-457)', () => {
+    it('uses replacePriorMessages instead of the stored prior messages as the base of fullMessages', async () => {
+      const { saver, dir } = tempSaver();
+      try {
+        const threadId = crypto.randomUUID();
+        await persistCliCheckpoint({
+          saver,
+          threadId,
+          priorTuple: undefined,
+          newMessages: [
+            new HumanMessage({ id: 'h1', content: 'raw turn 1' }),
+            new AIMessage({ id: 'a1', content: 'raw reply 1' }),
+          ],
+        });
+        const priorTuple = await saver.getTuple({
+          configurable: { thread_id: threadId },
+        });
+
+        const compactedBaseline = [
+          new HumanMessage({
+            id: 'summary-1',
+            content:
+              "Here is Deus's compacted conversation summary:\n\ncontext",
+          }),
+        ];
+        await persistCliCheckpoint({
+          saver,
+          threadId,
+          priorTuple,
+          newMessages: [new HumanMessage({ id: 'h2', content: 'turn 2' })],
+          replacePriorMessages: compactedBaseline,
+        });
+
+        const afterCompaction = await saver.getTuple({
+          configurable: { thread_id: threadId },
+        });
+        // The RAW stored messages ('raw turn 1'/'raw reply 1') are gone —
+        // replaced by the compacted baseline, not appended alongside it.
+        expect(afterCompaction!.checkpoint.channel_values['messages']).toEqual([
+          ...compactedBaseline,
+          new HumanMessage({ id: 'h2', content: 'turn 2' }),
+        ]);
+      } finally {
+        closeAndCleanup(saver, dir);
+      }
+    });
+
+    it('leaves checkpoint id/step/parents linkage identical to the non-replace case — a pure content substitution, not a lineage fork', async () => {
+      const threadId = crypto.randomUUID();
+
+      const { saver: saverA, dir: dirA } = tempSaver();
+      const { saver: saverB, dir: dirB } = tempSaver();
+      try {
+        await persistCliCheckpoint({
+          saver: saverA,
+          threadId,
+          priorTuple: undefined,
+          newMessages: [new HumanMessage({ id: 'h1', content: 'turn 1' })],
+        });
+        await persistCliCheckpoint({
+          saver: saverB,
+          threadId,
+          priorTuple: undefined,
+          newMessages: [new HumanMessage({ id: 'h1', content: 'turn 1' })],
+        });
+        const priorA = await saverA.getTuple({
+          configurable: { thread_id: threadId },
+        });
+        const priorB = await saverB.getTuple({
+          configurable: { thread_id: threadId },
+        });
+
+        // A: no replacement (today's existing behavior).
+        await persistCliCheckpoint({
+          saver: saverA,
+          threadId,
+          priorTuple: priorA,
+          newMessages: [new HumanMessage({ id: 'h2', content: 'turn 2' })],
+        });
+        // B: same turn, but WITH a replacement baseline (identical content to
+        // what's already stored, isolating linkage from content effects).
+        await persistCliCheckpoint({
+          saver: saverB,
+          threadId,
+          priorTuple: priorB,
+          newMessages: [new HumanMessage({ id: 'h2', content: 'turn 2' })],
+          replacePriorMessages: [
+            new HumanMessage({ id: 'h1', content: 'turn 1' }),
+          ],
+        });
+
+        const afterA = await saverA.getTuple({
+          configurable: { thread_id: threadId },
+        });
+        const afterB = await saverB.getTuple({
+          configurable: { thread_id: threadId },
+        });
+
+        // Checkpoint ids (`uuid6`) are freshly generated per write, so A and
+        // B's raw ids necessarily differ — compare the LINEAGE RELATIONSHIP
+        // each independently forms (its own parent-config points at its own
+        // prior checkpoint's id), not raw cross-run id equality.
+        expect(afterA!.parentConfig?.configurable?.checkpoint_id).toBe(
+          priorA!.checkpoint.id,
+        );
+        expect(afterB!.parentConfig?.configurable?.checkpoint_id).toBe(
+          priorB!.checkpoint.id,
+        );
+        expect(afterB!.metadata?.step).toBe(afterA!.metadata?.step);
+        expect(afterB!.checkpoint.channel_versions['messages']).toBe(
+          afterA!.checkpoint.channel_versions['messages'],
+        );
+      } finally {
+        closeAndCleanup(saverA, dirA);
+        closeAndCleanup(saverB, dirB);
+      }
+    });
+
+    it("omitted (undefined) stays byte-identical to today's behavior", async () => {
+      const { saver, dir } = tempSaver();
+      try {
+        const threadId = crypto.randomUUID();
+        const newMessages = [new HumanMessage({ id: 'h1', content: 'hi' })];
+        await persistCliCheckpoint({
+          saver,
+          threadId,
+          priorTuple: undefined,
+          newMessages,
+          replacePriorMessages: undefined,
+        });
+        const tuple = await saver.getTuple({
+          configurable: { thread_id: threadId },
+        });
+        expect(tuple!.checkpoint.channel_values['messages']).toEqual(
+          newMessages,
+        );
+      } finally {
+        closeAndCleanup(saver, dir);
+      }
+    });
+  });
+
   it('a real LangGraph createAgent can resume a CLI-authored checkpoint and see its messages/tool-call history', async () => {
     const { saver, dir } = tempSaver();
     try {

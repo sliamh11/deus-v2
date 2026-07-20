@@ -14,6 +14,14 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 
+import {
+  AIMessage,
+  HumanMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
+
+import { COMPACTION_TOKEN_THRESHOLD_ENV } from '../context-compaction.js';
+import { persistCliCheckpoint } from './checkpoint-translation.js';
 import { runParentTurnViaCliSubprocess } from './parent-turn-runner.js';
 import type { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
 import type {
@@ -536,5 +544,237 @@ describe('runParentTurnViaCliSubprocess: history injection (LIA-454 EP-002 step 
     ).appendSystemPromptFile;
     expect(errorPath).toBeDefined();
     expect(fs.existsSync(errorPath)).toBe(false);
+  });
+});
+
+describe('runParentTurnViaCliSubprocess: context-compaction integration (LIA-457)', () => {
+  let compactionScratchRoot: string;
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (compactionScratchRoot) {
+      fs.rmSync(compactionScratchRoot, { recursive: true, force: true });
+    }
+  });
+
+  /** A pool that dispatches by conversation-id prefix — `cli-summary-*` gets
+   *  the summary response, `parent-*` gets the normal turn response — per
+   *  the plan's own established test convention for this fixture. */
+  function compactionPool(summaryText: string): {
+    pool: ClaudeCliSessionPool;
+    createConversationCalls: Array<{ id: string; options: unknown }>;
+  } {
+    const createConversationCalls: Array<{ id: string; options: unknown }> = [];
+    const pool = {
+      createConversation: vi.fn(async (id: string, options: unknown) => {
+        createConversationCalls.push({ id, options });
+        return { conversationId: id, pid: 1 };
+      }),
+      sendTurn: vi.fn(async (id: string) => {
+        if (id.startsWith('cli-summary-')) {
+          return {
+            result: { is_error: false, result: summaryText, session_id: 's1' },
+            events: [],
+            turnEvents: [],
+            timing: { totalTurnMs: 5 },
+            pid: 1,
+          };
+        }
+        return {
+          result: { is_error: false, result: 'hi there', session_id: 's1' },
+          events: [],
+          turnEvents: [assistantTextEvent('hi there'), resultEvent('hi there')],
+          timing: { totalTurnMs: 10 },
+          pid: 1,
+        };
+      }),
+      terminate: vi.fn(async () => {}),
+    } as unknown as ClaudeCliSessionPool;
+    return { pool, createConversationCalls };
+  }
+
+  function compactionDeps(
+    pool: ClaudeCliSessionPool,
+    saver: BaseCheckpointSaver,
+    acquireProcessSlot: () => Promise<ProcessSlotLease | null>,
+  ): Parameters<typeof runParentTurnViaCliSubprocess>[1] {
+    compactionScratchRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lia457-parent-compaction-'),
+    );
+    const { lease } = fakeLease();
+    return {
+      pool,
+      mcpServerScriptPath: '/repo/parent-turn-mcp-server.ts',
+      mcpServerName: MCP_SERVER_NAME,
+      repoRoot: '/repo',
+      scratchDirFor: (id: string) => path.join(compactionScratchRoot, id),
+      saver,
+      acquireThreadTurnLease: async () => lease,
+      acquireProcessSlot,
+    };
+  }
+
+  /** Seeds `pairCount` human/ai message pairs directly via
+   *  `persistCliCheckpoint`, bypassing the runner entirely. Needed because
+   *  `determineCutoffIndex`'s own `findSafeCutoff` returns cutoff `0` (no
+   *  compaction possible) whenever the message count is `<=
+   *  DEFAULT_COMPACTION_MESSAGES_TO_KEEP` (8) — a low token threshold alone
+   *  is not enough to force a real cutoff; there must be more history than
+   *  the keep-window to begin with. 5 pairs (10 messages) exceeds it. */
+  async function seedPriorMessages(
+    saver: BaseCheckpointSaver,
+    threadId: string,
+    pairCount: number,
+  ): Promise<void> {
+    const messages: BaseMessage[] = [];
+    for (let i = 0; i < pairCount; i++) {
+      messages.push(
+        new HumanMessage({ id: `seed-h-${i}`, content: `seed question ${i}` }),
+      );
+      messages.push(
+        new AIMessage({ id: `seed-a-${i}`, content: `seed answer ${i}` }),
+      );
+    }
+    await persistCliCheckpoint({
+      saver,
+      threadId,
+      priorTuple: undefined,
+      newMessages: messages,
+    });
+  }
+
+  it('below the (default, real) threshold: compaction never fires, no summary conversation is spawned', async () => {
+    const { pool, createConversationCalls } = compactionPool('unused');
+    const { saver } = tempSaver();
+    const { slot } = fakeSlot();
+    const deps = compactionDeps(pool, saver, async () => slot);
+
+    // Two ordinary small turns — nowhere near the real 150k-token default.
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-no-compaction' }),
+      deps,
+    );
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-no-compaction', prompt: 'follow-up' }),
+      deps,
+    );
+
+    expect(
+      createConversationCalls.some((c) => c.id.startsWith('cli-summary-')),
+    ).toBe(false);
+    expect(
+      createConversationCalls.filter((c) => c.id.startsWith('parent-')),
+    ).toHaveLength(2);
+  });
+
+  it('above a forced low threshold: compacts the history file and persists the compacted baseline + new turn messages', async () => {
+    vi.stubEnv(COMPACTION_TOKEN_THRESHOLD_ENV, '1');
+    const salientSummary =
+      "Here is Deus's compacted conversation summary:\n\nprior context";
+    const { pool, createConversationCalls } = compactionPool(salientSummary);
+    const { saver } = tempSaver();
+    const { slot } = fakeSlot();
+    const deps = compactionDeps(pool, saver, async () => slot);
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
+    // 5 seeded pairs (10 messages) exceeds the default keep-window (8), so
+    // there's a real cutoff to compact, not just a token-threshold trigger.
+    await seedPriorMessages(saver, 'thread-compacts', 5);
+
+    const outcome = await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-compacts', prompt: 'follow-up' }),
+      deps,
+    );
+    expect(outcome.status).toBe('success');
+
+    const summaryCall = createConversationCalls.find((c) =>
+      c.id.startsWith('cli-summary-'),
+    );
+    expect(summaryCall).toBeDefined();
+
+    const parentCalls = createConversationCalls.filter((c) =>
+      c.id.startsWith('parent-'),
+    );
+    expect(parentCalls).toHaveLength(1);
+    const parentOptions = parentCalls[0].options as {
+      appendSystemPromptFile?: string;
+    };
+    expect(parentOptions.appendSystemPromptFile).toBeDefined();
+    const historyWriteCall = writeSpy.mock.calls.find(
+      ([writtenPath]) => writtenPath === parentOptions.appendSystemPromptFile,
+    );
+    const historyContent = historyWriteCall?.[1];
+    expect(historyContent).toContain(salientSummary);
+    // The earliest seeded pair (summarized away) is gone from the history —
+    // replaced by the summary, not appended alongside it.
+    expect(historyContent).not.toContain('seed question 0');
+
+    const tuple = await saver.getTuple({
+      configurable: { thread_id: 'thread-compacts', checkpoint_ns: '' },
+    });
+    const messages = tuple?.checkpoint.channel_values['messages'] as unknown[];
+    // 10 seeded messages, keep=8 -> cutoff=2 -> 1 summary + 8 preserved tail
+    // + this turn's own 2 new messages (human follow-up + assistant reply)
+    // = 11 — NOT the uncompacted 10 + 2 = 12.
+    expect(messages).toHaveLength(11);
+
+    writeSpy.mockRestore();
+  });
+
+  it('a compacting turn transiently holds 2 slots (summary + parent), acquired in that order, via the SAME injected acquireProcessSlot', async () => {
+    vi.stubEnv(COMPACTION_TOKEN_THRESHOLD_ENV, '1');
+    const { pool } = compactionPool('a real summary');
+    const { saver } = tempSaver();
+    const { slot } = fakeSlot();
+    const acquireProcessSlot = vi.fn(async () => slot);
+    const deps = compactionDeps(pool, saver, acquireProcessSlot);
+
+    await seedPriorMessages(saver, 'thread-slots', 5);
+
+    const outcome = await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-slots', prompt: 'follow-up' }),
+      deps,
+    );
+    expect(outcome.status).toBe('success');
+    // The parent's own slot (acquired first, at the top of the function)
+    // PLUS the summary's own slot (acquired second, inside
+    // CliSummaryModel._generate once compaction actually fires) — 2 calls
+    // through the identical injected function, not a new/separate one.
+    expect(acquireProcessSlot).toHaveBeenCalledTimes(2);
+  });
+
+  it("null-slot degrade path: the summary's own slot acquisition failing does not fail the turn — it proceeds uncompacted", async () => {
+    vi.stubEnv(COMPACTION_TOKEN_THRESHOLD_ENV, '1');
+    const { pool, createConversationCalls } = compactionPool('unused summary');
+    const { saver } = tempSaver();
+    const { slot: parentSlot, releaseCount } = fakeSlot();
+    let callCount = 0;
+    // Call 1 = the parent's own slot (acquired before priorMessages is even
+    // read) -> succeeds. Call 2 = the summary's slot (only reached if
+    // compaction's dry run actually fires) -> exhausted, returns null.
+    const acquireProcessSlot = vi.fn(async () => {
+      callCount += 1;
+      return callCount === 1 ? parentSlot : null;
+    });
+    const deps = compactionDeps(pool, saver, acquireProcessSlot);
+
+    await seedPriorMessages(saver, 'thread-null-slot', 5);
+
+    const outcome = await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-null-slot', prompt: 'follow-up' }),
+      deps,
+    );
+
+    // The turn itself still succeeds -- degrade, not failure. No hang, no
+    // thrown error escaping the runner.
+    expect(outcome.status).toBe('success');
+    expect(
+      createConversationCalls.some((c) => c.id.startsWith('cli-summary-')),
+    ).toBe(false); // the summary conversation itself was never spawned
+    expect(
+      createConversationCalls.filter((c) => c.id.startsWith('parent-')),
+    ).toHaveLength(1);
+    // The parent's own slot (call 1) was released normally -- the null-slot
+    // failure was fully contained inside the compaction dry run.
+    expect(releaseCount()).toBe(1);
   });
 });
