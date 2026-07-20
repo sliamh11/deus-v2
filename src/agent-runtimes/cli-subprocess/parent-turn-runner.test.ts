@@ -22,6 +22,10 @@ import {
 
 import { COMPACTION_TOKEN_THRESHOLD_ENV } from '../context-compaction.js';
 import { persistCliCheckpoint } from './checkpoint-translation.js';
+import {
+  NESTED_DISPATCH_USAGE_FILENAME,
+  appendNestedDispatchUsage,
+} from './nested-dispatch-usage-channel.js';
 import { runParentTurnViaCliSubprocess } from './parent-turn-runner.js';
 import type { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
 import type {
@@ -866,5 +870,178 @@ describe('runParentTurnViaCliSubprocess: control-group memory-recall (LIA-458)',
       baseDeps(pool, saver, lease, slot),
     );
     expect(capturedLivePrompt).toBe('hello again');
+  });
+});
+
+describe('runParentTurnViaCliSubprocess: nested-dispatch usage side channel (LIA-460)', () => {
+  let usageScratchRoot: string;
+  afterEach(() => {
+    if (usageScratchRoot) {
+      fs.rmSync(usageScratchRoot, { recursive: true, force: true });
+    }
+  });
+
+  function usageDeps(
+    pool: ClaudeCliSessionPool,
+    saver: BaseCheckpointSaver,
+  ): Parameters<typeof runParentTurnViaCliSubprocess>[1] {
+    usageScratchRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lia460-parent-usage-'),
+    );
+    const { lease } = fakeLease();
+    const { slot } = fakeSlot();
+    return {
+      pool,
+      mcpServerScriptPath: '/repo/parent-turn-mcp-server.ts',
+      mcpServerName: MCP_SERVER_NAME,
+      repoRoot: '/repo',
+      scratchDirFor: (id: string) => path.join(usageScratchRoot, id),
+      saver,
+      acquireThreadTurnLease: async () => lease,
+      acquireProcessSlot: async () => slot,
+    };
+  }
+
+  it('sets DEUS_PARENT_SCRATCH_DIR to the exact same scratchDir passed to createConversation', async () => {
+    const { pool, createConversationCalls } = fakePool();
+    const { saver } = tempSaver();
+    const deps = usageDeps(pool, saver);
+
+    await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-scratch-env' }),
+      deps,
+    );
+
+    const options = createConversationCalls[0].options as {
+      scratchDir: string;
+      mcpServerEnv: Record<string, string>;
+    };
+    expect(options.mcpServerEnv.DEUS_PARENT_SCRATCH_DIR).toBe(
+      options.scratchDir,
+    );
+  });
+
+  it('no usage file present -> nestedUsageEvents is [] (the common case: no nested dispatch happened this turn)', async () => {
+    const { pool } = fakePool();
+    const { saver } = tempSaver();
+    const deps = usageDeps(pool, saver);
+
+    const outcome = await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-no-usage-file' }),
+      deps,
+    );
+
+    expect(outcome.status).toBe('success');
+    if (outcome.status === 'success') {
+      expect(outcome.nestedUsageEvents).toEqual([]);
+    }
+  });
+
+  it('a usage file written to the SAME scratchDir before the turn completes is read back and cleared', async () => {
+    // Simulates the MCP server subprocess having already appended a nested
+    // child's usage to the shared scratch directory before the parent's own
+    // sendTurn() resolves -- proving the reader picks up whatever the writer
+    // left there, using the identical directory this function itself
+    // computes (no separate path derivation to drift apart).
+    const usageDepsRef: {
+      current?: Parameters<typeof runParentTurnViaCliSubprocess>[1];
+    } = {};
+    const { pool } = fakePool({
+      sendTurn: async (id) => {
+        // Write the nested-dispatch usage file into the SAME scratchDir the
+        // real MCP server subprocess would use, right before this fake
+        // "CLI turn" resolves -- matching the real ordering (child dispatch
+        // completes and writes its usage during the parent's own sendTurn).
+        if (usageDepsRef.current !== undefined) {
+          const dir = usageDepsRef.current.scratchDirFor(id);
+          appendNestedDispatchUsage(dir, {
+            provider: 'anthropic',
+            model: 'claude-opus-4-8',
+            inputTokens: 29_794,
+            outputTokens: 5,
+            totalTokens: 29_799,
+          });
+        }
+        return {
+          result: { is_error: false, result: 'hi there', session_id: 's1' },
+          events: [],
+          turnEvents: [assistantTextEvent('hi there'), resultEvent('hi there')],
+          timing: { totalTurnMs: 10 },
+          pid: 1,
+        };
+      },
+    });
+    const { saver } = tempSaver();
+    usageDepsRef.current = usageDeps(pool, saver);
+
+    const outcome = await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-with-usage' }),
+      usageDepsRef.current,
+    );
+
+    expect(outcome.status).toBe('success');
+    if (outcome.status === 'success') {
+      expect(outcome.nestedUsageEvents).toEqual([
+        {
+          provider: 'anthropic',
+          model: 'claude-opus-4-8',
+          inputTokens: 29_794,
+          outputTokens: 5,
+          totalTokens: 29_799,
+        },
+      ]);
+    }
+  });
+
+  it('code-review finding: a usage file written before the turn ultimately ERRORS is still cleaned up in the finally block, never orphaned', async () => {
+    const usageDepsRef: {
+      current?: Parameters<typeof runParentTurnViaCliSubprocess>[1];
+    } = {};
+    let usageFilePathAtWriteTime: string | undefined;
+    let existedRightAfterWrite: boolean | undefined;
+    const { pool } = fakePool({
+      sendTurn: async (id) => {
+        // A nested dispatch already wrote usage before this turn's OWN
+        // is_error result comes back -- the exact scenario the pre-fix code
+        // silently orphaned (only the success-path return ever called
+        // readAndClearNestedDispatchUsage).
+        if (usageDepsRef.current !== undefined) {
+          const dir = usageDepsRef.current.scratchDirFor(id);
+          appendNestedDispatchUsage(dir, {
+            provider: 'anthropic',
+            model: 'claude-opus-4-8',
+            inputTokens: 12_345,
+            outputTokens: 1,
+            totalTokens: 12_346,
+          });
+          usageFilePathAtWriteTime = path.join(
+            dir,
+            NESTED_DISPATCH_USAGE_FILENAME,
+          );
+          // Proves the write genuinely landed on disk -- otherwise a later
+          // "file doesn't exist" assertion would be meaningless (it could
+          // mean either "cleaned up" or "never written").
+          existedRightAfterWrite = fs.existsSync(usageFilePathAtWriteTime);
+        }
+        return {
+          result: { is_error: true, result: 'boom', session_id: 's1' },
+          events: [],
+          turnEvents: [],
+          timing: { totalTurnMs: 5 },
+          pid: 1,
+        };
+      },
+    });
+    const { saver } = tempSaver();
+    usageDepsRef.current = usageDeps(pool, saver);
+
+    const outcome = await runParentTurnViaCliSubprocess(
+      baseOptions({ threadId: 'thread-usage-then-error' }),
+      usageDepsRef.current,
+    );
+    expect(outcome.status).toBe('error');
+    expect(existedRightAfterWrite).toBe(true);
+    expect(usageFilePathAtWriteTime).toBeDefined();
+    expect(fs.existsSync(usageFilePathAtWriteTime!)).toBe(false);
   });
 });

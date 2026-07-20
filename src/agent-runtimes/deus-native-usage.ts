@@ -100,6 +100,50 @@ export class TurnUsageCollector {
     return local;
   }
 
+  /**
+   * LIA-460: folds a raw, already-flat usage record (e.g. a
+   * `TranscriptUsageEvent` read back from the CLI-subprocess nested-dispatch
+   * usage side channel) directly, without requiring a synthetic LangChain
+   * message. Mirrors `record()`'s own two invariants exactly: the `'usage'`
+   * event is emitted UNCONDITIONALLY (token fields `undefined` when the
+   * source reported none — never fabricated), but the running `combined`
+   * aggregate is folded only when ALL THREE token fields are present
+   * (`addUsage` requires the full snake_case `UsageMetadata` shape; folding
+   * a partial record would poison the aggregate with `NaN`). Does not
+   * return a local aggregate — no caller of this method needs one (unlike
+   * `record()`'s raw-HTTP/nested-dispatch-`onUsage` callers, which read
+   * `metadata.usage` off the per-call local).
+   */
+  async recordRaw(
+    usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    },
+    ctx: UsageRecordContext,
+  ): Promise<void> {
+    await this.deps.eventSink({
+      type: 'usage',
+      sessionId: this.deps.sessionId,
+      provider: ctx.provider,
+      model: ctx.model,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      totalTokens: usage.totalTokens,
+    });
+    if (
+      usage.inputTokens !== undefined &&
+      usage.outputTokens !== undefined &&
+      usage.totalTokens !== undefined
+    ) {
+      this.combined = addUsage(this.combined, {
+        input_tokens: usage.inputTokens,
+        output_tokens: usage.outputTokens,
+        total_tokens: usage.totalTokens,
+      });
+    }
+  }
+
   /** The running combined aggregate across every `record()` call so far —
    *  parent plus every nested-dispatch child. `undefined` when nothing in
    *  the turn has reported usage yet (never a fabricated zero-object). */

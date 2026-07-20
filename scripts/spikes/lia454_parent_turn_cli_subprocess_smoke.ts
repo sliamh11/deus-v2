@@ -253,6 +253,38 @@ async function main(): Promise<void> {
       'dispatch_nested_agent genuinely succeeded end-to-end (real tool result, no denial)',
     );
 
+    // LIA-460: the nested child's REAL usage must have reached
+    // RunResult/ParentCliTurnOutcome.nestedUsageEvents via the file-based
+    // side channel. Assert cache-inclusive magnitude, not just "non-empty
+    // with plausible numbers" — a cache-EXCLUDED raw value (e.g. single/
+    // double-digit inputTokens) would ALSO look "plausible" to a weak
+    // assertion, defeating the whole point of this check (the exact class
+    // of bug plan-review caught: naming only extractAssistantUsage without
+    // pairing it with normalizeCliUsageToLangChainUsage, which folds
+    // cache_read/cache_creation into input_tokens).
+    if (dispatchTurn.nestedUsageEvents.length === 0) {
+      throw new Error(
+        'Case B (LIA-460) FAILED: nestedUsageEvents is empty — the nested ' +
+          "child's usage never reached the host via the file-based side channel",
+      );
+    }
+    const nestedUsage = dispatchTurn.nestedUsageEvents[0];
+    // A fresh-context child turn is cache-heavy by nature (this codebase's
+    // own real example: input_tokens=2 vs cache_creation_input_tokens=
+    // 29,792 for one real cycle) — thousands, not single/double digits.
+    if ((nestedUsage.inputTokens ?? 0) < 1_000) {
+      throw new Error(
+        `Case B (LIA-460) FAILED: nestedUsageEvents[0].inputTokens = ` +
+          `${nestedUsage.inputTokens} looks cache-EXCLUDED (too small for a ` +
+          'fresh-context child turn) — the cache-inclusive normalize step ' +
+          'may have been dropped',
+      );
+    }
+    log(
+      'Case B (LIA-460) PASSED',
+      `nested child usage genuinely reached the host: ${JSON.stringify(nestedUsage)}`,
+    );
+
     // ── Case C: permission denial (read-only profile) ────────────────────
     log(
       '=== Case C: permission denial (read-only denies dispatch_nested_agent) ===',

@@ -366,6 +366,14 @@ export function createParentTurnMcpServer(): {
   const encodedContext = process.env.DEUS_PARENT_TURN_CONTEXT;
   const context = parseParentTurnContext(encodedContext);
   const middlewareConfig = resolveMiddlewareStackConfig();
+  // See `nested-dispatch-usage-channel.ts`'s doc comment for why this is an
+  // explicit env var, not this process's own cwd. Absent => no usage side
+  // channel for this turn (the dispatcher's own `usageScratchDir` dep stays
+  // undefined, a no-op, never a hard failure).
+  // DEUS_PARENT_SCRATCH_DIR (LIA-460): the SAME scratch directory
+  // parent-turn-runner.ts already holds, marshalled via the same
+  // mcpServerEnv channel DEUS_PARENT_TURN_CONTEXT uses.
+  const parentScratchDir = process.env.DEUS_PARENT_SCRATCH_DIR;
 
   // Lazily built and memoized — a denied context never touches any of
   // this (the shared gate returns before realAction is ever called), so
@@ -436,6 +444,9 @@ export function createParentTurnMcpServer(): {
           toolBrokerContext: { cwd: context.safeToolCwd },
           allowedWebFetchHosts: context.allowedWebFetchHosts,
         },
+        ...(parentScratchDir !== undefined
+          ? { usageScratchDir: parentScratchDir }
+          : {}),
       });
       return {
         dispatcher,

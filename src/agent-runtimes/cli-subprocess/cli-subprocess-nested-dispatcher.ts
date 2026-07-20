@@ -29,7 +29,14 @@ import {
   type NestedDispatchResult,
   type NestedDispatcher,
 } from '../nested-dispatch.js';
+import { buildTranscriptUsageEvent } from './checkpoint-translation.js';
 import type { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
+import { appendNestedDispatchUsage } from './nested-dispatch-usage-channel.js';
+import {
+  extractAssistantModel,
+  extractAssistantUsage,
+  isAssistantEvent,
+} from './stream-json-protocol.js';
 
 export interface CliSubprocessNestedDispatcherDeps {
   pool: ClaudeCliSessionPool;
@@ -68,6 +75,11 @@ export interface CliSubprocessNestedDispatcherDeps {
     };
     allowedWebFetchHosts: string[];
   };
+  /** LIA-460: when provided, this child's usage is appended to the parent's
+   *  own nested-dispatch usage side channel (`nested-dispatch-usage-channel.ts`)
+   *  so the HOST can fold it into `RunResult.usage`. Omitted entirely => no
+   *  fs write of any kind — see that module's own invariant comment. */
+  usageScratchDir?: string;
 }
 
 let dispatchCounter = 0;
@@ -121,6 +133,23 @@ export function createCliSubprocessNestedDispatcher(
           conversationId,
           request.prompt,
         );
+
+        // LIA-460: recorded regardless of the is_error/contract-validation
+        // outcome below — a real model call happened and was billed either
+        // way, matching the raw-HTTP path's own `onUsage` callback, which
+        // records every AIMessage in `child.invoke()`'s result unconditionally.
+        if (deps.usageScratchDir !== undefined) {
+          for (const event of turnResult.turnEvents) {
+            if (!isAssistantEvent(event)) continue;
+            const usage = extractAssistantUsage(event);
+            if (usage === undefined) continue;
+            const eventModel = extractAssistantModel(event);
+            appendNestedDispatchUsage(
+              deps.usageScratchDir,
+              buildTranscriptUsageEvent(usage, eventModel ?? request.model),
+            );
+          }
+        }
 
         if (
           turnResult.result.is_error ||

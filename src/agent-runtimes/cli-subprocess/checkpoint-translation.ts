@@ -51,6 +51,7 @@ import {
   isResultEvent,
   isUserEvent,
   normalizeCliUsageToLangChainUsage,
+  type CliUsage,
   type StreamJsonEvent,
 } from './stream-json-protocol.js';
 import type {
@@ -59,6 +60,30 @@ import type {
 } from '../transcript-store.js';
 
 export class CliTurnTranslationError extends Error {}
+
+/**
+ * Single source of truth for the CliUsage -> TranscriptUsageEvent mapping
+ * (LIA-460) — extracted from what this module's own `translateCliTurnResult`
+ * already did inline, so the parent's own usage extraction and the
+ * nested-dispatch child usage side-channel (`cli-subprocess-nested-
+ * dispatcher.ts`) can never drift apart. Deliberately distinct from the
+ * FULL `UsageMetadata` built for the AIMessage's own `usage_metadata` field
+ * (which additionally carries `input_token_details`) — this only builds the
+ * flat, transcript-facing shape.
+ */
+export function buildTranscriptUsageEvent(
+  usage: CliUsage,
+  model: string,
+): TranscriptUsageEvent {
+  const normalized = normalizeCliUsageToLangChainUsage(usage);
+  return {
+    provider: 'anthropic',
+    model,
+    inputTokens: normalized.input_tokens,
+    outputTokens: normalized.output_tokens,
+    totalTokens: normalized.total_tokens,
+  };
+}
 
 /**
  * Strips exactly the configured `mcp__<serverName>__` prefix and requires the
@@ -219,14 +244,7 @@ export function translateCliTurnResult(
 
       toolCalls.push(...auditedToolCalls);
       if (usage !== undefined) {
-        const normalized = normalizeCliUsageToLangChainUsage(usage);
-        usageEvents.push({
-          provider: 'anthropic',
-          model: eventModel ?? model,
-          inputTokens: normalized.input_tokens,
-          outputTokens: normalized.output_tokens,
-          totalTokens: normalized.total_tokens,
-        });
+        usageEvents.push(buildTranscriptUsageEvent(usage, eventModel ?? model));
       }
       if (text !== '') {
         finalAssistantText = text;
