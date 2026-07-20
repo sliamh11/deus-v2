@@ -96,6 +96,22 @@ describe('createCliSubprocessNestedDispatcher: success path', () => {
       model: 'claude-sonnet-5',
     });
   });
+
+  it('LIA-461: requests waitForMcpReady on every createConversation call, closing the MCP-init race', async () => {
+    const { pool, createConversationCalls } = fakePool({});
+    const dispatcher = createCliSubprocessNestedDispatcher(depsFor(pool));
+
+    await dispatcher.dispatch({
+      agentId: 'researcher',
+      model: 'claude-sonnet-5',
+      prompt: 'do the thing',
+      outputContract: OUTPUT_CONTRACT,
+    });
+
+    expect(createConversationCalls[0].options).toMatchObject({
+      waitForMcpReady: { timeoutMs: 5000 },
+    });
+  });
 });
 
 describe('createCliSubprocessNestedDispatcher: contract failure', () => {

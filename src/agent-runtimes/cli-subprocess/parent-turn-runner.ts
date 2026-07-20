@@ -242,6 +242,15 @@ export async function runParentTurnViaCliSubprocess(
           ...(historyFilePath !== undefined
             ? { appendSystemPromptFile: historyFilePath }
             : {}),
+          // LIA-461: closes the MCP-init race PR #57 diagnosed and PR #59
+          // built a mitigation for -- every real production turn on this
+          // path spawns a fresh CLI subprocess (no persistent per-thread
+          // session, confirmed via `nextConversationId`'s per-call counter
+          // above), so every turn is exposed to the same race today.
+          // timeoutMs is a crash/hang safety BOUND, not the expected wait
+          // (real observed range: 751-954ms) -- see PR #59's validation data
+          // on LIA-461 for the real per-cell timing this is calibrated against.
+          waitForMcpReady: { timeoutMs: 5000 },
         });
         created = true;
 

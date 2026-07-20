@@ -387,6 +387,22 @@ describe('runParentTurnViaCliSubprocess: conversation wiring', () => {
       ].join(','),
     });
   });
+
+  it('LIA-461: requests waitForMcpReady on every createConversation call, closing the MCP-init race', async () => {
+    const { pool, createConversationCalls } = fakePool();
+    const { saver } = tempSaver();
+    const { lease } = fakeLease();
+    const { slot } = fakeSlot();
+
+    await runParentTurnViaCliSubprocess(
+      baseOptions(),
+      baseDeps(pool, saver, lease, slot),
+    );
+
+    expect(createConversationCalls[0].options).toMatchObject({
+      waitForMcpReady: { timeoutMs: 5000 },
+    });
+  });
 });
 
 describe('runParentTurnViaCliSubprocess: history injection (LIA-454 EP-002 step 11 fix)', () => {

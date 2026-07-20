@@ -126,6 +126,13 @@ export function createCliSubprocessNestedDispatcher(
           allowedTool: deps.allowedTool,
           permissionMode: deps.permissionMode,
           model: request.model,
+          // LIA-461: same rationale as parent-turn-runner.ts's identical
+          // addition -- this dispatcher spawns a fresh conversation per
+          // dispatch() call (no persistent session), so every dispatch is
+          // exposed to the MCP-init race PR #57 diagnosed. timeoutMs is a
+          // crash/hang safety bound, not the expected wait (751-954ms
+          // observed per PR #59's validation data on LIA-461).
+          waitForMcpReady: { timeoutMs: 5000 },
         });
         created = true;
 
