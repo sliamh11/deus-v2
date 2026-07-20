@@ -11,6 +11,7 @@ import {
 import { MCP_X_DIST_PATH } from './lia398_mcp_adapter_walking_skeleton.js';
 import {
   CHAINS,
+  CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS,
   OLLAMA_BENCH_MODEL_ID,
   PROVIDERS,
   add,
@@ -51,6 +52,8 @@ function fakeCliPool(overrides: {
   ) => Promise<{
     result: { is_error: boolean; result?: string };
     turnEvents: StreamJsonEvent[];
+    events?: StreamJsonEvent[];
+    timing?: { spawnToInitMs?: number; spawnToFirstAssistantMs?: number };
   }>;
 }): { pool: ClaudeCliSessionPool; terminateCalls: string[] } {
   const terminateCalls: string[] = [];
@@ -78,6 +81,12 @@ const cliDeps = {
   mcpServerScriptPath: '/repo/lia400-cli-subprocess-benchmark-mcp-server.ts',
   scratchDirFor: (conversationId: string) => `/tmp/scratch/${conversationId}`,
   modelId: 'claude-sonnet-5',
+  // Fake, zero-delay sleep + explicit preTurnDelayMs=0: every pre-existing
+  // test in this suite uses the shared cliDeps object, and the real default
+  // (CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS, 3000ms) would otherwise make
+  // every one of them incur a real 3s wall-clock wait.
+  sleep: async () => {},
+  preTurnDelayMs: 0,
 };
 
 /**
@@ -522,6 +531,18 @@ describe('CLI arg parsing (flags mirror eval/quality_bench.py)', () => {
     );
     expect(() => parseArgs(['--frobnicate'])).toThrow(/unknown flag/);
   });
+
+  it('parses --preTurnDelayMs, including 0 for a control run, and rejects invalid values', () => {
+    expect(parseArgs(['--preTurnDelayMs=3000']).preTurnDelayMs).toBe(3000);
+    expect(parseArgs(['--preTurnDelayMs=0']).preTurnDelayMs).toBe(0);
+    expect(parseArgs([]).preTurnDelayMs).toBeUndefined();
+    expect(() => parseArgs(['--preTurnDelayMs=-1'])).toThrow(
+      /invalid --preTurnDelayMs value/,
+    );
+    expect(() => parseArgs(['--preTurnDelayMs=notanumber'])).toThrow(
+      /invalid --preTurnDelayMs value/,
+    );
+  });
 });
 
 describe('summary table', () => {
@@ -595,7 +616,7 @@ describe('extractCliToolSequence (CLI-subprocess leg scoring adapter)', () => {
     ]);
   });
 
-  it('regression (real credentialed run, 2026-07-20): strips the mcp__<server>__ qualification prefix the real CLI actually reports, so the result is directly comparable to expectedToolSequence\'s bare names', () => {
+  it("regression (real credentialed run, 2026-07-20): strips the mcp__<server>__ qualification prefix the real CLI actually reports, so the result is directly comparable to expectedToolSequence's bare names", () => {
     const events: StreamJsonEvent[] = [
       assistantEvent([
         {
@@ -756,6 +777,143 @@ describe('runChainAgainstCliSubprocess / runCliSubprocessChainWithRetry (code-re
     expect(result.finalAnswer).toBe('the aurora fact');
     // terminate() must be called even on the success path (finally block).
     expect(terminateCalls.length).toBe(1);
+    // code-review finding: no `events` supplied (as in every other
+    // pre-existing test here) means no system/init event is found, so the
+    // init-derived fields stay absent — but cliMcpDiagnostics itself is
+    // still present, with preTurnDelayMs always recorded regardless of
+    // whether init data was observed.
+    expect(result.cliMcpDiagnostics).toEqual({ preTurnDelayMs: 0 });
+  });
+
+  it('records preTurnDelayMs even when no system/init event was ever observed (the exact failure mode under investigation)', async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: false, result: 'the aurora fact' },
+        turnEvents: [],
+        events: [], // no system/init at all — MCP handshake never completed
+      }),
+    });
+    const result = await runChainAgainstCliSubprocess(chain, pool, {
+      ...cliDeps,
+      preTurnDelayMs: 777,
+    });
+    expect(result.cliMcpDiagnostics).toEqual({ preTurnDelayMs: 777 });
+  });
+
+  it('records preTurnDelayMs on a spawn/protocol failure that never reaches sendTurn', async () => {
+    const { pool } = fakeCliPool({});
+    (
+      pool.createConversation as unknown as {
+        mockRejectedValueOnce: (err: Error) => void;
+      }
+    ).mockRejectedValueOnce(new Error('spawn ENOENT'));
+    const result = await runChainAgainstCliSubprocess(chain, pool, {
+      ...cliDeps,
+      preTurnDelayMs: 999,
+    });
+    expect(result.succeeded).toBe(false);
+    expect(result.cliMcpDiagnostics).toEqual({ preTurnDelayMs: 999 });
+  });
+
+  it("attaches cliMcpDiagnostics from the turn's system/init event + timing when present", async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: false, result: 'the aurora fact' },
+        turnEvents: [
+          {
+            type: 'assistant',
+            session_id: 's1',
+            parent_tool_use_id: null,
+            message: {
+              role: 'assistant',
+              content: [
+                { type: 'tool_use', id: 't1', name: 'lookup_fact', input: {} },
+              ],
+            },
+          },
+        ],
+        events: [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 's1',
+            mcp_servers: [{ name: 'lia400_bench_tools', status: 'connected' }],
+            tools: ['lookup_fact'],
+          },
+        ],
+        timing: { spawnToInitMs: 500, spawnToFirstAssistantMs: 800 },
+      }),
+    });
+    const result = await runChainAgainstCliSubprocess(chain, pool, cliDeps);
+    expect(result.cliMcpDiagnostics).toEqual({
+      mcpServers: [{ name: 'lia400_bench_tools', status: 'connected' }],
+      toolsAtInit: ['lookup_fact'],
+      spawnToInitMs: 500,
+      spawnToFirstAssistantMs: 800,
+      preTurnDelayMs: 0,
+    });
+  });
+
+  it('awaits the pre-turn delay between createConversation and sendTurn, and records the applied delay', async () => {
+    const { pool } = fakeCliPool({
+      sendTurn: async () => ({
+        result: { is_error: false, result: 'the aurora fact' },
+        turnEvents: [],
+      }),
+    });
+    const sleep = vi.fn(async (_ms: number) => {});
+    const result = await runChainAgainstCliSubprocess(chain, pool, {
+      ...cliDeps,
+      sleep,
+      preTurnDelayMs: 1234,
+    });
+    const createConversationMock = pool.createConversation as unknown as {
+      mock: { invocationCallOrder: number[] };
+    };
+    const sendTurnMock = pool.sendTurn as unknown as {
+      mock: { invocationCallOrder: number[] };
+    };
+    expect(createConversationMock.mock.invocationCallOrder[0]!).toBeLessThan(
+      sleep.mock.invocationCallOrder[0]!,
+    );
+    expect(sleep.mock.invocationCallOrder[0]!).toBeLessThan(
+      sendTurnMock.mock.invocationCallOrder[0]!,
+    );
+    expect(sleep).toHaveBeenCalledWith(1234);
+    expect(result.succeeded).toBe(true);
+  });
+
+  it('falls back to CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS and the real defaultSleep when neither is overridden', async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool } = fakeCliPool({
+        sendTurn: async () => ({
+          result: { is_error: false, result: 'the aurora fact' },
+          turnEvents: [],
+        }),
+      });
+      // Omit sleep/preTurnDelayMs entirely — the real code path main() hits
+      // whenever --preTurnDelayMs isn't passed on the command line.
+      const {
+        sleep: _sleep,
+        preTurnDelayMs: _delay,
+        ...depsWithoutOverrides
+      } = cliDeps;
+      const resultPromise = runChainAgainstCliSubprocess(
+        chain,
+        pool,
+        depsWithoutOverrides,
+      );
+      // defaultSleep uses the real setTimeout; advance fake time past the
+      // default delay so the awaited promise actually resolves.
+      await vi.advanceTimersByTimeAsync(
+        CLI_SUBPROCESS_PRE_TURN_DELAY_DEFAULT_MS,
+      );
+      const result = await resultPromise;
+      expect(result.succeeded).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
