@@ -561,6 +561,18 @@ export class DeusNativeRuntime implements AgentRuntime {
           return { status: 'error', result: null, error: outcome.error };
         }
 
+        // LIA-460: fold any nested-dispatch child usage into the SAME
+        // collector the parent's own messages feed below, BEFORE
+        // finalizeSuccessfulTurn reads usageCollector.aggregate() — so
+        // RunResult.usage reflects parent-plus-every-child total, matching
+        // the raw-HTTP path's own onUsage-callback behavior.
+        for (const entry of outcome.nestedUsageEvents) {
+          await usageCollector.recordRaw(entry, {
+            provider: entry.provider,
+            model: entry.model,
+          });
+        }
+
         return await finalizeSuccessfulTurn({
           messages: outcome.newMessages,
           text: outcome.finalAssistantText,

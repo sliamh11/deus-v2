@@ -99,6 +99,7 @@ describe('runTurn: cli-subprocess transport routing (LIA-454 EP-002 step 11)', (
       finalAssistantText: 'hi there',
       model: 'claude-sonnet-5',
       provider: 'anthropic',
+      nestedUsageEvents: [],
     });
 
     const events: RuntimeEvent[] = [];
@@ -135,6 +136,7 @@ describe('runTurn: cli-subprocess transport routing (LIA-454 EP-002 step 11)', (
       finalAssistantText: 'ok',
       model: 'claude-sonnet-5',
       provider: 'anthropic',
+      nestedUsageEvents: [],
     });
 
     await backend.runTurn(
@@ -209,6 +211,7 @@ describe('runTurn: cli-subprocess transport routing (LIA-454 EP-002 step 11)', (
       finalAssistantMessageId: 'msg-final',
       model: 'claude-sonnet-5',
       provider: 'anthropic',
+      nestedUsageEvents: [],
     });
 
     const events: RuntimeEvent[] = [];
@@ -250,6 +253,7 @@ describe('runTurn: cli-subprocess transport routing (LIA-454 EP-002 step 11)', (
       finalAssistantText: 'ok',
       model: '', // CLI never reported a model this turn
       provider: 'anthropic',
+      nestedUsageEvents: [],
     });
 
     await backend.runTurn(
@@ -311,6 +315,7 @@ describe('runTurn: cli-subprocess control-group memory-recall (LIA-458)', () => 
       finalAssistantText: 'ok',
       model: 'claude-sonnet-5',
       provider: 'anthropic',
+      nestedUsageEvents: [],
     });
 
     await backend.runTurn(
@@ -342,6 +347,7 @@ describe('runTurn: cli-subprocess control-group memory-recall (LIA-458)', () => 
       finalAssistantText: 'ok',
       model: 'claude-sonnet-5',
       provider: 'anthropic',
+      nestedUsageEvents: [],
     });
 
     await backend.runTurn(

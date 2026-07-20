@@ -1,8 +1,13 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { createCliSubprocessNestedDispatcher } from './cli-subprocess-nested-dispatcher.js';
 import type { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
+import { readAndClearNestedDispatchUsage } from './nested-dispatch-usage-channel.js';
 
 const OUTPUT_CONTRACT = z.object({ answer: z.string() });
 
@@ -196,5 +201,141 @@ describe('createCliSubprocessNestedDispatcher: request validation (reused from n
 
     expect(result.status).toBe('contract_failure');
     expect(createConversationCalls).toHaveLength(0);
+  });
+});
+
+describe('createCliSubprocessNestedDispatcher: nested-dispatch usage side channel (LIA-460)', () => {
+  function assistantUsageEvent(overrides: {
+    model?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  }) {
+    return {
+      type: 'assistant',
+      session_id: 's1',
+      parent_tool_use_id: null,
+      message: {
+        role: 'assistant',
+        id: 'msg_1',
+        model: overrides.model ?? 'claude-sonnet-5',
+        content: [{ type: 'text', text: 'child reply' }],
+        usage: {
+          input_tokens: overrides.input_tokens ?? 2,
+          output_tokens: overrides.output_tokens ?? 5,
+          ...(overrides.cache_creation_input_tokens !== undefined
+            ? {
+                cache_creation_input_tokens:
+                  overrides.cache_creation_input_tokens,
+              }
+            : {}),
+          ...(overrides.cache_read_input_tokens !== undefined
+            ? { cache_read_input_tokens: overrides.cache_read_input_tokens }
+            : {}),
+        },
+      },
+    };
+  }
+
+  it('omitted usageScratchDir -> zero fs writes (backward compatible with every pre-existing test in this file)', async () => {
+    const writeSpy = vi.spyOn(fs, 'appendFileSync');
+    const { pool } = fakePool({
+      sendTurn: async (id: string) =>
+        ({
+          result: { is_error: false, result: '{"answer":"ok"}' },
+          turnEvents: [assistantUsageEvent({})],
+        }) as never,
+    });
+    const dispatcher = createCliSubprocessNestedDispatcher(depsFor(pool));
+
+    await dispatcher.dispatch({
+      agentId: 'researcher',
+      model: 'claude-sonnet-5',
+      prompt: 'do the thing',
+      outputContract: OUTPUT_CONTRACT,
+    });
+
+    expect(writeSpy).not.toHaveBeenCalled();
+    writeSpy.mockRestore();
+  });
+
+  it('with usageScratchDir provided: appends a cache-inclusive TranscriptUsageEvent per assistant event, regardless of the eventual is_error/contract-validation outcome', async () => {
+    const scratchRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lia460-dispatcher-usage-'),
+    );
+    try {
+      const { pool } = fakePool({
+        sendTurn: async () =>
+          ({
+            result: { is_error: false, result: '{"answer":"ok"}' },
+            turnEvents: [
+              assistantUsageEvent({
+                model: 'claude-opus-4-8',
+                input_tokens: 2,
+                cache_creation_input_tokens: 29_792,
+              }),
+            ],
+          }) as never,
+      });
+      const dispatcher = createCliSubprocessNestedDispatcher({
+        ...depsFor(pool),
+        usageScratchDir: scratchRoot,
+      });
+
+      await dispatcher.dispatch({
+        agentId: 'researcher',
+        model: 'claude-sonnet-5', // requested model -- the REAL event model wins below
+        prompt: 'do the thing',
+        outputContract: OUTPUT_CONTRACT,
+      });
+
+      const entries = readAndClearNestedDispatchUsage(scratchRoot);
+      expect(entries).toHaveLength(1);
+      // Cache-inclusive: 2 (raw input_tokens) + 29,792 (cache_creation) --
+      // NOT the raw, cache-EXCLUDED value alone. This is the exact class of
+      // bug plan-review caught in the first draft (naming only
+      // extractAssistantUsage without normalizeCliUsageToLangChainUsage).
+      expect(entries[0]).toEqual({
+        provider: 'anthropic',
+        model: 'claude-opus-4-8', // the event's OWN resolved model, never the requested one
+        inputTokens: 29_794,
+        outputTokens: 5,
+        totalTokens: 29_799,
+      });
+    } finally {
+      fs.rmSync(scratchRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('records usage even when the turn ultimately reports contract_failure -- a real model call happened and was billed either way', async () => {
+    const scratchRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lia460-dispatcher-usage-contract-fail-'),
+    );
+    try {
+      const { pool } = fakePool({
+        sendTurn: async () =>
+          ({
+            result: { is_error: false, result: 'not valid json' },
+            turnEvents: [assistantUsageEvent({})],
+          }) as never,
+      });
+      const dispatcher = createCliSubprocessNestedDispatcher({
+        ...depsFor(pool),
+        usageScratchDir: scratchRoot,
+      });
+
+      const result = await dispatcher.dispatch({
+        agentId: 'researcher',
+        model: 'claude-sonnet-5',
+        prompt: 'do the thing',
+        outputContract: OUTPUT_CONTRACT,
+      });
+
+      expect(result.status).toBe('contract_failure');
+      expect(readAndClearNestedDispatchUsage(scratchRoot)).toHaveLength(1);
+    } finally {
+      fs.rmSync(scratchRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -45,6 +45,7 @@ import {
 } from './checkpoint-translation.js';
 import type { ClaudeCliSessionPool } from './claude-cli-session-pool.js';
 import { CliSummaryModel } from './cli-summary-model.js';
+import { readAndClearNestedDispatchUsage } from './nested-dispatch-usage-channel.js';
 import { maybeCompactParentHistory } from './parent-turn-compaction.js';
 import { serializeParentHistory } from './parent-turn-history.js';
 import {
@@ -55,6 +56,7 @@ import {
   type ProcessSlotLease,
   type ThreadTurnLease,
 } from './process-lifecycle-registry.js';
+import type { TranscriptUsageEvent } from '../transcript-store.js';
 
 const PARENT_TOOL_NAMES = ['web_search', 'web_fetch', 'dispatch_nested_agent'];
 
@@ -66,6 +68,10 @@ export type ParentCliTurnOutcome =
       finalAssistantMessageId?: string;
       model: string;
       provider: 'anthropic';
+      /** LIA-460: nested-dispatch child usage this turn, recorded by the
+       *  MCP server subprocess and read back via a file-based side channel
+       *  — [] when no dispatch happened this turn, never omitted. */
+      nestedUsageEvents: TranscriptUsageEvent[];
     }
   | { status: 'error'; error: string };
 
@@ -221,6 +227,11 @@ export async function runParentTurnViaCliSubprocess(
           mcpServerScriptPath: deps.mcpServerScriptPath,
           mcpServerEnv: {
             DEUS_PARENT_TURN_CONTEXT: JSON.stringify(options.mcpServerContext),
+            // LIA-460: marshals the SAME scratchDir this function already
+            // holds to the MCP server subprocess — see
+            // `nested-dispatch-usage-channel.ts`'s own doc comment for why
+            // this is an explicit env var, not the process's own cwd.
+            DEUS_PARENT_SCRATCH_DIR: scratchDir,
           },
           repoRoot: deps.repoRoot,
           allowedTool,
@@ -286,6 +297,20 @@ export async function runParentTurnViaCliSubprocess(
             : {}),
         });
 
+        // LIA-460: any nested-dispatch child usage the MCP server subprocess
+        // recorded this turn via the file-based side channel — [] when no
+        // dispatch happened, never omitted (an empty list is a legitimate
+        // real state, not a missing value). Populated only on this success
+        // path (RunResult.usage only exists on a success RunResult at all —
+        // the raw-HTTP path's own `agent.invoke()` throwing likewise never
+        // reaches a usage-bearing return). The file itself is ALWAYS cleaned
+        // up in the `finally` below regardless of outcome — this read here
+        // both consumes the value for the outcome AND performs that
+        // cleanup for the success path; the `finally`'s own cleanup call
+        // exists for every OTHER path (error, thrown exception) so no
+        // orphaned entry can ever bleed into a later turn's read.
+        const nestedUsageEvents = readAndClearNestedDispatchUsage(scratchDir);
+
         return {
           status: 'success',
           newMessages: translated.messages,
@@ -295,6 +320,7 @@ export async function runParentTurnViaCliSubprocess(
             : {}),
           model: translated.model,
           provider: translated.provider,
+          nestedUsageEvents,
         };
       } finally {
         if (created) {
@@ -307,6 +333,13 @@ export async function runParentTurnViaCliSubprocess(
             // already gone
           }
         }
+        // LIA-460 (code-review finding): a turn that errors AFTER a nested
+        // dispatch already wrote usage would otherwise orphan that file —
+        // defensively clear it here on every path, not just the success
+        // return above. A no-op (readAndClearNestedDispatchUsage already
+        // returns [] and does nothing) when the success path already
+        // consumed it, or when no nested dispatch happened this turn.
+        readAndClearNestedDispatchUsage(scratchDir);
       }
     } finally {
       slot.release();
