@@ -75,7 +75,15 @@ export type RuntimeActivityPayload =
     }
   | { sessionRef: RuntimeSession } // session
   | Record<string, never> // turn_complete
-  | { error: string }; // error
+  | { error: string } // error
+  | {
+      // permission_request (LIA-465 spike)
+      requestId: string;
+      toolName: string;
+      toolInputPreview: string;
+      sessionId: string;
+      requestedAt: string;
+    };
 
 /**
  * One immutable, fanned-out activity message. Carries both the SSE `id:`
@@ -144,6 +152,14 @@ function toPayload(event: RuntimeEvent): RuntimeActivityPayload {
       return {};
     case 'error':
       return { error: event.error };
+    case 'permission_request':
+      return {
+        requestId: event.requestId,
+        toolName: event.toolName,
+        toolInputPreview: event.toolInputPreview,
+        sessionId: event.sessionId,
+        requestedAt: event.requestedAt,
+      };
   }
 }
 

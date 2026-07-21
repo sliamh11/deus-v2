@@ -279,6 +279,11 @@ export function createDeusNativeChatController(deps: {
           message: bound(event.error, ERROR_TEXT_MAX),
         });
         break;
+      case 'permission_request':
+        // LIA-465 spike: no interactive prompt exists in this CLI client yet —
+        // deliberately ignored (not leaked to terminal output) until a
+        // follow-up ticket wires a real UI here.
+        break;
       default: {
         // Exhaustiveness guard: a new RuntimeEvent variant must be mapped
         // here deliberately, never leaked to a terminal by accident.
