@@ -55,7 +55,10 @@ export async function run(_args: string[]): Promise<void> {
   if (platform === 'macos') {
     setupLaunchd(projectRoot, nodePath, homeDir);
     setupLogReviewLaunchd(projectRoot, homeDir);
-    setupOAuthRefreshLaunchd(projectRoot, nodePath, homeDir);
+    // LIA-453: oauth-refresh intentionally NOT installed for v2. deus-v2 shares
+    // v1's Claude/OpenAI credentials (~/.claude/.credentials.json), and two
+    // refreshers racing on one shared refresh token risks corrupting it — v1's
+    // com.deus.oauth-refresh already keeps the shared token fresh.
     for (const spec of SCHEDULED_JOBS)
       installScheduledJobLaunchd(projectRoot, homeDir, spec);
   } else if (platform === 'linux') {
@@ -253,101 +256,6 @@ function setupLogReviewLaunchd(projectRoot: string, homeDir: string): void {
     logger.info({ plistPath }, 'Log review job scheduled (daily 08:00)');
   } catch {
     logger.warn('launchctl load for log-review failed (may already be loaded)');
-  }
-}
-
-/**
- * Proactive Claude OAuth refresh job (macOS only).
- *
- * Runs every 30 min via launchd. Refreshes the token when it's within 45 min
- * of expiring so idle container agents don't hit /login after 8h silence.
- * See src/auth-refresh.ts for the CLI implementation.
- */
-function setupOAuthRefreshLaunchd(
-  projectRoot: string,
-  nodePath: string,
-  homeDir: string,
-): void {
-  const plistPath = path.join(
-    homeDir,
-    'Library',
-    'LaunchAgents',
-    'com.deus-v2.oauth-refresh.plist',
-  );
-  const logPath = path.join(
-    homeDir,
-    'Library',
-    'Logs',
-    'com.deus-v2.oauth-refresh.log',
-  );
-  fs.mkdirSync(path.dirname(logPath), { recursive: true });
-
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.deus-v2.oauth-refresh</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>${nodePath}</string>
-        <string>${projectRoot}/dist/auth-refresh.js</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>${projectRoot}</string>
-    <key>StartInterval</key>
-    <integer>1800</integer>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>HOME</key>
-        <string>${homeDir}</string>
-        <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>${logPath}</string>
-    <key>StandardErrorPath</key>
-    <string>${logPath}</string>
-</dict>
-</plist>`;
-
-  fs.writeFileSync(plistPath, plist);
-
-  // Prefer bootstrap (modern launchd), fall back to load for older macOS.
-  const uid = process.getuid ? process.getuid() : 0;
-  try {
-    // bootout any stale instance first so bootstrap doesn't fail with "already loaded"
-    try {
-      execSync(`launchctl bootout gui/${uid} ${JSON.stringify(plistPath)}`, {
-        stdio: 'ignore',
-      });
-    } catch {
-      /* not previously bootstrapped */
-    }
-    execSync(`launchctl bootstrap gui/${uid} ${JSON.stringify(plistPath)}`, {
-      stdio: 'ignore',
-    });
-    logger.info(
-      { plistPath },
-      'OAuth refresh job scheduled (every 30 min, launchd bootstrap)',
-    );
-  } catch {
-    // Older macOS: fall back to launchctl load
-    try {
-      execSync(`launchctl load ${JSON.stringify(plistPath)}`, {
-        stdio: 'ignore',
-      });
-      logger.info(
-        { plistPath },
-        'OAuth refresh job scheduled (every 30 min, launchctl load)',
-      );
-    } catch {
-      logger.warn(
-        'launchctl bootstrap/load for oauth-refresh failed (may already be loaded)',
-      );
-    }
   }
 }
 
@@ -864,6 +772,19 @@ export const SCHEDULED_JOBS: ScheduledJobSpec[] = [
     hour: 7,
     minute: 0,
     description: 'Deus morning memory report',
+  },
+  {
+    // LIA-453: cross-platform replacement for v1's inline-bash
+    // com.deus.evolution-backup. 04:20 is offset from v1's 04:00 evolution-backup
+    // (so two concurrent daemons don't hit disk with simultaneous backup I/O at
+    // the same wall-clock minute) and clear of v2's own 04:30 maintenance run.
+    // Isolation lives in the script: it snapshots ~/.deus-v2/evolution.db
+    // (DEUS_EVOLUTION_DB default), never v1's ~/.deus/evolution.db.
+    id: 'evolution-backup',
+    scriptRelPath: 'scripts/evolution_backup.py',
+    hour: 4,
+    minute: 20,
+    description: 'Deus evolution DB backup',
   },
 ];
 
