@@ -1661,154 +1661,155 @@ async function pollLinear(): Promise<void> {
     // Add before triage to prevent concurrent polls from double-processing the same issue
     ctx.inFlightDispatch.add(issue.id);
 
-    const issueComments = await issue.comments();
-    const comments = await Promise.all(
-      issueComments.nodes.map(async (c) => {
-        const user = await c.user;
-        return { author: user?.displayName ?? 'Unknown', body: c.body };
-      }),
-    );
+    // LIA-448: the entire per-issue dispatch body (add() through the
+    // terminal state — enqueued/skipped/refused) runs under a single
+    // try/finally. Several awaits below (issue.comments(), triageIssue(),
+    // and — pre-existing — the two refuseCapabilityBlockedIssue() calls
+    // added under LIA-422/E3) can throw/reject; without this guard the
+    // exception unwinds out of pollLinear and strands issue.id in
+    // inFlightDispatch forever, so no future poll ever reconsiders it.
+    // `enqueued` tracks whether the issue reached enqueueTask(); the
+    // finally only deletes the marker when it didn't, mirroring the
+    // narrower try/finally the two refusal branches already used.
+    let enqueued = false;
+    try {
+      const issueComments = await issue.comments();
+      const comments = await Promise.all(
+        issueComments.nodes.map(async (c) => {
+          const user = await c.user;
+          return { author: user?.displayName ?? 'Unknown', body: c.body };
+        }),
+      );
 
-    const triageResult = await triageIssue(
-      ctx,
-      {
-        id: issue.id,
-        identifier: issue.identifier,
-        description: issue.description ?? null,
-      },
-      comments,
-    );
-    if (triageResult === 'skip') {
-      ctx.inFlightDispatch.delete(issue.id);
-      continue;
-    }
+      const triageResult = await triageIssue(
+        ctx,
+        {
+          id: issue.id,
+          identifier: issue.identifier,
+          description: issue.description ?? null,
+        },
+        comments,
+      );
+      if (triageResult === 'skip') {
+        continue;
+      }
 
-    // LIA-422/E3: refuse before consuming a worktree or a queue slot when
-    // the resolved backend cannot actually satisfy this issue (today, only
-    // `deus-native` is ever gated here — see resolveLinearDispatchReadiness).
-    const dispatchReadiness = resolveLinearDispatchReadiness(ctx);
-    if (!dispatchReadiness.readiness.ready) {
-      // try/finally: a thrown Linear API call inside the refusal helper must
-      // not leave this issue stuck in inFlightDispatch forever — unlike the
-      // existing agent_timeout precedent (which fires inside an already-
-      // queued task with its own retry semantics), this branch runs directly
-      // in the poll loop, so a stuck marker here would silently block every
-      // future poll from ever reconsidering the issue.
-      try {
+      // LIA-422/E3: refuse before consuming a worktree or a queue slot when
+      // the resolved backend cannot actually satisfy this issue (today, only
+      // `deus-native` is ever gated here — see resolveLinearDispatchReadiness).
+      const dispatchReadiness = resolveLinearDispatchReadiness(ctx);
+      if (!dispatchReadiness.readiness.ready) {
         await refuseCapabilityBlockedIssue(
           ctx,
           { id: issue.id, identifier: issue.identifier },
           dispatchReadiness.backendName,
           dispatchReadiness.readiness,
         );
-      } finally {
-        ctx.inFlightDispatch.delete(issue.id);
+        continue;
       }
-      continue;
-    }
-    // A prior poll may have parked this issue with the capability-blocked
-    // label (e.g. before the tool surface was widened, or the label was
-    // applied under a different backend selection). Clear it now that
-    // dispatch is proceeding, so the label reflects current reality. Reuses
-    // `labels` (already fetched above, before inFlightDispatch.add) rather
-    // than a second `issue.labels()` call — avoids both a redundant network
-    // round-trip and an unguarded post-marker await that could otherwise
-    // strand this issue in inFlightDispatch forever if it rejected.
-    const capabilityBlockedId = ctx.gateLabels.capabilityBlocked;
-    if (capabilityBlockedId) {
-      if (nodesHaveLabelId(labels.nodes, capabilityBlockedId)) {
-        await ctx.client
-          .updateIssue(issue.id, { removedLabelIds: [capabilityBlockedId] })
-          .catch((err) =>
-            logger.warn(
-              { issueId: issue.id, err },
-              'linear-dispatcher: failed to clear stale runtime:capability-blocked label',
-            ),
-          );
+      // A prior poll may have parked this issue with the capability-blocked
+      // label (e.g. before the tool surface was widened, or the label was
+      // applied under a different backend selection). Clear it now that
+      // dispatch is proceeding, so the label reflects current reality. Reuses
+      // `labels` (already fetched above, before inFlightDispatch.add) rather
+      // than a second `issue.labels()` call — avoids both a redundant network
+      // round-trip and an unguarded post-marker await that could otherwise
+      // strand this issue in inFlightDispatch forever if it rejected.
+      const capabilityBlockedId = ctx.gateLabels.capabilityBlocked;
+      if (capabilityBlockedId) {
+        if (nodesHaveLabelId(labels.nodes, capabilityBlockedId)) {
+          await ctx.client
+            .updateIssue(issue.id, { removedLabelIds: [capabilityBlockedId] })
+            .catch((err) =>
+              logger.warn(
+                { issueId: issue.id, err },
+                'linear-dispatcher: failed to clear stale runtime:capability-blocked label',
+              ),
+            );
+        }
       }
-    }
 
-    const failureDossier = buildFailureDossier(issue.id);
-    let prompt: string;
-    if (roleSpec) {
-      prompt = buildIssuePrompt(
-        roleSpec,
-        issue.title,
-        issue.identifier,
-        issue.description ?? undefined,
-        comments,
-        failureDossier,
-      );
-    } else {
-      prompt = buildScopedIssuePrompt(
-        issue.title,
-        issue.identifier,
-        issue.description ?? '',
-        comments,
-        failureDossier,
-      );
-    }
+      const failureDossier = buildFailureDossier(issue.id);
+      let prompt: string;
+      if (roleSpec) {
+        prompt = buildIssuePrompt(
+          roleSpec,
+          issue.title,
+          issue.identifier,
+          issue.description ?? undefined,
+          comments,
+          failureDossier,
+        );
+      } else {
+        prompt = buildScopedIssuePrompt(
+          issue.title,
+          issue.identifier,
+          issue.description ?? '',
+          comments,
+          failureDossier,
+        );
+      }
 
-    const chatJid = `linear-dispatch-${issue.id.slice(0, 8)}`;
-    let worktreePath: string | undefined;
-    try {
-      const wt = await ensureIssueWorktree(issue.identifier);
-      if (wt) worktreePath = wt.worktreePath;
-    } catch (wtErr) {
-      logger.warn(
-        { issueId: issue.id, err: wtErr },
-        'linear-dispatcher: failed to create worktree, dispatching without isolation',
-      );
-    }
-
-    // LIA-422/E3: unlike container/Claude backends (which tolerate the
-    // fail-open dispatch-without-isolation path above), `deus-native` must
-    // refuse rather than proceed without a worktree — C2's workspaceRoot
-    // wiring (deus-native-backend.ts) has no fallback of its own beyond the
-    // daemon cwd, which would store verdicts under the wrong bucket.
-    if (dispatchReadiness.backendName === 'deus-native' && !worktreePath) {
+      const chatJid = `linear-dispatch-${issue.id.slice(0, 8)}`;
+      let worktreePath: string | undefined;
       try {
+        const wt = await ensureIssueWorktree(issue.identifier);
+        if (wt) worktreePath = wt.worktreePath;
+      } catch (wtErr) {
+        logger.warn(
+          { issueId: issue.id, err: wtErr },
+          'linear-dispatcher: failed to create worktree, dispatching without isolation',
+        );
+      }
+
+      // LIA-422/E3: unlike container/Claude backends (which tolerate the
+      // fail-open dispatch-without-isolation path above), `deus-native` must
+      // refuse rather than proceed without a worktree — C2's workspaceRoot
+      // wiring (deus-native-backend.ts) has no fallback of its own beyond the
+      // daemon cwd, which would store verdicts under the wrong bucket.
+      if (dispatchReadiness.backendName === 'deus-native' && !worktreePath) {
         await refuseCapabilityBlockedIssue(
           ctx,
           { id: issue.id, identifier: issue.identifier },
           dispatchReadiness.backendName,
           { ready: false, failures: ['workspace_root_unavailable'] },
         );
-      } finally {
-        ctx.inFlightDispatch.delete(issue.id);
+        continue;
       }
-      continue;
-    }
 
-    const runContext: RunContext = {
-      prompt,
-      groupFolder: DISPATCH_GROUP_JID,
-      chatJid,
-      isControlGroup: true,
-      isScheduledTask: true,
-      effort: 'high',
-      ...(worktreePath && { worktreePath }),
-    };
-
-    fireAndForget(
-      notifyPipelineStep(ctx, issue.id, issue.identifier, 'agent_dispatched'),
-      { name: 'linear-dispatcher.notify-pipeline' },
-    );
-
-    ctx.deps.queue.enqueueTask(chatJid, issue.id, () =>
-      runIssue(ctx, issue.id, issue.identifier, runContext, roleSpec),
-    );
-
-    dispatched++;
-    logger.info(
-      {
-        issueId: issue.id,
-        role: roleSpec?.name ?? 'scoped',
+      const runContext: RunContext = {
+        prompt,
+        groupFolder: DISPATCH_GROUP_JID,
         chatJid,
-        sortOrder: issue.sortOrder,
-      },
-      'linear-dispatcher: enqueued issue for agent run',
-    );
+        isControlGroup: true,
+        isScheduledTask: true,
+        effort: 'high',
+        ...(worktreePath && { worktreePath }),
+      };
+
+      fireAndForget(
+        notifyPipelineStep(ctx, issue.id, issue.identifier, 'agent_dispatched'),
+        { name: 'linear-dispatcher.notify-pipeline' },
+      );
+
+      ctx.deps.queue.enqueueTask(chatJid, issue.id, () =>
+        runIssue(ctx, issue.id, issue.identifier, runContext, roleSpec),
+      );
+      enqueued = true;
+
+      dispatched++;
+      logger.info(
+        {
+          issueId: issue.id,
+          role: roleSpec?.name ?? 'scoped',
+          chatJid,
+          sortOrder: issue.sortOrder,
+        },
+        'linear-dispatcher: enqueued issue for agent run',
+      );
+    } finally {
+      if (!enqueued) ctx.inFlightDispatch.delete(issue.id);
+    }
   }
 
   if (sorted.length > dispatched) {
