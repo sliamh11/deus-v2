@@ -138,6 +138,7 @@ import { RuntimeRegistry } from './agent-runtimes/registry.js';
 import { resolveAgentRuntime } from './agent-runtimes/resolve.js';
 import { logger } from './logger.js';
 import { EventBus } from './events/bus.js';
+import { getIssuePr } from './db.js';
 
 function makeMockDeps(
   overrides: Partial<LinearDispatcherDependencies> = {},
@@ -935,6 +936,122 @@ describe('pollLinear — deus-native capability-blocked refusal (LIA-422/E3)', (
     expect(updateIssue).toHaveBeenCalledWith('bbb', {
       removedLabelIds: ['capability-blocked-label-id'],
     });
+  });
+});
+
+describe('pollLinear — inFlightDispatch cleanup on mid-dispatch throw (LIA-448)', () => {
+  const agentsDir = path.join(TEST_PROJECT_ROOT, '.claude', 'agents');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentsDir, 'test-role.md'),
+      `---\nname: test-role\nlinear_label: "agent:test"\n---\nYou are a test agent.`,
+    );
+  });
+
+  afterEach(() => {
+    stopLinearDispatcher();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+    fs.rmSync(TEST_PROJECT_ROOT, { recursive: true, force: true });
+    vi.mocked(getIssuePr).mockReturnValue(undefined);
+  });
+
+  function makeIssue(id: string, sortOrder: number, labelName = 'agent:test') {
+    return {
+      id,
+      title: `Issue ${id}`,
+      identifier: `LIA-${id}`,
+      description: 'test',
+      sortOrder,
+      labels: vi.fn().mockResolvedValue({ nodes: [{ name: labelName }] }),
+      comments: vi.fn().mockResolvedValue({ nodes: [] }),
+    };
+  }
+
+  // Reproduces the LIA-448 gap: ctx.inFlightDispatch.add(issue.id) runs, then
+  // `await issue.comments()` rejects before the issue reaches any terminal
+  // state (enqueued/skipped/refused). Pre-fix, nothing ever deleted the
+  // marker, so the issue was stranded in inFlightDispatch forever and no
+  // later poll would ever reconsider it.
+  it('cleans up inFlightDispatch when issue.comments() rejects mid-dispatch, and a later poll reconsiders the issue', async () => {
+    const enqueueTask = vi.fn();
+    const deps = makeMockDeps({
+      queue: {
+        enqueueTask,
+        notifyIdle: vi.fn(),
+        closeStdin: vi.fn(),
+        availableSlots: vi.fn().mockReturnValue(5),
+      } as unknown as LinearDispatcherDependencies['queue'],
+    });
+
+    const issue = makeIssue('aaa', 1.0);
+    (issue.comments as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('linear SDK: comments fetch failed'))
+      .mockResolvedValue({ nodes: [] });
+
+    const ctx = makeMockCtx({
+      deps,
+      client: {
+        issues: vi.fn().mockResolvedValue({ nodes: [issue] }),
+        updateIssue: vi.fn().mockResolvedValue({}),
+      } as unknown as LinearContext['client'],
+    });
+
+    startLinearDispatcher(ctx);
+    await vi.advanceTimersByTimeAsync(100);
+
+    // The throw must not have enqueued the issue...
+    expect(enqueueTask).not.toHaveBeenCalled();
+    // ...and must not have stranded the marker — this is the regression.
+    expect(ctx.inFlightDispatch.has('aaa')).toBe(false);
+
+    // A later poll must be able to reconsider (and now dispatch) the same
+    // issue — proving the id was actually released, not just absent by
+    // coincidence of a single check.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+    expect(enqueueTask.mock.calls[0][1]).toBe('aaa');
+  });
+
+  // Same gap, second unguarded await: `await triageIssue(...)` throws when
+  // its first DB read (getIssuePr) throws synchronously inside the awaited
+  // call chain.
+  it('cleans up inFlightDispatch when triageIssue() rejects mid-dispatch, and a later poll reconsiders the issue', async () => {
+    const enqueueTask = vi.fn();
+    const deps = makeMockDeps({
+      queue: {
+        enqueueTask,
+        notifyIdle: vi.fn(),
+        closeStdin: vi.fn(),
+        availableSlots: vi.fn().mockReturnValue(5),
+      } as unknown as LinearDispatcherDependencies['queue'],
+    });
+
+    const issue = makeIssue('aaa', 1.0);
+    vi.mocked(getIssuePr).mockImplementationOnce(() => {
+      throw new Error('db: getIssuePr failed');
+    });
+
+    const ctx = makeMockCtx({
+      deps,
+      client: {
+        issues: vi.fn().mockResolvedValue({ nodes: [issue] }),
+        updateIssue: vi.fn().mockResolvedValue({}),
+      } as unknown as LinearContext['client'],
+    });
+
+    startLinearDispatcher(ctx);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(enqueueTask).not.toHaveBeenCalled();
+    expect(ctx.inFlightDispatch.has('aaa')).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+    expect(enqueueTask.mock.calls[0][1]).toBe('aaa');
   });
 });
 
