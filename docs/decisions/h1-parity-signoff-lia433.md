@@ -185,3 +185,48 @@ here, and tracked as LIA-444.
 
 **Cross-ticket consequence (2026-07-18, H3/LIA-435):** H2/LIA-434 remains
 blocked; Claude stays default until a later H1 evidence update records a GO.
+
+## Addendum (2026-07-21): LIA-433 closed — raw-HTTP transport blockers resolved, no change to the default-flip verdict
+
+The §5 accepted gap **"Claude/GPT tool-loop reliability never empirically
+validated"** — the primary basis for this doc's NO-GO — was re-examined
+today. Both blockers turn out to be about the specific transport the
+LIA-400 benchmark's `claude` and `gpt` legs use (a raw-HTTP client sending
+an extracted OAuth token / API key directly to the provider's REST API, not
+either provider's own native CLI), not about Claude or GPT's actual
+tool-calling capability:
+
+- **Claude's raw-HTTP leg** is blocked by Anthropic policy, not usage:
+  subscription/OAuth tokens are documented as native-app-only, so a
+  third-party HTTP client reimplementing the protocol with one draws `429
+  rate_limit_error` immediately and consistently on the very first call —
+  not a quota that clears with time, since it isn't usage-based.
+- **GPT's raw-HTTP leg** hits `insufficient_quota` — no funded billing on
+  that API key, unrelated to rate or reliability.
+
+Neither reflects the transport the system actually runs. Claude has a
+working alternative — spawning the real `claude` CLI as a subprocess over
+OAuth, the same mechanism Anthropic's own VS Code extension uses — and it
+was rigorously validated today: three real runs of the LIA-400 benchmark's
+`claude-cli-subprocess` leg, 18/18 (100%) pass, with mechanism-level
+diagnostics confirming the container's MCP tool catalog stayed fully
+connected on every cell (see
+`scripts/spikes/lia400_tool_loop_reliability_benchmark.md`'s dated addenda
+for the full data). GPT has an equivalent — `codex exec` via subscription
+OAuth — used successfully and extensively in real production/session work,
+but, disclosed honestly, never run through this same formal benchmark the
+way the Claude leg was; that is real-world usage evidence, not benchmark
+evidence, and remains a genuine gap in rigor if this decision is
+revisited.
+
+**Decision:** close the LIA-433 investigation thread (Linear ticket moved
+to Done) on this basis — continuing to chase the raw-HTTP legs' blockers
+would validate a transport this system doesn't use. This does **not**
+itself constitute a GO for the production default-flip, which remains
+tracked separately as LIA-450/LIA-436, still open and still requiring its
+own deliberate decision; it only closes this specific evidence-gathering
+thread about tool-loop reliability. The other components of this doc's
+original NO-GO — the AAG-007b three-layer harness (§3, never built) and
+the release-scale benchmark configuration (§4, never separately defined)
+— are untouched by this closure and remain genuinely open should full H1
+parity ever be revisited.
