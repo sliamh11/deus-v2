@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-07-20T13:15:14.544Z",
+  "generatedAt": "2026-07-21T03:03:07.178Z",
   "flags": {
     "smoke": false,
     "dry": false,
     "providers": [
       "claude-cli-subprocess"
     ],
-    "preTurnDelayMs": 3000
+    "waitForMcpReadyTimeoutMs": 5000
   },
   "providerLegs": [
     {
@@ -27,8 +27,8 @@
         "lookup_fact"
       ],
       "matched": true,
-      "finalAnswer": "Auroras are caused by charged solar-wind particles colliding with gases in the upper atmosphere.",
-      "latencyMs": 15634,
+      "finalAnswer": "Auroras are caused by charged particles from the solar wind colliding with gases in the upper atmosphere.",
+      "latencyMs": 4645,
       "cliMcpDiagnostics": {
         "mcpServers": [
           {
@@ -46,9 +46,10 @@
           "mcp__lia400_bench_tools__lookup_fact",
           "mcp__lia400_bench_tools__multiply"
         ],
-        "spawnToInitMs": 3017,
-        "spawnToFirstAssistantMs": 12782,
-        "preTurnDelayMs": 3000
+        "spawnToInitMs": 1435,
+        "spawnToFirstAssistantMs": 3449,
+        "preTurnDelayMs": 0,
+        "spawnToMcpReadyMs": 723
       }
     },
     {
@@ -65,7 +66,7 @@
       ],
       "matched": true,
       "finalAnswer": "The current temperature in Reykjavik is **20°C** (68°F).",
-      "latencyMs": 10045,
+      "latencyMs": 5126,
       "cliMcpDiagnostics": {
         "mcpServers": [
           {
@@ -83,9 +84,10 @@
           "mcp__lia400_bench_tools__lookup_fact",
           "mcp__lia400_bench_tools__multiply"
         ],
-        "spawnToInitMs": 3046,
-        "spawnToFirstAssistantMs": 5521,
-        "preTurnDelayMs": 3000
+        "spawnToInitMs": 829,
+        "spawnToFirstAssistantMs": 2001,
+        "preTurnDelayMs": 0,
+        "spawnToMcpReadyMs": 756
       }
     },
     {
@@ -101,8 +103,8 @@
         "multiply"
       ],
       "matched": true,
-      "finalAnswer": "The final product is **42** (3 + 4 = 7, then 7 × 6 = 42).",
-      "latencyMs": 10409,
+      "finalAnswer": "The final product is **42**.",
+      "latencyMs": 5420,
       "cliMcpDiagnostics": {
         "mcpServers": [
           {
@@ -120,9 +122,10 @@
           "mcp__lia400_bench_tools__lookup_fact",
           "mcp__lia400_bench_tools__multiply"
         ],
-        "spawnToInitMs": 3044,
-        "spawnToFirstAssistantMs": 6092,
-        "preTurnDelayMs": 3000
+        "spawnToInitMs": 777,
+        "spawnToFirstAssistantMs": 2649,
+        "preTurnDelayMs": 0,
+        "spawnToMcpReadyMs": 753
       }
     },
     {
@@ -136,8 +139,8 @@
         "delegate_to_subagent"
       ],
       "matched": true,
-      "finalAnswer": "The subagent said it doesn't have personal preferences, but noted mango is a popular favorite for its sweet flavor.",
-      "latencyMs": 13094,
+      "finalAnswer": "The subagent said it doesn't have personal preferences, but if it had to pick, it would go with **mango** for its sweetness.",
+      "latencyMs": 8688,
       "cliMcpDiagnostics": {
         "mcpServers": [
           {
@@ -155,9 +158,10 @@
           "mcp__lia400_bench_tools__lookup_fact",
           "mcp__lia400_bench_tools__multiply"
         ],
-        "spawnToInitMs": 3049,
-        "spawnToFirstAssistantMs": 7230,
-        "preTurnDelayMs": 3000
+        "spawnToInitMs": 1210,
+        "spawnToFirstAssistantMs": 3301,
+        "preTurnDelayMs": 0,
+        "spawnToMcpReadyMs": 808
       }
     },
     {
@@ -173,8 +177,8 @@
         "fetch_record"
       ],
       "matched": true,
-      "finalAnswer": "Record `r-17` has value: **blue-harbor**.",
-      "latencyMs": 10982,
+      "finalAnswer": "Record `r-17` has value: **blue-harbor**",
+      "latencyMs": 8923,
       "cliMcpDiagnostics": {
         "mcpServers": [
           {
@@ -192,9 +196,10 @@
           "mcp__lia400_bench_tools__lookup_fact",
           "mcp__lia400_bench_tools__multiply"
         ],
-        "spawnToInitMs": 3042,
-        "spawnToFirstAssistantMs": 7238,
-        "preTurnDelayMs": 3000
+        "spawnToInitMs": 1805,
+        "spawnToFirstAssistantMs": 3971,
+        "preTurnDelayMs": 0,
+        "spawnToMcpReadyMs": 751
       }
     },
     {
@@ -208,8 +213,8 @@
         "get_status"
       ],
       "matched": true,
-      "finalAnswer": "X credentials are not configured.",
-      "latencyMs": 10247,
+      "finalAnswer": "X credentials are **not configured**.",
+      "latencyMs": 4098,
       "cliMcpDiagnostics": {
         "mcpServers": [
           {
@@ -227,9 +232,10 @@
           "mcp__lia400_bench_tools__lookup_fact",
           "mcp__lia400_bench_tools__multiply"
         ],
-        "spawnToInitMs": 3044,
-        "spawnToFirstAssistantMs": 7206,
-        "preTurnDelayMs": 3000
+        "spawnToInitMs": 798,
+        "spawnToFirstAssistantMs": 2115,
+        "preTurnDelayMs": 0,
+        "spawnToMcpReadyMs": 749
       }
     }
   ]

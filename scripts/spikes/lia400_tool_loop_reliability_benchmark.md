@@ -669,3 +669,63 @@ diagnosed, plausibly-mitigable harness timing issue," not "a demonstrated model-
 gap."** A genuine production mitigation (e.g. a wait-for-MCP-ready check before the first real
 turn, applied in `ClaudeCliSessionPool` or its callers, not just this benchmark) is a distinct,
 not-yet-scoped follow-up.
+
+## Addendum 3 (2026-07-21): production mechanism validated — the shipped fix, not the delay hack
+
+Addendum 2's clean 6/6 used `--preTurnDelayMs=3000`, a flat unconditional delay added purely to
+prove the race was caller-side-fixable. It was never the intended fix. LIA-461 (PR #59/#60, merged
+after that addendum) shipped the real mechanism: `mcp-ready-marker.ts`'s
+`writeMcpReadyMarkerIfRequested()`, called from the benchmark's own MCP server's
+`server.oninitialized` callback, writes a marker file the moment the CLI's `initialized` handshake
+completes; `ClaudeCliSessionPool.createConversation({ waitForMcpReady })` polls for that marker
+(default `pollIntervalMs: 25`) before returning, so `sendTurn()` never fires until the MCP stdio
+handshake is provably done — no fixed delay, no guessing at a safe margin. `parent-turn-runner.ts`
+and `cli-subprocess-nested-dispatcher.ts` (the two real production call sites) both pass
+`waitForMcpReady: { timeoutMs: 5000 }`. Until this addendum, that production mechanism had never
+actually been run through this benchmark — only the throwaway flat-delay stand-in had.
+
+### Real runs, `--providers=claude-cli-subprocess --waitForMcpReady=5000` (matching production's own timeout)
+
+Three independent real, credentialed runs, back to back:
+
+```
+Run 1: single_tool_lookup PASS, sequential_two_tool PASS, calculation_chain PASS,
+       delegate_to_subagent PASS, error_recovery PASS, mcp_get_status PASS
+Run 2: single_tool_lookup PASS, sequential_two_tool PASS, calculation_chain PASS,
+       delegate_to_subagent PASS, error_recovery PASS, mcp_get_status PASS
+Run 3: single_tool_lookup PASS, sequential_two_tool PASS, calculation_chain PASS,
+       delegate_to_subagent PASS, error_recovery PASS, mcp_get_status PASS
+```
+
+**18/18 (100%)** — three clean 6/6 sweeps, zero FAILs, versus the original addendum's 10/23 (~43%)
+with zero clean runs across 4 attempts on the unfixed path.
+
+### Mechanism-level confirmation, not just the pass/fail surface
+
+Every cell's `cliMcpDiagnostics` was inspected directly (not inferred from PASS/FAIL alone):
+`mcpServers: [{name: "lia400_bench_tools", status: "connected"}]` and the full 8-tool
+`toolsAtInit` list on all 18 cells, `mcpReadyTimedOut` unset (never hit the 5000ms timeout) on all
+18, and `spawnToMcpReadyMs` landing at a consistent ~700-810ms across every cell in every run —
+always *before* `spawnToInitMs` (the CLI's tool-snapshot moment), which is the causal ordering the
+fix depends on. Two things this rules in versus the delay-hack run: (1) the real marker fires in
+~700-800ms, roughly a quarter of the 3000ms flat delay Addendum 2 needed to get a clean sweep by
+brute force — the adaptive wait is a latency win, not just a correctness one; (2) it never needed
+more than a fraction of its 5000ms production budget, so the shipped timeout has comfortable
+headroom on this machine.
+
+### Verdict
+
+The ~43% CLI-subprocess reliability figure is confirmed, at the mechanism level, to have been an
+MCP-init race — and the production fix that closes it (LIA-461, already live in this install
+independent of this benchmark) is now independently validated by the benchmark rig itself, using
+the actual shipped code path, not a stand-in. This does not itself re-open or re-score H1/LIA-433's
+frozen kill-switch criterion-4 verdict (already PASS per Addendum 1's literal rubric reading) — it
+removes the reliability caveat that PASS was qualified with. It also does not touch H1/LIA-433's
+separate, broader open scope (parity matrix, AAG-007b, release-scale sampling) or the raw-HTTP
+`claude`/`gpt` legs, both still unexecuted and unrelated to this transport.
+
+**What would still raise confidence further**: this is 18 attempts on one machine in one session —
+directionally decisive (three consecutive clean sweeps, plus the causal `spawnToMcpReadyMs`
+ordering on every cell) but not a large-N statistical claim. A larger repeated-trial run, and a
+second run under real network/load variance (not just this machine's steady state), remain
+legitimate follow-ups, same rationale as both prior addenda's own caveats.
