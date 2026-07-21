@@ -8,6 +8,7 @@ import { PassThrough } from 'stream';
 
 import { describe, it, expect } from 'vitest';
 
+import type { PermissionDecision } from '../agent-runtimes/types.js';
 import type { ChatDisplayEvent, NativeChatStatus } from './deus-native-chat.js';
 import {
   runChatCli,
@@ -41,10 +42,15 @@ interface FakeTransportOptions {
   turnEvents?: ChatDisplayEvent[][];
   failStatus?: boolean;
   failTurn?: boolean;
+  failPermissionResponse?: boolean;
 }
 
 function fakeTransport(options: FakeTransportOptions = {}) {
   const turns: string[] = [];
+  const permissionResponses: Array<{
+    requestId: string;
+    decision: PermissionDecision;
+  }> = [];
   const planTransitions: boolean[] = [];
   const baseline = options.status?.permissionProfile ?? 'default';
   let currentStatus = options.status ?? makeStatus();
@@ -52,6 +58,10 @@ function fakeTransport(options: FakeTransportOptions = {}) {
   let inFlight = 0;
   let sawOverlap = false;
   const transport: ChatTransport = {
+    async respondPermission(requestId, decision) {
+      if (options.failPermissionResponse) throw new Error('unavailable');
+      permissionResponses.push({ requestId, decision });
+    },
     async status() {
       if (options.failStatus) throw new Error('unavailable');
       return currentStatus;
@@ -91,12 +101,84 @@ function fakeTransport(options: FakeTransportOptions = {}) {
   return {
     transport,
     turns,
+    permissionResponses,
     planTransitions,
     get closes() {
       return closes;
     },
     get sawOverlap() {
       return sawOverlap;
+    },
+  };
+}
+
+async function waitForOutput(
+  read: () => string,
+  expected: string,
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!read().includes(expected)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for output: ${expected}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+async function runPermissionScript(
+  answer: string | string[],
+  options: Pick<FakeTransportOptions, 'failPermissionResponse'> = {},
+) {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const errorOutput = new PassThrough();
+  let stdout = '';
+  let stderr = '';
+  output.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8');
+  });
+  errorOutput.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8');
+  });
+  const fake = fakeTransport({
+    ...options,
+    turnEvents: [
+      [
+        {
+          kind: 'permission_request',
+          requestId: 'permission-1',
+          toolName: 'web_search',
+          toolInputPreview: '{"query":"permission test"}',
+        },
+        { kind: 'assistant_text', text: 'turn continued' },
+        { kind: 'assistant_done' },
+      ],
+    ],
+  });
+  const done = runChatCli({
+    input,
+    output,
+    errorOutput,
+    transport: fake.transport,
+    cwd: '/client/cwd',
+  });
+
+  input.write('search with permission\n');
+  await waitForOutput(() => stdout, '[y]es / [N]o');
+  for (const line of Array.isArray(answer) ? answer : [answer]) {
+    input.write(`${line}\n`);
+  }
+  input.write('/exit\n');
+  input.end();
+
+  return {
+    code: await done,
+    fake,
+    get stdout() {
+      return stdout;
+    },
+    get stderr() {
+      return stderr;
     },
   };
 }
@@ -272,6 +354,53 @@ describe('runChatCli', () => {
     });
     expect(run.stderr).toContain('Error: the provider failed');
     expect(run.stderr).not.toContain('{');
+  });
+
+  it('routes y to allow_once without misrouting the answer into the chat queue', async () => {
+    const run = await runPermissionScript('y');
+
+    expect(run.code).toBe(0);
+    expect(run.fake.permissionResponses).toEqual([
+      { requestId: 'permission-1', decision: 'allow_once' },
+    ]);
+    expect(run.fake.turns).toEqual(['search with permission']);
+    expect(run.stdout).toContain('Tool: web_search');
+    expect(run.stdout).toContain('Input: {"query":"permission test"}');
+    expect(run.stdout).toContain('(auto-denies in 120s)');
+    expect(run.stdout).toContain('[y]es / [N]o');
+    expect(run.stdout).not.toContain('[a]');
+  });
+
+  it('routes bare Enter to deny without misrouting it into the chat queue', async () => {
+    const run = await runPermissionScript('');
+
+    expect(run.code).toBe(0);
+    expect(run.fake.permissionResponses).toEqual([
+      { requestId: 'permission-1', decision: 'deny' },
+    ]);
+    expect(run.fake.turns).toEqual(['search with permission']);
+  });
+
+  it('re-prompts on any other answer and keeps the permission pending', async () => {
+    const run = await runPermissionScript(['always', 'no']);
+
+    expect(run.fake.permissionResponses).toEqual([
+      { requestId: 'permission-1', decision: 'deny' },
+    ]);
+    expect(run.fake.turns).toEqual(['search with permission']);
+    expect(run.stdout.match(/\[y\]es \/ \[N\]o/g)).toHaveLength(2);
+  });
+
+  it('reports a permission-response failure and leaves fail-closed resolution to the server', async () => {
+    const run = await runPermissionScript('yes', {
+      failPermissionResponse: true,
+    });
+
+    expect(run.code).toBe(0);
+    expect(run.fake.permissionResponses).toEqual([]);
+    expect(run.stderr).toContain('failed to send the permission response');
+    expect(run.stderr).toContain('auto-deny in 120s');
+    expect(run.fake.turns).toEqual(['search with permission']);
   });
 
   it('fails closed with the actionable unavailable message when the daemon is unreachable', async () => {

@@ -18,6 +18,7 @@ import type {
   RuntimeEventSink,
   RuntimeSession,
 } from '../agent-runtimes/types.js';
+import { PendingPermissionRegistry } from '../agent-runtimes/permission-registry.js';
 import { _initTestDatabase, getSession } from '../db.js';
 import {
   NATIVE_CHAT_PROTOCOL_VERSION,
@@ -123,6 +124,7 @@ afterEach(async () => {
 async function startServer(
   sessions: NativeChatSessionStore = memoryStore(),
   configuredPermissionProfile?: string,
+  permissionRegistry?: PendingPermissionRegistry,
 ): Promise<NativeChatServerHandle> {
   handle = await startNativeChatServer({
     registry: {
@@ -131,6 +133,7 @@ async function startServer(
     sessions,
     discoveryPath: path.join(tmpDir, 'native-chat.json'),
     configuredPermissionProfile,
+    permissionRegistry,
   });
   return handle;
 }
@@ -165,6 +168,20 @@ function planRequest(
   });
 }
 
+function permissionRequest(
+  server: NativeChatServerHandle,
+  body: unknown,
+): Promise<Response> {
+  return fetch(
+    `http://${server.host}:${server.port}/v1/native-chat/permission-response`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(server), 'content-type': 'application/json' },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    },
+  );
+}
+
 describe('routing and validation', () => {
   it('404s unknown paths and 405s wrong methods on the exact routes', async () => {
     const server = await startServer();
@@ -190,6 +207,12 @@ describe('routing and validation', () => {
       headers: authHeaders(server),
     });
     expect(getPlan.status).toBe(405);
+
+    const getPermissionResponse = await fetch(
+      `${base}/v1/native-chat/permission-response`,
+      { headers: authHeaders(server) },
+    );
+    expect(getPermissionResponse.status).toBe(405);
   });
 
   it('rejects a protocol-version-mismatched turn body with 400', async () => {
@@ -261,6 +284,99 @@ describe('routing and validation', () => {
     const firstRes = await first;
     expect(firstRes.status).toBe(200);
     expect(controls.turnCalls).toHaveLength(1);
+  });
+});
+
+describe('permission-response route', () => {
+  it('requires the same bearer-token authentication as every other route', async () => {
+    const server = await startServer(
+      memoryStore(),
+      undefined,
+      new PendingPermissionRegistry(),
+    );
+
+    const res = await fetch(
+      `http://${server.host}:${server.port}/v1/native-chat/permission-response`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ requestId: 'request-1', decision: 'deny' }),
+      },
+    );
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 200 and resolves a registered permission request', async () => {
+    const permissionRegistry = new PendingPermissionRegistry();
+    const decision = permissionRegistry.register('request-1');
+    const server = await startServer(
+      memoryStore(),
+      undefined,
+      permissionRegistry,
+    );
+
+    const res = await permissionRequest(server, {
+      requestId: 'request-1',
+      decision: 'allow_once',
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ resolved: true });
+    await expect(decision).resolves.toBe('allow_once');
+  });
+
+  it('returns 404 when the request id is unknown', async () => {
+    const server = await startServer(
+      memoryStore(),
+      undefined,
+      new PendingPermissionRegistry(),
+    );
+
+    const res = await permissionRequest(server, {
+      requestId: 'unknown-request',
+      decision: 'deny',
+    });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: 'permission request not found or expired',
+    });
+  });
+
+  it('returns 501 when interactive permissions are not enabled', async () => {
+    const server = await startServer();
+
+    const res = await permissionRequest(server, {
+      requestId: 'request-1',
+      decision: 'deny',
+    });
+
+    expect(res.status).toBe(501);
+    expect(await res.json()).toEqual({
+      error: 'interactive permissions are not enabled on this server',
+    });
+  });
+
+  it('returns 400 for malformed bodies and invalid decisions', async () => {
+    const server = await startServer(
+      memoryStore(),
+      undefined,
+      new PendingPermissionRegistry(),
+    );
+    const invalidBodies: unknown[] = [
+      'not json',
+      null,
+      {},
+      { requestId: '', decision: 'deny' },
+      { requestId: 'request-1' },
+      { requestId: 'request-1', decision: 'allow' },
+      { requestId: 'request-1', decision: 1 },
+    ];
+
+    for (const body of invalidBodies) {
+      expect((await permissionRequest(server, body)).status).toBe(400);
+    }
   });
 });
 

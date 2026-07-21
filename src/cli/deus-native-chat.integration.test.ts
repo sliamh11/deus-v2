@@ -20,9 +20,12 @@ import { ToolMessage } from '@langchain/core/messages';
 import { _initTestDatabase, getSession } from '../db.js';
 import { getCheckpointer } from '../agent-runtimes/checkpointer.js';
 import type { ContainerRuntimeDeps } from '../agent-runtimes/container-backend.js';
+import { PendingPermissionRegistry } from '../agent-runtimes/permission-registry.js';
+import type { PermissionDecision } from '../agent-runtimes/types.js';
 import {
   CLI_CHAT_GROUP_FOLDER,
   parseDiscoveryRecord,
+  type ChatDisplayEvent,
 } from './deus-native-chat.js';
 
 // ---------------------------------------------------------------------------
@@ -194,14 +197,23 @@ afterEach(async () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-async function startServer() {
+async function startServer(
+  options: {
+    permissionRegistry?: PendingPermissionRegistry;
+    configuredPermissionProfile?: string;
+  } = {},
+) {
   const handle = await startNativeChatServer({
     registry: {
       get: (id) =>
-        id === 'deus-native' ? createDeusNativeRuntime(stubDeps) : undefined,
+        id === 'deus-native'
+          ? createDeusNativeRuntime(stubDeps, options.permissionRegistry)
+          : undefined,
     },
     sessions: createDbSessionStore(),
     discoveryPath: path.join(tmpDir, 'native-chat.json'),
+    configuredPermissionProfile: options.configuredPermissionProfile,
+    permissionRegistry: options.permissionRegistry,
   });
   openHandles.push(handle);
   return handle;
@@ -457,4 +469,87 @@ describe('deus chat end-to-end (hermetic)', () => {
       expect(streamText).not.toContain('"done"');
     }
   });
+
+  it.each([
+    { decision: 'allow_once' as const, expectedHandlerCalls: 1 },
+    { decision: 'deny' as const, expectedHandlerCalls: 0 },
+  ])(
+    'resolves an interactive web_search with $decision over a second live HTTP request while the turn stream stays open',
+    async ({ decision, expectedHandlerCalls }) => {
+      const searchHandler = vi.fn(
+        async (args: { query: string }) => `results:${args.query}`,
+      );
+      harness.tools = [
+        tool(searchHandler, {
+          name: 'web_search',
+          description: 'Hermetic read tool for interactive permission tests.',
+          schema: {
+            type: 'object',
+            properties: { query: { type: 'string' } },
+            required: ['query'],
+            additionalProperties: false,
+          },
+        }),
+      ];
+      harness.makeModel = () =>
+        withExplicitContent(
+          new FakeToolCallingModel({
+            toolCalls: [
+              [
+                {
+                  name: 'web_search',
+                  args: { query: 'interactive permission test' },
+                  id: 'interactive_search_call',
+                },
+              ],
+              [],
+            ],
+          }),
+          `Interactive ${decision} turn completed.`,
+        );
+
+      const permissionRegistry = new PendingPermissionRegistry();
+      const server = await startServer({
+        permissionRegistry,
+        configuredPermissionProfile: 'interactive',
+      });
+      const transport = transportFor(server);
+      const events: ChatDisplayEvent[] = [];
+      let turnSettled = false;
+      let permissionResponses = 0;
+
+      const turn = transport
+        .turn('search with live permission', tmpDir, async (event) => {
+          events.push(event);
+          if (event.kind !== 'permission_request') return;
+          permissionResponses += 1;
+          expect(turnSettled).toBe(false);
+          expect(event.toolName).toBe('web_search');
+          expect(event.toolInputPreview).toContain(
+            'interactive permission test',
+          );
+          await transport.respondPermission(
+            event.requestId,
+            decision as PermissionDecision,
+          );
+        })
+        .finally(() => {
+          turnSettled = true;
+        });
+
+      await turn;
+
+      expect(permissionResponses).toBe(1);
+      expect(searchHandler).toHaveBeenCalledTimes(expectedHandlerCalls);
+      expect(events).toContainEqual({ kind: 'assistant_done' });
+      expect(
+        events.some(
+          (event) =>
+            event.kind === 'assistant_text' &&
+            event.text.includes(`Interactive ${decision} turn completed.`),
+        ),
+      ).toBe(true);
+      expect(permissionRegistry.size()).toBe(0);
+    },
+  );
 });

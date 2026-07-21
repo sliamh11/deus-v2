@@ -121,6 +121,25 @@ export type RuntimeEventSink = (event: RuntimeEvent) => void | Promise<void>;
 // see the spike doc for the full reconciliation).
 export type PermissionDecision = 'allow_once' | 'allow_always' | 'deny';
 
+// Canonical accepted-value set + guard for PermissionDecision, promoted from
+// the LIA-465 spike (which now imports these) so the chat server, client,
+// and spike all share ONE source of truth — same next-to-the-type placement
+// rationale as `parseAgentBackend` above.
+export const PERMISSION_DECISIONS: readonly PermissionDecision[] = [
+  'allow_once',
+  'allow_always',
+  'deny',
+];
+
+export function isPermissionDecision(
+  value: unknown,
+): value is PermissionDecision {
+  return (
+    typeof value === 'string' &&
+    (PERMISSION_DECISIONS as readonly string[]).includes(value)
+  );
+}
+
 // LIA-465 spike: inbound (client→server) commands, symmetric with
 // RuntimeEvent. Not yet consumed by any production runtime.
 export type RuntimeCommand =

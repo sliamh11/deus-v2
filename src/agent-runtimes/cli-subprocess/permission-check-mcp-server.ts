@@ -28,6 +28,7 @@ import { z } from 'zod';
 import {
   evaluatePermission,
   resolvePermissionProfile,
+  type PolicyDecision,
 } from '../permission-rules.js';
 
 const PERMISSION_PROFILE_NAME = 'read-only';
@@ -47,7 +48,12 @@ export interface CheckPermissionResult {
   probeId: string;
   profile: string;
   toolName: string;
-  decision: 'allow' | 'deny';
+  // The evaluator's full verdict type (widened to include 'ask' by the
+  // 2026-07-21 amendment). Under the hardcoded 'read-only' profile this
+  // server reports, only 'allow'/'deny' actually occur today — importing
+  // PolicyDecision keeps this field compile-correct without new runtime
+  // logic (type-compile fix only, per the plan's stated scope).
+  decision: PolicyDecision;
   source: 'rule' | 'default';
   matchedRuleIndex: number | undefined;
   reason: string;

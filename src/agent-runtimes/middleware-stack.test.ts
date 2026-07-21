@@ -35,6 +35,8 @@ import type {
   MemoryReembedAdapter,
   MemoryReembedRequest,
 } from './memory-reembed.js';
+import { PendingPermissionRegistry } from './permission-registry.js';
+import type { RuntimeEvent } from './types.js';
 
 // ── C1 (LIA-409): hermetic child-process seam for the wardens supplementary
 // suite below. Only `execFile` (the Python gate invocation) is replaced with
@@ -533,6 +535,255 @@ describe('permissions middleware — compliant (allowed) flows are not impeded t
         reason: expect.stringContaining('web_search'),
       },
     ]);
+  });
+});
+
+// ── Interactive 'ask' branch (Amendment 2026-07-21 in
+// docs/decisions/deus-v2-permission-rules.md) ───────────────────────────
+//
+// SUPPLEMENTARY to the independent oracle's explicit-authorization-or-fail-
+// closed coverage: these tests pin the implementation-side mechanics — the
+// permission_request event's exact shape/bounding, both live decision paths,
+// the AC5 request-identity guarantee on interactive allow, the log's
+// resolved-outcome-only contract, and the synchronous no-deps fail-closed
+// path (zero timers started).
+
+/** Narrows a captured RuntimeEvent to the permission_request variant. */
+function asPermissionRequest(event: RuntimeEvent) {
+  if (event.type !== 'permission_request') {
+    throw new Error(`expected permission_request, got ${event.type}`);
+  }
+  return event;
+}
+
+describe("permissions middleware — interactive 'ask' branch", () => {
+  const SESSION_ID = 'interactive-test-session';
+
+  function buildInteractive() {
+    const registry = new PendingPermissionRegistry();
+    const events: RuntimeEvent[] = [];
+    const { middleware, log } = buildPermissionsMiddleware(
+      'interactive',
+      undefined,
+      {
+        registry,
+        eventSink: async (event) => {
+          events.push(event);
+        },
+        sessionId: SESSION_ID,
+      },
+    );
+    return { registry, events, middleware, log };
+  }
+
+  it('emits exactly ONE correlated permission_request, waits for the registry, and delegates the ORIGINAL request on allow_once', async () => {
+    const { registry, events, middleware, log } = buildInteractive();
+
+    const args = Object.freeze({ query: 'deus' }) as unknown as Record<
+      string,
+      unknown
+    >;
+    const request = makeToolCallRequest('web_search', args, 'call_ask_1');
+    const handlerResult = new ToolMessage({
+      content: 'searched ok',
+      tool_call_id: 'call_ask_1',
+    });
+    let received: unknown;
+    const handler = vi.fn((req: unknown) => {
+      received = req;
+      return handlerResult;
+    });
+
+    const pending = invokeWrapToolCall(middleware, request, handler);
+
+    // Flush microtasks: the event must be out, the handler must NOT have
+    // run, and the call must still be awaiting the live decision.
+    await new Promise((r) => setImmediate(r));
+    expect(events).toHaveLength(1);
+    const event = asPermissionRequest(events[0]);
+    expect(event.toolName).toBe('web_search');
+    expect(event.sessionId).toBe(SESSION_ID);
+    expect(event.toolInputPreview).toBe(JSON.stringify(args));
+    expect(event.requestId).toMatch(/^[0-9a-f-]{36}$/);
+    // requestedAt is a real ISO timestamp.
+    expect(new Date(event.requestedAt).toISOString()).toBe(event.requestedAt);
+    expect(handler).not.toHaveBeenCalled();
+    // The request is registered and pending — not yet resolved.
+    expect(registry.size()).toBe(1);
+
+    // Live allow: the ORIGINAL request object is delegated exactly once.
+    expect(registry.resolve(event.requestId, 'allow_once')).toBe(true);
+    const result = await pending;
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(received).toBe(request);
+    expect((received as { toolCall: { args: unknown } }).toolCall.args).toBe(
+      args,
+    );
+    expect(result).toBe(handlerResult);
+    expect(registry.size()).toBe(0);
+
+    // Exactly one event total — no duplicate emission after resolution.
+    expect(events).toHaveLength(1);
+    // The log records the RESOLVED outcome ('allow'), never the raw 'ask'.
+    expect(log).toEqual([
+      {
+        toolName: 'web_search',
+        decision: 'allow',
+        source: 'rule',
+        reason: expect.stringContaining(event.requestId),
+      },
+    ]);
+  });
+
+  it('allow_always also delegates (treated identically to allow_once this ticket — no persistence yet)', async () => {
+    const { registry, events, middleware, log } = buildInteractive();
+    const request = makeToolCallRequest('web_fetch', { url: 'https://x' });
+    const handler = vi.fn(
+      () => new ToolMessage({ content: 'ok', tool_call_id: 'call_direct_1' }),
+    );
+
+    const pending = invokeWrapToolCall(middleware, request, handler);
+    await new Promise((r) => setImmediate(r));
+    registry.resolve(asPermissionRequest(events[0]).requestId, 'allow_always');
+    await pending;
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(log[0]).toMatchObject({ toolName: 'web_fetch', decision: 'allow' });
+  });
+
+  it('live deny: handler never runs; synthetic permission_denied ToolMessage notes the requestId; log records deny', async () => {
+    const SENTINEL = 'ASK_SENTINEL_should_not_leak';
+    const { registry, events, middleware, log } = buildInteractive();
+    const request = makeToolCallRequest(
+      'web_search',
+      { query: SENTINEL },
+      'call_ask_deny_1',
+    );
+    const handler = vi.fn(
+      () =>
+        new ToolMessage({ content: 'ran', tool_call_id: 'call_ask_deny_1' }),
+    );
+
+    const pending = invokeWrapToolCall(middleware, request, handler);
+    await new Promise((r) => setImmediate(r));
+    const requestId = asPermissionRequest(events[0]).requestId;
+    registry.resolve(requestId, 'deny');
+    const result = await pending;
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(result).toBeInstanceOf(ToolMessage);
+    const denial = result as ToolMessage;
+    expect(denial.status).toBe('error');
+    expect(denial.tool_call_id).toBe('call_ask_deny_1');
+    expect(denial.name).toBe('web_search');
+    const content =
+      typeof denial.content === 'string'
+        ? denial.content
+        : JSON.stringify(denial.content);
+    expect(content).toContain('permission_denied');
+    expect(content).toContain('interactive');
+    expect(content).toContain(requestId);
+    // Same argument-non-exposure guarantee as the static deny path.
+    expect(content).not.toContain(SENTINEL);
+
+    expect(log).toEqual([
+      {
+        toolName: 'web_search',
+        decision: 'deny',
+        source: 'rule',
+        reason: expect.stringContaining(requestId),
+      },
+    ]);
+  });
+
+  it('toolInputPreview is bounded to ~200 chars — oversized args never flood the event', async () => {
+    const { registry, events, middleware } = buildInteractive();
+    const request = makeToolCallRequest('web_search', {
+      query: 'x'.repeat(5_000),
+    });
+    const handler = vi.fn(
+      () => new ToolMessage({ content: 'ok', tool_call_id: 'call_direct_1' }),
+    );
+
+    const pending = invokeWrapToolCall(middleware, request, handler);
+    await new Promise((r) => setImmediate(r));
+    const event = asPermissionRequest(events[0]);
+    expect(event.toolInputPreview.length).toBeLessThanOrEqual(201);
+    registry.resolve(event.requestId, 'deny');
+    await pending;
+  });
+
+  it("'ask' with NO interactive deps fails closed to deny SYNCHRONOUSLY — no event, no registration, zero timers started", async () => {
+    vi.useFakeTimers();
+    try {
+      const { middleware, log } = buildPermissionsMiddleware('interactive');
+      const request = makeToolCallRequest(
+        'web_search',
+        { query: 'q' },
+        'call_ask_nodeps_1',
+      );
+      const handler = vi.fn(
+        () =>
+          new ToolMessage({
+            content: 'ran',
+            tool_call_id: 'call_ask_nodeps_1',
+          }),
+      );
+
+      // Under fake timers, an accidental wait on the 120s auto-deny would
+      // hang this await forever — resolving without ANY timer advance IS
+      // the synchronous-fail-closed proof.
+      const result = await invokeWrapToolCall(middleware, request, handler);
+
+      expect(vi.getTimerCount()).toBe(0);
+      expect(handler).not.toHaveBeenCalled();
+      const denial = result as ToolMessage;
+      expect(denial.status).toBe('error');
+      const content =
+        typeof denial.content === 'string'
+          ? denial.content
+          : JSON.stringify(denial.content);
+      expect(content).toContain('permission_denied');
+      expect(content).toContain('no interactive permission channel');
+      expect(log).toEqual([
+        {
+          toolName: 'web_search',
+          decision: 'deny',
+          source: 'rule',
+          reason: expect.stringContaining('fails closed'),
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('non-ask decisions never touch the interactive channel: an allowed read tool delegates with no event, a denied mutation tool denies with no event', async () => {
+    const { registry, events, middleware } = buildInteractive();
+
+    const allowHandler = vi.fn(
+      () => new ToolMessage({ content: 'ok', tool_call_id: 'call_direct_1' }),
+    );
+    await invokeWrapToolCall(
+      middleware,
+      makeToolCallRequest('read_file', { path: '/tmp/x' }),
+      allowHandler,
+    );
+    expect(allowHandler).toHaveBeenCalledTimes(1);
+
+    const denyHandler = vi.fn(
+      () => new ToolMessage({ content: 'ok', tool_call_id: 'call_direct_1' }),
+    );
+    const denied = await invokeWrapToolCall(
+      middleware,
+      makeToolCallRequest('bash_exec', { command: 'rm -rf /' }),
+      denyHandler,
+    );
+    expect(denyHandler).not.toHaveBeenCalled();
+    expect((denied as ToolMessage).status).toBe('error');
+
+    expect(events).toHaveLength(0);
+    expect(registry.size()).toBe(0);
   });
 });
 

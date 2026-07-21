@@ -151,9 +151,10 @@ describe('evaluatePermission — determinism and purity (AC1)', () => {
 });
 
 describe('PERMISSION_PROFILES registry + resolver (AC1, AC3)', () => {
-  it('contains exactly the two supported live profiles', () => {
+  it('contains exactly the three supported live profiles', () => {
     expect([...PERMISSION_PROFILES.keys()].sort()).toEqual([
       'default',
+      'interactive',
       'read-only',
     ]);
   });
@@ -199,5 +200,88 @@ describe('PERMISSION_PROFILES registry + resolver (AC1, AC3)', () => {
     expect(() => resolvePermissionProfile('read-onIy')).toThrow(
       /unknown permission profile "read-onIy".*"default".*"read-only"/,
     );
+  });
+});
+
+describe("'interactive' profile (Amendment 2026-07-21 in deus-v2-permission-rules.md)", () => {
+  const INTERACTIVE_ASK_TOOLS = ['web_search', 'web_fetch'] as const;
+  const interactive = () => resolvePermissionProfile('interactive');
+
+  it('the two live-reachable tools (web_search/web_fetch) evaluate to an explicit rule-sourced "ask"', () => {
+    for (const name of INTERACTIVE_ASK_TOOLS) {
+      const result = evaluatePermission(interactive(), name);
+      expect(result.decision).toBe('ask');
+      expect(result.source).toBe('rule');
+    }
+  });
+
+  it('the "ask" rule-match reason never mislabels the verdict as denied (the fixed ternary)', () => {
+    const result = evaluatePermission(interactive(), 'web_search');
+    expect(result.reason).toContain('ask');
+    expect(result.reason).not.toContain('denied');
+    expect(result.reason).not.toContain('allowed');
+  });
+
+  it('the four other read tools stay explicit rule-sourced allow', () => {
+    const otherReads = READ_ONLY_ALLOWED_TOOL_NAMES.filter(
+      (name) => !(INTERACTIVE_ASK_TOOLS as readonly string[]).includes(name),
+    );
+    expect(otherReads.sort()).toEqual([
+      'glob_files',
+      'grep_files',
+      'list_tasks',
+      'read_file',
+    ]);
+    for (const name of otherReads) {
+      const result = evaluatePermission(interactive(), name);
+      expect(result.decision).toBe('allow');
+      expect(result.source).toBe('rule');
+    }
+  });
+
+  it('all eleven mutation-capable tools stay explicit rule-sourced deny — exact parity with read-only', () => {
+    const readOnly = resolvePermissionProfile('read-only');
+    expect(READ_ONLY_DENIED_TOOL_NAMES).toHaveLength(11);
+    for (const name of READ_ONLY_DENIED_TOOL_NAMES) {
+      const interactiveResult = evaluatePermission(interactive(), name);
+      const readOnlyResult = evaluatePermission(readOnly, name);
+      expect(interactiveResult.decision).toBe('deny');
+      expect(interactiveResult.source).toBe('rule');
+      expect(interactiveResult.decision).toBe(readOnlyResult.decision);
+    }
+  });
+
+  it('matches read-only on EVERY tool except the two ask tools (per-name decision parity)', () => {
+    const readOnly = resolvePermissionProfile('read-only');
+    for (const name of [
+      ...READ_ONLY_ALLOWED_TOOL_NAMES,
+      ...READ_ONLY_DENIED_TOOL_NAMES,
+    ]) {
+      if ((INTERACTIVE_ASK_TOOLS as readonly string[]).includes(name)) {
+        continue;
+      }
+      expect(evaluatePermission(interactive(), name).decision).toBe(
+        evaluatePermission(readOnly, name).decision,
+      );
+    }
+  });
+
+  it('FAILS CLOSED on unknown/dynamic names via default deny (never a silent grant, never a default ask)', () => {
+    expect(interactive().defaultDecision).toBe('deny');
+    const result = evaluatePermission(interactive(), 'unknown_mcp_tool');
+    expect(result.decision).toBe('deny');
+    expect(result.source).toBe('default');
+  });
+
+  it('carries an explicit rule for every known built-in (2 asks + 4 allows + 11 denies)', () => {
+    expect(interactive().rules).toHaveLength(
+      READ_ONLY_ALLOWED_TOOL_NAMES.length + READ_ONLY_DENIED_TOOL_NAMES.length,
+    );
+    for (const name of [
+      ...READ_ONLY_ALLOWED_TOOL_NAMES,
+      ...READ_ONLY_DENIED_TOOL_NAMES,
+    ]) {
+      expect(evaluatePermission(interactive(), name).source).toBe('rule');
+    }
   });
 });

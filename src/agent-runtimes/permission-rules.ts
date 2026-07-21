@@ -36,14 +36,25 @@
  * (permission-rules.oracle.test.ts) against the live broker definitions.
  */
 
-/** The two possible outcomes of a permission evaluation. */
-export type PermissionDecision = 'allow' | 'deny';
+/**
+ * The three possible outcomes of a permission evaluation.
+ *
+ * Renamed from `PermissionDecision` and widened with `'ask'` per the
+ * 2026-07-21 amendment to docs/decisions/deus-v2-permission-rules.md: the old
+ * name collided with `agent-runtimes/types.ts`'s transport-level
+ * `PermissionDecision = 'allow_once' | 'allow_always' | 'deny'` (LIA-465's
+ * live human response), which is a different shape. `'ask'` is a
+ * DETERMINISTIC policy verdict meaning "execution requires an external live
+ * decision" — the evaluator stays pure; the asynchronous resolution happens
+ * afterward in middleware-stack.ts's `wrapToolCall` adapter.
+ */
+export type PolicyDecision = 'allow' | 'deny' | 'ask';
 
 /** One exact-tool-name rule. Rules are ordered; first match wins. */
 export interface PermissionRule {
   /** Exact tool name to match — no wildcards or patterns. */
   toolName: string;
-  decision: PermissionDecision;
+  decision: PolicyDecision;
 }
 
 /**
@@ -54,12 +65,12 @@ export interface PermissionRule {
  */
 export interface PermissionPolicy {
   rules: PermissionRule[];
-  defaultDecision: PermissionDecision;
+  defaultDecision: PolicyDecision;
 }
 
 /** Structured, model-safe evaluation result (AC1). */
 export interface PermissionEvaluation {
-  decision: PermissionDecision;
+  decision: PolicyDecision;
   /** 'rule' when an explicit rule matched; 'default' for the fallback. */
   source: 'rule' | 'default';
   /** Index into `policy.rules` of the winning rule; undefined for 'default'. */
@@ -67,6 +78,17 @@ export interface PermissionEvaluation {
   /** Human/model-safe explanation. Never includes tool-call arguments. */
   reason: string;
 }
+
+/**
+ * Model-safe reason-string verb per decision. A lookup (not a binary
+ * ternary) so `'ask'` can never be mislabeled as "denied" — the exact bug a
+ * `decision === 'allow' ? 'allowed' : 'denied'` ternary would reintroduce.
+ */
+const RULE_DECISION_PHRASES: Record<PolicyDecision, string> = {
+  allow: 'allowed',
+  deny: 'denied',
+  ask: 'marked "ask" (requires a live interactive decision)',
+};
 
 /**
  * Pure first-match-wins evaluator. Deterministic: same (policy, toolName)
@@ -86,7 +108,7 @@ export function evaluatePermission(
         matchedRuleIndex: i,
         reason:
           `tool "${toolName}" is explicitly ` +
-          `${rule.decision === 'allow' ? 'allowed' : 'denied'} ` +
+          `${RULE_DECISION_PHRASES[rule.decision]} ` +
           `by rule ${i} of this policy`,
       };
     }
@@ -166,6 +188,43 @@ const READ_ONLY_POLICY: PermissionPolicy = {
 };
 
 /**
+ * `interactive` profile (2026-07-21 amendment to
+ * docs/decisions/deus-v2-permission-rules.md): identical to `read-only`
+ * except the two live-reachable tools (`web_search`/`web_fetch` — the only
+ * names in `DEUS_NATIVE_SAFE_TOOL_NAMES`) evaluate to `'ask'` instead of
+ * `'allow'`, deferring execution to a live human decision via the
+ * `wrapToolCall` ask branch in middleware-stack.ts. The four other read
+ * tools stay explicit-allow, all eleven mutation-capable built-ins stay
+ * explicit-deny, and unknown/dynamic/MCP names FAIL CLOSED via default deny
+ * — exactly `read-only`'s posture on everything that isn't the two ask
+ * tools.
+ */
+const INTERACTIVE_ASK_TOOL_NAMES: readonly string[] = [
+  'web_search',
+  'web_fetch',
+];
+
+const INTERACTIVE_POLICY: PermissionPolicy = {
+  rules: [
+    ...INTERACTIVE_ASK_TOOL_NAMES.map((toolName): PermissionRule => ({
+      toolName,
+      decision: 'ask',
+    })),
+    ...READ_ONLY_ALLOWED_TOOL_NAMES.filter(
+      (toolName) => !INTERACTIVE_ASK_TOOL_NAMES.includes(toolName),
+    ).map((toolName): PermissionRule => ({
+      toolName,
+      decision: 'allow',
+    })),
+    ...READ_ONLY_DENIED_TOOL_NAMES.map((toolName): PermissionRule => ({
+      toolName,
+      decision: 'deny',
+    })),
+  ],
+  defaultDecision: 'deny',
+};
+
+/**
  * Registry of the named profiles accepted on the live backend-config path.
  * Adding a future reviewed profile extends this map without touching the
  * evaluator's control flow (plan Design: Registry).
@@ -174,6 +233,7 @@ export const PERMISSION_PROFILES: ReadonlyMap<string, PermissionPolicy> =
   new Map<string, PermissionPolicy>([
     ['default', DEFAULT_POLICY],
     ['read-only', READ_ONLY_POLICY],
+    ['interactive', INTERACTIVE_POLICY],
   ]);
 
 /**

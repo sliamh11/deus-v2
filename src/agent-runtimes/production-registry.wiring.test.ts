@@ -34,11 +34,12 @@ vi.mock('./activity-broadcaster.js', () => ({
 
 import { RuntimeActivityBroadcaster } from './activity-broadcaster.js';
 import type { ContainerRuntimeDeps } from './container-backend.js';
+import { PendingPermissionRegistry } from './permission-registry.js';
 import { createProductionRuntimeRegistry } from './production-registry.js';
 import type { RegisteredGroup } from '../types.js';
 
 describe('production runtime registry wiring', () => {
-  it('resolves deus-native through the host-native factory, not ContainerRuntime', () => {
+  it('resolves deus-native through the host-native factory, not ContainerRuntime — and forwards the pending-permission registry', () => {
     const deps: ContainerRuntimeDeps = {
       resolveGroup: () => undefined,
       assistantName: 'Deus',
@@ -51,13 +52,21 @@ describe('production runtime registry wiring', () => {
       added_at: '2026-07-17T00:00:00.000Z',
       containerConfig: { agentBackend: 'deus-native' },
     };
+    // Interactive-permission follow-up (Amendment 2026-07-21): the
+    // composition root's process-wide registry must reach the deus-native
+    // factory — same instance, not a copy.
+    const permissionRegistry = new PendingPermissionRegistry();
     const registry = createProductionRuntimeRegistry(
       deps,
       new RuntimeActivityBroadcaster(),
+      permissionRegistry,
     );
 
     expect(registry.resolve(group)).toBe(wiring.nativeRuntime);
-    expect(wiring.createDeusNativeRuntime).toHaveBeenCalledWith(deps);
+    expect(wiring.createDeusNativeRuntime).toHaveBeenCalledWith(
+      deps,
+      permissionRegistry,
+    );
     expect(wiring.withRuntimeActivityBroadcast).toHaveBeenCalledWith(
       wiring.nativeRuntime,
       expect.any(RuntimeActivityBroadcaster),

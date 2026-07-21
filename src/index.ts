@@ -11,6 +11,7 @@ import {
   INGRESS_GITHUB_ENABLED,
   INGRESS_IP_ALLOWLIST,
   INGRESS_AUDIT_DIR,
+  DEUS_NATIVE_CLI_PERMISSION_PROFILE,
   INGRESS_DAILY_SPEND_LIMIT,
   INGRESS_LINEAR_VIA_GATEWAY,
   INGRESS_MAX_BODY_BYTES,
@@ -82,6 +83,7 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { processImage } from './image.js';
 import { logger } from './logger.js';
 import { RuntimeActivityBroadcaster } from './agent-runtimes/activity-broadcaster.js';
+import { PendingPermissionRegistry } from './agent-runtimes/permission-registry.js';
 import { createProductionRuntimeRegistry } from './agent-runtimes/production-registry.js';
 import {
   initLinearContext,
@@ -179,10 +181,20 @@ async function main(): Promise<void> {
   // this SAME instance. Owned here for its whole lifetime — closed only at
   // the true tail of shutdown(), after channels/queue/Linear have drained.
   const activityBroadcaster = new RuntimeActivityBroadcaster();
+  // Interactive-permission follow-up (Amendment 2026-07-21 in
+  // docs/decisions/deus-v2-permission-rules.md): shared, process-wide pending-
+  // permission registry — same singleton posture as the activity broadcaster
+  // above. Wired into the deus-native runtime (via the production registry)
+  // so an 'ask' policy verdict can await a live decision; the native chat
+  // server's permission-response endpoint resolves entries in this SAME
+  // instance. Unanswered requests self-clean via the registry's 120s
+  // auto-deny timeout, so no explicit close is needed at shutdown.
+  const permissionRegistry = new PendingPermissionRegistry();
 
   const registry = createProductionRuntimeRegistry(
     backendDeps,
     activityBroadcaster,
+    permissionRegistry,
   );
   logger.info({ backends: registry.list() }, 'Backend registry initialized');
 
@@ -197,6 +209,14 @@ async function main(): Promise<void> {
     sessions: createDbSessionStore(),
     discoveryPath: nativeChatDiscoveryPath(),
     log: (message) => logger.info(message),
+    // The SAME process-wide instance the deus-native runtime awaits on —
+    // the permission-response endpoint must resolve entries in that
+    // registry, not a private copy.
+    permissionRegistry,
+    // Opt-in activation for live Y/N permission prompts — default
+    // `undefined` preserves today's allow-all `deus chat` behavior; set
+    // DEUS_NATIVE_CLI_PERMISSION_PROFILE=interactive to turn it on.
+    configuredPermissionProfile: DEUS_NATIVE_CLI_PERMISSION_PROFILE,
   });
   logger.info(
     { port: nativeChatServer.port },

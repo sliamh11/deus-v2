@@ -37,7 +37,12 @@ import http, {
 } from 'http';
 import path from 'path';
 
-import type { AgentRuntime, AgentRuntimeId } from '../agent-runtimes/types.js';
+import type { PendingPermissionRegistry } from '../agent-runtimes/permission-registry.js';
+import {
+  isPermissionDecision,
+  type AgentRuntime,
+  type AgentRuntimeId,
+} from '../agent-runtimes/types.js';
 import { getSession, setSession } from '../db.js';
 import { extractBearer, timingSafeEqualStr } from '../odysseus-server.js';
 import {
@@ -59,6 +64,7 @@ const TURN_PATH = '/v1/native-chat/turn';
 const STATUS_PATH = '/v1/native-chat/status';
 const CLOSE_PATH = '/v1/native-chat/close';
 const PLAN_PATH = '/v1/native-chat/plan';
+const PERMISSION_RESPONSE_PATH = '/v1/native-chat/permission-response';
 
 export interface NativeChatServerDeps {
   registry: { get(id: AgentRuntimeId): AgentRuntime | undefined };
@@ -72,6 +78,8 @@ export interface NativeChatServerDeps {
   readModelConfig?: () => EffectiveNativeModelConfig;
   /** Server-owned normal-mode baseline; never accepted from request data. */
   configuredPermissionProfile?: string;
+  /** Process-wide resolver for live permission prompts; omitted disables the route. */
+  permissionRegistry?: PendingPermissionRegistry;
 }
 
 export interface NativeChatServerHandle {
@@ -316,6 +324,63 @@ export async function startNativeChatServer(
     writeJson(res, 200, controller.status());
   }
 
+  async function handlePermissionResponse(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const read = await readBody(req);
+    if (!read.ok) {
+      writeJson(
+        res,
+        read.tooLarge ? 413 : 400,
+        read.tooLarge
+          ? { error: 'request body too large' }
+          : { error: 'request aborted' },
+      );
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(read.body);
+    } catch {
+      writeJson(res, 400, { error: 'malformed JSON body' });
+      return;
+    }
+    if (typeof parsed !== 'object' || parsed === null) {
+      writeJson(res, 400, { error: 'malformed request' });
+      return;
+    }
+    const body = parsed as Record<string, unknown>;
+    if (
+      typeof body.requestId !== 'string' ||
+      body.requestId.trim() === '' ||
+      !isPermissionDecision(body.decision)
+    ) {
+      writeJson(res, 400, {
+        error:
+          'requestId must be a non-empty string and decision must be allow_once, allow_always, or deny',
+      });
+      return;
+    }
+
+    const permissionRegistry = deps.permissionRegistry;
+    if (!permissionRegistry) {
+      writeJson(res, 501, {
+        error: 'interactive permissions are not enabled on this server',
+      });
+      return;
+    }
+
+    const resolved = permissionRegistry.resolve(body.requestId, body.decision);
+    if (!resolved) {
+      writeJson(res, 404, {
+        error: 'permission request not found or expired',
+      });
+      return;
+    }
+    writeJson(res, 200, { resolved: true });
+  }
+
   const server = http.createServer((req, res) => {
     // Socket-death guards (odysseus-server.ts precedent): unhandled 'error'
     // events on either stream would crash the daemon.
@@ -329,14 +394,18 @@ export async function startNativeChatServer(
     const isStatus = url === STATUS_PATH;
     const isClose = url === CLOSE_PATH;
     const isPlan = url === PLAN_PATH;
+    const isPermissionResponse = url === PERMISSION_RESPONSE_PATH;
 
     // Exact routes only; method gate BEFORE auth (presence-leak closure,
     // same ordering odysseus-server.ts uses).
-    if (!isTurn && !isStatus && !isClose && !isPlan) {
+    if (!isTurn && !isStatus && !isClose && !isPlan && !isPermissionResponse) {
       writeJson(res, 404, { error: 'not found' });
       return;
     }
-    if ((isTurn || isClose || isPlan) && method !== 'POST') {
+    if (
+      (isTurn || isClose || isPlan || isPermissionResponse) &&
+      method !== 'POST'
+    ) {
       writeJson(res, 405, { error: 'method not allowed' });
       return;
     }
@@ -358,6 +427,10 @@ export async function startNativeChatServer(
     }
     if (isPlan) {
       void handlePlan(req, res);
+      return;
+    }
+    if (isPermissionResponse) {
+      void handlePermissionResponse(req, res);
       return;
     }
     if (isClose) {
