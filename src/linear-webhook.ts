@@ -6,7 +6,12 @@ import type {
 } from '@linear/sdk/webhooks';
 import type { IngressHandler } from './ingress/gateway.js';
 import { logger } from './logger.js';
-import { executeAgentRun, extractScopeBlock } from './linear-dispatcher.js';
+import {
+  executeAgentRun,
+  extractScopeBlock,
+  ensureGateWorktree,
+  cleanupGateWorktree,
+} from './linear-dispatcher.js';
 import { escapeXmlForPrompt } from './prompt-utils.js';
 import { formatLocalHHMM } from './timezone.js';
 import type { LinearContext, GateLabels } from './linear-dispatcher.js';
@@ -32,29 +37,34 @@ import {
 import { triggerAutoMerge, queryPrState } from './linear-auto-merge.js';
 import { notifyPipelineStep } from './linear-notifications.js';
 import { syncVaultPending } from './linear-vault-sync.js';
-import { RetryableError, UserError, FatalError } from './errors/index.js';
 import { fireAndForget } from './async/index.js';
 import { WEBHOOK_MAX_RETRIES, WEBHOOK_BASE_DELAY_MS } from './config.js';
+// Exponential-backoff retry now lives in a neutral module (LIA-462) so
+// linear-dispatcher can reuse it without a dispatcher ↔ webhook import cycle.
+// Imported for internal use here and re-exported so existing importers/tests
+// that reference these from this module keep working unchanged.
+import { retryWithBackoff } from './webhook-retry.js';
+export { retryWithBackoff, _setSleepFnForTests } from './webhook-retry.js';
 
 // LIA-451: 3107, distinct from v1's 3005 and from this instance's own
 // Odysseus (3105)/gateway (3109) ports.
 const DEFAULT_WEBHOOK_PORT = 3107;
 const LABEL_RETRY_MAX = 3;
 const LABEL_RETRY_BASE_MS = 5_000;
-const WEBHOOK_MAX_DELAY_MS = 30_000;
+
+// Gates that actually REVIEW CODE and therefore need the PR-head worktree
+// isolation (LIA-462). Only these dispatch sites create a gate worktree and set
+// `isGateRun`; scoping gates (bouncer-gate/enrichment-gate) review the issue
+// description only and must NOT get a worktree — they stay on the daemon cwd
+// path, unchanged. Keyed by GateSpec.name (the warden frontmatter `name`).
+const PR_WORKTREE_GATES = new Set<string>([
+  'completion-gate',
+  'output-quality-gate',
+]);
 
 // Map<issueId, timeout> for deferred auto-merge after genuine cooldowns.
 // Volatile: does not survive restart (sweepStaleInReview covers that case).
 const pendingCooldownRetries = new Map<string, ReturnType<typeof setTimeout>>();
-
-// Async sleep — swapped out in tests for deterministic timing.
-let sleepFn = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Replace the sleep implementation (test-only). */
-export function _setSleepFnForTests(fn: (ms: number) => Promise<void>): void {
-  sleepFn = fn;
-}
 
 async function retryLabelUpdate(
   client: LinearContext['client'],
@@ -87,123 +97,6 @@ async function retryLabelUpdate(
       );
     }
   }
-}
-
-export async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
-  maxAttempts: number,
-  baseDelayMs: number,
-): Promise<T> {
-  let lastErr: unknown;
-  let firstErr: unknown;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      if (attempt === 0) firstErr = err;
-
-      if (err instanceof UserError) {
-        throw err;
-      }
-
-      if (isNonRetryableHttpError(err)) {
-        throw new UserError(
-          `Webhook dispatch failed with non-retryable HTTP error`,
-          { cause: err },
-        );
-      }
-
-      const isLastAttempt = attempt === maxAttempts - 1;
-      if (isLastAttempt) {
-        break;
-      }
-
-      const retryAfterMs = extractRetryAfterMs(err);
-      const delayMs =
-        retryAfterMs !== null
-          ? Math.min(retryAfterMs, WEBHOOK_MAX_DELAY_MS)
-          : Math.min(
-              baseDelayMs * Math.pow(2, attempt) + Math.random() * baseDelayMs,
-              WEBHOOK_MAX_DELAY_MS,
-            );
-
-      const errMsg = err instanceof Error ? err.message : String(err);
-      logger.warn(
-        {
-          attempt: attempt + 1,
-          maxAttempts,
-          delayMs: Math.round(delayMs),
-          error: errMsg,
-          ...(retryAfterMs !== null && { retryAfterHeader: true }),
-        },
-        'webhook.retry',
-      );
-
-      await sleepFn(delayMs);
-    }
-  }
-
-  const lastMsg = lastErr instanceof Error ? lastErr.message : String(lastErr);
-  const firstMsg =
-    firstErr instanceof Error ? firstErr.message : String(firstErr);
-  logger.error(
-    {
-      attempts_exhausted: maxAttempts,
-      first_error: firstMsg,
-      error: lastMsg,
-    },
-    'webhook.failed',
-  );
-  throw new FatalError(
-    `Webhook dispatch failed after ${maxAttempts} attempts`,
-    {
-      cause: lastErr,
-    },
-  );
-}
-
-function extractRetryAfterMs(err: unknown): number | null {
-  if (!(err instanceof Error)) return null;
-  const typed = err as Error & {
-    headers?: Record<string, string>;
-    response?: {
-      headers?: Record<string, string> & { get?: (k: string) => string };
-    };
-  };
-  const raw =
-    typed.headers?.['retry-after'] ??
-    typed.response?.headers?.['retry-after'] ??
-    typed.response?.headers?.get?.('retry-after');
-  if (!raw) return null;
-
-  const seconds = Number(raw);
-  if (!Number.isNaN(seconds) && seconds > 0) {
-    return seconds * 1000;
-  }
-  const dateMs = Date.parse(raw);
-  if (!Number.isNaN(dateMs)) {
-    const delta = dateMs - Date.now();
-    return delta > 0 ? delta : 0;
-  }
-  return null;
-}
-
-function isNonRetryableHttpError(err: unknown): boolean {
-  if (err instanceof RetryableError) return false;
-  if (!(err instanceof Error)) return false;
-
-  const statusCode =
-    (err as Error & { status?: number; statusCode?: number }).status ??
-    (err as Error & { status?: number; statusCode?: number }).statusCode;
-
-  if (typeof statusCode === 'number') {
-    if (statusCode === 429) return false;
-    if (statusCode >= 400 && statusCode < 500) return true;
-  }
-
-  return false;
 }
 
 let _syncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -544,6 +437,8 @@ export async function runInlineCompletionCheck(
   }
 
   ctx.inFlightGate.add(issueData.id);
+  // LIA-462: gate worktree, cleaned up in finally regardless of outcome.
+  let gateWt: { worktreePath: string; runToken: string } | null = null;
   try {
     let commentBlock = '';
     const comments = await fetchIssueComments(ctx, issueData.id);
@@ -567,6 +462,27 @@ export async function runInlineCompletionCheck(
         `<transition>\nFrom: In Review\nTo: Done (pre-merge check)\n</transition>`,
       ].join('\n\n') + commentBlock;
 
+    // LIA-462: completion-gate reviews code — isolate it on the PR-head worktree
+    // so the pre-merge verdict reflects the PR, not the daemon's cwd. An infra
+    // failure parks the issue and blocks the merge (REVISE) — never a false SHIP.
+    if (PR_WORKTREE_GATES.has(completionGateSpec.name)) {
+      const wt = await ensureGateWorktree(issueData.id);
+      if ('error' in wt) {
+        logger.warn(
+          { issueId: issueData.id, err: wt.error },
+          'inline-completion-check: gate worktree setup failed — parking, blocking merge',
+        );
+        await parkErroredGateIssue(
+          ctx,
+          issueData.id,
+          completionGateSpec.name,
+          'inline-completion-check',
+        );
+        return 'REVISE';
+      }
+      gateWt = wt;
+    }
+
     const chatJid = `linear-gate-completion-pre-merge-${issueData.id.slice(0, 8)}`;
     const runContext: RunContext = {
       prompt,
@@ -575,6 +491,7 @@ export async function runInlineCompletionCheck(
       isControlGroup: false,
       isScheduledTask: true,
       effort: completionGateSpec.effort ?? 'medium',
+      ...(gateWt && { worktreePath: gateWt.worktreePath, isGateRun: true }),
     };
 
     const { text, error } = await retryWithBackoff(
@@ -618,6 +535,7 @@ export async function runInlineCompletionCheck(
     return 'REVISE';
   } finally {
     ctx.inFlightGate.delete(issueData.id);
+    if (gateWt) await cleanupGateWorktree(gateWt.worktreePath, gateWt.runToken);
   }
 }
 
@@ -1106,6 +1024,8 @@ async function handleIssueUpdate(
   let finalVerdict: string | undefined;
   let finalEnrichment: string | undefined;
   let gateDidError = false;
+  // LIA-462: gate worktree, cleaned up in finally regardless of outcome.
+  let gateWt: { worktreePath: string; runToken: string } | null = null;
   try {
     const chatJid = `linear-gate-${gateSpec.name}-${data.id.slice(0, 8)}`;
 
@@ -1146,6 +1066,18 @@ async function handleIssueUpdate(
       commentBlock +
       priorFeedbackBlock;
 
+    // LIA-462: code-review gates get a PR-head worktree so the verdict reflects
+    // the PR, not the daemon cwd. A worktree-setup failure throws → the catch
+    // below marks gateDidError → the finally parks the issue (visible ERROR),
+    // never a silent cwd fallback or false SHIP. Scoping gates skip this.
+    if (PR_WORKTREE_GATES.has(gateSpec.name)) {
+      const wt = await ensureGateWorktree(data.id);
+      if ('error' in wt) {
+        throw new Error(`gate worktree setup failed: ${wt.error}`);
+      }
+      gateWt = wt;
+    }
+
     const runContext: RunContext = {
       prompt,
       groupFolder: ctx.dispatchGroup.folder,
@@ -1153,6 +1085,7 @@ async function handleIssueUpdate(
       isControlGroup: false,
       isScheduledTask: true,
       effort: gateSpec.effort ?? 'medium',
+      ...(gateWt && { worktreePath: gateWt.worktreePath, isGateRun: true }),
     };
 
     const { text, error } = await retryWithBackoff(
@@ -1412,6 +1345,8 @@ async function handleIssueUpdate(
     });
   } finally {
     ctx.inFlightGate.delete(data.id);
+    // LIA-462: tear down the gate worktree + per-run staging (best-effort).
+    if (gateWt) await cleanupGateWorktree(gateWt.worktreePath, gateWt.runToken);
     const removeIds: string[] = [];
     const addIds: string[] = [];
     if (ctx.gateLabels.evaluating) removeIds.push(ctx.gateLabels.evaluating);
@@ -1550,6 +1485,8 @@ async function runGateForIssue(
   let finalVerdict: string | undefined;
   let finalEnrichment: string | undefined;
   let gateAgentError = false;
+  // LIA-462: gate worktree, cleaned up in finally regardless of outcome.
+  let gateWt: { worktreePath: string; runToken: string } | null = null;
 
   try {
     if (ctx.gateLabels.evaluating) {
@@ -1600,6 +1537,18 @@ async function runGateForIssue(
         `<transition>\nFrom: (startup scan)\nTo: ${stateName}\n</transition>`,
       ].join('\n\n') + commentBlock;
 
+    // LIA-462: code-review gates get a PR-head worktree so the verdict reflects
+    // the PR, not the daemon cwd. A worktree-setup failure throws → the catch
+    // below marks gateAgentError → the finally parks the issue (visible ERROR),
+    // never a silent cwd fallback or false SHIP. Scoping gates skip this.
+    if (PR_WORKTREE_GATES.has(gateSpec.name)) {
+      const wt = await ensureGateWorktree(issue.id);
+      if ('error' in wt) {
+        throw new Error(`gate worktree setup failed: ${wt.error}`);
+      }
+      gateWt = wt;
+    }
+
     const chatJid = `linear-gate-sweep-${gateSpec.name}-${issue.id.slice(0, 8)}`;
     const runContext: RunContext = {
       prompt,
@@ -1608,6 +1557,7 @@ async function runGateForIssue(
       isControlGroup: false,
       isScheduledTask: true,
       effort: gateSpec.effort ?? 'medium',
+      ...(gateWt && { worktreePath: gateWt.worktreePath, isGateRun: true }),
     };
 
     const { text, error } = await retryWithBackoff(
@@ -1822,6 +1772,8 @@ async function runGateForIssue(
     finalEnrichment = `Gate infrastructure error (startup sweep): ${errorMsg}`;
   } finally {
     ctx.inFlightGate.delete(issue.id);
+    // LIA-462: tear down the gate worktree + per-run staging (best-effort).
+    if (gateWt) await cleanupGateWorktree(gateWt.worktreePath, gateWt.runToken);
 
     const removeIds: string[] = [];
     const addIds: string[] = [];

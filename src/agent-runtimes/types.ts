@@ -48,6 +48,17 @@ export interface RunContext {
   imageInputs?: Array<{ relativePath: string; mediaType: string }>;
   worktreePath?: string;
   /**
+   * Gate-run isolation flag (LIA-462). Set only by the Linear pipeline's
+   * code-review gates (completion-gate, output-quality-gate) via
+   * `PR_WORKTREE_GATES`. When true AND `worktreePath` is set, the container
+   * mounter sources the agent-runner harness (`/app/src`) and bundled skills
+   * from the PR-head worktree instead of the daemon's mutable `process.cwd()`,
+   * and stages them into a per-run destination so concurrent gates on
+   * different PRs can't overwrite each other. Absent for chat/dispatch/scoping
+   * runs → unchanged group-keyed, cwd-sourced behavior.
+   */
+  isGateRun?: boolean;
+  /**
    * Streaming consumer flag. When true (set by the Odysseus Web UI channel), the
    * Claude backend enables SDK partial messages so answer text and tool/thinking
    * activity stream incrementally as `output_text`/`activity` events instead of one

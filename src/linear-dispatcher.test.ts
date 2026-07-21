@@ -128,6 +128,7 @@ import {
   classifyRunFailure,
   executeAgentRun,
   resolveBotUserId,
+  ensureGateWorktree,
 } from './linear-dispatcher.js';
 import type {
   LinearContext,
@@ -2094,5 +2095,100 @@ describe('executeAgentRun: per-run IPC isolation (LIA-211)', () => {
 
     writeSpy.mockRestore();
     mkdirSpy.mockRestore();
+  });
+});
+
+// ── ensureGateWorktree error classification (LIA-462) ────────────────────────
+// The gate-worktree resolver must classify failures precisely: no PR / bad URL
+// → error (never a cwd fallback); transient `gh` failure retried then
+// succeeding → success; `gh` failure exhausting the retry budget → error.
+describe('ensureGateWorktree error classification (LIA-462)', () => {
+  let mkdirSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    vi.mocked(getIssuePr).mockReset();
+    // Never touch the real DATA_DIR from a unit test; git itself is mocked via
+    // child_process, so no worktree is actually created.
+    mkdirSpy = vi
+      .spyOn(fs, 'mkdirSync')
+      .mockImplementation(() => undefined as unknown as string);
+  });
+
+  afterEach(() => {
+    mkdirSpy.mockRestore();
+  });
+
+  it('returns an error when the issue has no PR (never falls back to cwd)', async () => {
+    vi.mocked(getIssuePr).mockReturnValue(undefined);
+    const result = await ensureGateWorktree('ISSUE-1');
+    expect(result).toEqual({ error: 'no PR found for issue' });
+    // No gh/git call is attempted when there is no PR.
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it('succeeds after a transient gh failure is retried', async () => {
+    vi.mocked(getIssuePr).mockReturnValue({
+      pr_url: 'https://github.com/owner/repo/pull/42',
+      branch: 'feat/x',
+      auto_merge_state: 'none',
+    });
+    let ghCalls = 0;
+    execFileMock.mockImplementation((cmd: unknown, args: unknown) => {
+      if (cmd === 'gh') {
+        ghCalls += 1;
+        if (ghCalls === 1) {
+          return { error: new Error('gh: transient network error') };
+        }
+        return {
+          stdout: JSON.stringify({
+            headRefOid: 'deadbeefcafe1234',
+            headRefName: 'feat/x',
+          }),
+        };
+      }
+      // git fetch / git worktree add succeed
+      void args;
+      return { stdout: '', stderr: '' };
+    });
+
+    vi.useFakeTimers();
+    const pending = ensureGateWorktree('ISSUE-1');
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    vi.useRealTimers();
+
+    expect('worktreePath' in result).toBe(true);
+    if ('worktreePath' in result) {
+      // Full issue id (never truncated) + a genuine 8-byte hex nonce.
+      expect(result.runToken).toMatch(/^ISSUE-1-[0-9a-f]{16}$/);
+      expect(result.worktreePath).toContain(result.runToken);
+    }
+    expect(ghCalls).toBe(2); // failed once, retried, succeeded
+  });
+
+  it('returns an error when gh exhausts the retry budget', async () => {
+    vi.mocked(getIssuePr).mockReturnValue({
+      pr_url: 'https://github.com/owner/repo/pull/42',
+      branch: 'feat/x',
+      auto_merge_state: 'none',
+    });
+    execFileMock.mockImplementation((cmd: unknown) => {
+      if (cmd === 'gh') {
+        return { error: new Error('gh: persistent failure') };
+      }
+      return { stdout: '', stderr: '' };
+    });
+
+    vi.useFakeTimers();
+    const pending = ensureGateWorktree('ISSUE-1');
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    vi.useRealTimers();
+
+    expect('error' in result).toBe(true);
+    if ('error' in result) {
+      expect(result.error).toContain('gh pr view failed');
+    }
   });
 });

@@ -120,6 +120,10 @@ export const ContainerInputSchema = z.object({
   // Per-run IPC namespace key (LIA-211). Carried into the mounter so the
   // container's IPC dir is keyed per run for collision-prone shared folders.
   ipcRunKey: z.string().optional(),
+  // Gate-run isolation flag (LIA-462). Carried into the mounter so a
+  // code-review gate sources its harness/skills from the PR-head worktree
+  // (with `worktreePath`) instead of the daemon cwd. Off for all other runs.
+  isGateRun: z.boolean().optional(),
 });
 
 /** Derived TypeScript type — single source of truth. */

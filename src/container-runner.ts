@@ -464,6 +464,7 @@ export async function runContainerAgent(
     input.isControlGroup,
     input.worktreePath,
     input.ipcRunKey,
+    input.isGateRun,
   );
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   // LIA-451: "deusv2-" (no hyphen after "deus") -- v1's orphan-cleanup filter
