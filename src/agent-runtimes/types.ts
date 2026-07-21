@@ -99,9 +99,41 @@ export type RuntimeEvent =
     }
   | { type: 'session'; sessionRef: RuntimeSession }
   | { type: 'turn_complete' }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+  // LIA-465 spike: emitted when a tool call is awaiting a live permission
+  // decision. Not yet produced by any production runtime — see
+  // scripts/spikes/lia465_protocol_boundary_permission_spike.md.
+  | {
+      type: 'permission_request';
+      requestId: string;
+      toolName: string;
+      toolInputPreview: string;
+      sessionId: string;
+      requestedAt: string;
+    };
 
 export type RuntimeEventSink = (event: RuntimeEvent) => void | Promise<void>;
+
+// LIA-465 spike: outcome of a permission_request. No `edit` variant —
+// deterministic allow/deny only, matching deus-v2-permission-rules.md's
+// existing PermissionDecision scope (that ADR's own decision path has no
+// dependency on LangChain's unreliable upstream HITL `edit` mechanism,
+// see the spike doc for the full reconciliation).
+export type PermissionDecision = 'allow_once' | 'allow_always' | 'deny';
+
+// LIA-465 spike: inbound (client→server) commands, symmetric with
+// RuntimeEvent. Not yet consumed by any production runtime.
+export type RuntimeCommand =
+  | {
+      type: 'permission_response';
+      requestId: string;
+      decision: PermissionDecision;
+      responder?: string;
+    }
+  // Type-only for protocol symmetry/capability negotiation — deliberately
+  // unimplemented in this spike (see scripts/spikes/lia465_protocol_boundary_permission_spike.md
+  // Non-goals).
+  | { type: 'interrupt'; requestId: string };
 
 export interface RunResult {
   status: 'success' | 'error';
