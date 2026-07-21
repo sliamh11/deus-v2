@@ -41,10 +41,7 @@ import { fireAndForget } from './async/index.js';
 import { WEBHOOK_MAX_RETRIES, WEBHOOK_BASE_DELAY_MS } from './config.js';
 // Exponential-backoff retry now lives in a neutral module (LIA-462) so
 // linear-dispatcher can reuse it without a dispatcher ↔ webhook import cycle.
-// Imported for internal use here and re-exported so existing importers/tests
-// that reference these from this module keep working unchanged.
 import { retryWithBackoff } from './webhook-retry.js';
-export { retryWithBackoff, _setSleepFnForTests } from './webhook-retry.js';
 
 // LIA-451: 3107, distinct from v1's 3005 and from this instance's own
 // Odysseus (3105)/gateway (3109) ports.
