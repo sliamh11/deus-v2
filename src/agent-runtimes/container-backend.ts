@@ -131,6 +131,7 @@ export class ContainerRuntime implements AgentRuntime {
         ...(runContext.ipcRunKey && {
           ipcRunKey: runContext.ipcRunKey,
         }),
+        ...(runContext.isGateRun && { isGateRun: true }),
         ...(runContext.stream && { stream: true }),
       },
       (proc, containerName) =>

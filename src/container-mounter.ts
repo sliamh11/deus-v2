@@ -124,10 +124,39 @@ export function buildVolumeMounts(
   isControlGroup: boolean,
   worktreePath?: string,
   ipcRunKey?: string,
+  isGateRun = false,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
+
+  // LIA-462: code-review gates (completion-gate/output-quality-gate) must review
+  // the exact PR-head commit, not whatever the daemon's mutable process.cwd()
+  // currently holds. When this run is such a gate AND a per-PR worktree is
+  // provided, source the agent-runner harness (/app/src) and bundled skills
+  // from that worktree instead of process.cwd(). Both conditions are required:
+  // a non-gate run, or a gate run with no worktree, keeps today's cwd sourcing.
+  const useWorktreeSource = isGateRun && !!worktreePath;
+  const sourceRoot = useWorktreeSource ? worktreePath! : projectRoot;
+
+  // Per-run staging base (LIA-462, round-1 blocking finding). The harness and
+  // .claude staging DESTINATIONS are normally keyed by group.folder — constant
+  // across every gate run on the shared dispatch group. Once the SOURCE differs
+  // per PR (above), a group-keyed destination lets two concurrent gates on
+  // different PRs overwrite each other's staged harness/skills. For gate runs we
+  // therefore stage into a per-run subtree keyed by the worktree's basename,
+  // which equals ensureGateWorktree's `runToken` by construction
+  // (DATA_DIR/gate-worktrees/<runToken>). Non-gate runs keep the exact
+  // group-keyed base — byte-for-byte unchanged.
+  const stagingBase = useWorktreeSource
+    ? path.join(
+        DATA_DIR,
+        'sessions',
+        group.folder,
+        'gate-runs',
+        path.basename(worktreePath!),
+      )
+    : path.join(DATA_DIR, 'sessions', group.folder);
 
   if (isControlGroup) {
     // Only mount the Deus project root as a fallback when no worktree or
@@ -326,13 +355,11 @@ export function buildVolumeMounts(
   }
 
   // Per-group Claude sessions directory (isolated from other groups)
-  // Each group gets their own .claude/ to prevent cross-group session access
-  const groupSessionsDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    '.claude',
-  );
+  // Each group gets their own .claude/ to prevent cross-group session access.
+  // For gate runs (LIA-462) this hangs off the per-run stagingBase so the
+  // worktree-sourced skills staged below can't collide with a concurrent gate
+  // on a different PR (the skills copy target lives inside this dir).
+  const groupSessionsDir = path.join(stagingBase, '.claude');
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
@@ -383,8 +410,9 @@ export function buildVolumeMounts(
     );
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  // Sync skills from container/skills/ into each group's .claude/skills/.
+  // sourceRoot (LIA-462) is the PR-head worktree for gate runs, else cwd.
+  const skillsSrc = path.join(sourceRoot, 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
@@ -418,17 +446,12 @@ export function buildVolumeMounts(
   // can customize it (add tools, change behavior) without affecting other
   // groups. Recompiled on container startup via entrypoint.sh.
   const agentRunnerSrc = path.join(
-    projectRoot,
+    sourceRoot,
     'container',
     'agent-runner',
     'src',
   );
-  const groupAgentRunnerDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    'agent-runner-src',
-  );
+  const groupAgentRunnerDir = path.join(stagingBase, 'agent-runner-src');
   if (fs.existsSync(agentRunnerSrc)) {
     fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }

@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'child_process';
 import { minimatch } from 'minimatch';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
@@ -8,7 +8,15 @@ import { LinearClient } from '@linear/sdk';
 import { DATA_DIR, HOME_DIR, GROUPS_DIR } from './config.js';
 import { logger } from './logger.js';
 import { extractFrontmatter } from './frontmatter.js';
-import { PROJECT_ROOT } from './config.js';
+import {
+  PROJECT_ROOT,
+  WEBHOOK_MAX_RETRIES,
+  WEBHOOK_BASE_DELAY_MS,
+} from './config.js';
+// LIA-462: reuse the shared transient-retry helper for `gh pr view` in
+// ensureGateWorktree. It lives in a neutral module (not linear-webhook) so this
+// import does NOT create a dispatcher ↔ webhook cycle.
+import { retryWithBackoff } from './webhook-retry.js';
 import { getProjectByPath, registerProject } from './project-registry.js';
 import { FatalError, RetryableError } from './errors/index.js';
 import { fireAndForget, withTimeout } from './async/index.js';
@@ -1298,6 +1306,242 @@ async function cleanupWorktree(worktreePath: string): Promise<void> {
   }
 }
 
+// Orphan-sweep threshold for gate worktrees (LIA-462). Gate runs complete in
+// minutes; anything older than this with no matching in-flight gate is a
+// leaked worktree (e.g. daemon crash mid-run) and is swept on each poll tick.
+const GATE_WORKTREE_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+/**
+ * Prepare an isolated git worktree checked out at a PR's exact head commit for a
+ * code-review gate run (LIA-462). The gate container sources `/workspace/project`
+ * AND its harness/skills from this worktree instead of the daemon's mutable
+ * `process.cwd()`, so a verdict always reflects the PR under review — never
+ * unrelated code that happened to sit in cwd at mount time (the confirmed root
+ * cause of the 5 consecutive completion-gate failures this fixes).
+ *
+ * Returns `{ worktreePath, runToken }` on success, or `{ error }` on ANY failure
+ * (no PR, unparseable URL, gh/git failure). It NEVER falls back to cwd: an infra
+ * failure must surface as a visible gate error so the caller parks the issue —
+ * never a silent wrong-code review or a false SHIP.
+ */
+export async function ensureGateWorktree(
+  issueId: string,
+): Promise<{ worktreePath: string; runToken: string } | { error: string }> {
+  if (!(IS_MACOS || IS_LINUX)) {
+    return { error: 'gate worktree unsupported on this platform' };
+  }
+
+  const pr = getIssuePr(issueId);
+  if (!pr || !pr.pr_url) {
+    return { error: 'no PR found for issue' };
+  }
+
+  // Reuse the PR-URL parse shape from linear-auto-merge's queryPrMergeability.
+  const prNumber = pr.pr_url.match(/\/pull\/(\d+)/)?.[1];
+  const repo = pr.pr_url.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
+  if (!prNumber || !repo) {
+    return { error: `unparseable PR url: ${pr.pr_url}` };
+  }
+
+  // Resolve the PR head commit, retrying transient gh failures (network / rate
+  // limit) — mirrors linear-auto-merge's transient-vs-permanent classification.
+  let headRefOid: string;
+  try {
+    const { stdout } = await retryWithBackoff(
+      () =>
+        execFileAsync(
+          'gh',
+          [
+            'pr',
+            'view',
+            prNumber,
+            '--repo',
+            repo,
+            '--json',
+            'headRefOid,headRefName',
+          ],
+          { timeout: GIT_TIMEOUT_MS },
+        ),
+      WEBHOOK_MAX_RETRIES,
+      WEBHOOK_BASE_DELAY_MS,
+    );
+    const parsed = JSON.parse(stdout) as { headRefOid?: string };
+    if (!parsed.headRefOid) {
+      return { error: 'gh pr view returned no headRefOid' };
+    }
+    headRefOid = parsed.headRefOid;
+  } catch (err) {
+    return {
+      error: `gh pr view failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+
+  // Genuine per-invocation nonce (LIA-462, round-2/3 finding): chatJid is
+  // deterministic per gate-type+issue, so it cannot key a security-critical
+  // per-run mount. runToken uses the FULL issue id (never truncated) + nonce.
+  const nonce = randomBytes(8).toString('hex');
+  const runToken = `${issueId}-${nonce}`;
+
+  const worktreePath = path.resolve(
+    path.join(DATA_DIR, 'gate-worktrees', runToken),
+  );
+  const sandboxRoot = path.resolve(path.join(DATA_DIR, 'gate-worktrees'));
+  if (!worktreePath.startsWith(sandboxRoot + path.sep)) {
+    return { error: `gate worktree path escapes sandbox: ${worktreePath}` };
+  }
+
+  try {
+    fs.mkdirSync(sandboxRoot, { recursive: true });
+    // Fetch the OID first so `worktree add` is guaranteed to find it locally
+    // even if the shared object store lags. Route failure to the error path.
+    await execFileAsync('git', ['fetch', 'origin', headRefOid], {
+      cwd: PROJECT_ROOT,
+      timeout: GIT_TIMEOUT_MS,
+    });
+    // Detached worktree at the exact commit. Each invocation gets a fresh,
+    // uniquely-named worktree — no `if (existsSync) return` reuse (round-3):
+    // this key guards a security-critical mount and must never be shared.
+    await execFileAsync(
+      'git',
+      ['worktree', 'add', '--detach', worktreePath, headRefOid],
+      { cwd: PROJECT_ROOT, timeout: GIT_TIMEOUT_MS },
+    );
+  } catch (err) {
+    // Best-effort teardown of any partial worktree, then surface the error —
+    // never silently fall back to cwd.
+    await cleanupGateWorktree(worktreePath, runToken);
+    return {
+      error: `git worktree add failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+
+  return { worktreePath, runToken };
+}
+
+/**
+ * Remove a gate worktree (LIA-462) and its per-run container-staging subtree
+ * (`DATA_DIR/sessions/<folder>/gate-runs/<runToken>`, written by the mounter).
+ * Best-effort: swallows errors and logs warnings — cleanup failure must never
+ * mask a gate outcome. Safe on a partially-created worktree. The staging dir is
+ * located by its globally-unique runToken across session folders, so the caller
+ * needs no group-folder argument.
+ */
+export async function cleanupGateWorktree(
+  worktreePath: string,
+  runToken: string,
+): Promise<void> {
+  try {
+    await execFileAsync(
+      'git',
+      ['worktree', 'remove', '--force', worktreePath],
+      { cwd: PROJECT_ROOT, timeout: GIT_TIMEOUT_MS },
+    );
+  } catch {
+    try {
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+    try {
+      await execFileAsync('git', ['worktree', 'prune'], {
+        cwd: PROJECT_ROOT,
+        timeout: GIT_TIMEOUT_MS,
+      });
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // Remove the per-run staging subtree the mounter created for this run. The
+  // runToken is unique, so at most one session folder holds a match.
+  try {
+    const sessionsDir = path.join(DATA_DIR, 'sessions');
+    if (fs.existsSync(sessionsDir)) {
+      for (const folder of fs.readdirSync(sessionsDir)) {
+        const runStaging = path.join(
+          sessionsDir,
+          folder,
+          'gate-runs',
+          runToken,
+        );
+        if (fs.existsSync(runStaging)) {
+          fs.rmSync(runStaging, { recursive: true, force: true });
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      { runToken, err },
+      'linear-dispatcher: gate-run staging cleanup failed',
+    );
+  }
+}
+
+/**
+ * Periodic + boot sweep of leaked gate worktrees (LIA-462). Scans
+ * `DATA_DIR/gate-worktrees/*`; any entry older than GATE_WORKTREE_MAX_AGE_MS
+ * with no matching in-flight gate is cleaned up (worktree + per-run staging),
+ * then `git worktree prune` reconciles the metadata. Runs on every poll tick,
+ * so the first tick at daemon start also provides the boot-time sweep.
+ */
+async function sweepStaleGateWorktrees(ctx: LinearContext): Promise<void> {
+  const gateWorktreesDir = path.join(DATA_DIR, 'gate-worktrees');
+  if (!fs.existsSync(gateWorktreesDir)) return;
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(gateWorktreesDir);
+  } catch (err) {
+    logger.warn(
+      { err },
+      'linear-dispatcher: gate-worktree sweep readdir failed',
+    );
+    return;
+  }
+
+  const now = Date.now();
+  const inFlight = [...ctx.inFlightGate];
+  let cleaned = 0;
+
+  for (const entry of entries) {
+    const entryPath = path.join(gateWorktreesDir, entry);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(entryPath);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    if (now - stat.mtimeMs < GATE_WORKTREE_MAX_AGE_MS) continue;
+    // entry === runToken === `<issueId>-<nonce>`. Skip if that issue still has
+    // an in-flight gate (a >2h in-flight gate is already anomalous; be safe).
+    if (inFlight.some((id) => entry === id || entry.startsWith(id + '-'))) {
+      continue;
+    }
+    await cleanupGateWorktree(entryPath, entry);
+    cleaned++;
+  }
+
+  if (cleaned > 0) {
+    logger.info({ cleaned }, 'linear-dispatcher: swept stale gate worktrees');
+    try {
+      await execFileAsync('git', ['worktree', 'prune'], {
+        cwd: PROJECT_ROOT,
+        timeout: GIT_TIMEOUT_MS,
+      });
+    } catch (err) {
+      logger.warn(
+        { err },
+        'linear-dispatcher: worktree prune after gate sweep failed',
+      );
+    }
+  }
+}
+
 /**
  * Returns the list of files modified in the worktree (via `git diff --name-only HEAD`)
  * that are NOT covered by any glob in `allowlist`. An empty array means all changed
@@ -1548,6 +1792,12 @@ async function pollLinear(): Promise<void> {
   // Conflict detection sweep — runs every poll alongside dispatch
   checkConflictingPrs(ctx).catch((err) => {
     logger.warn({ err }, 'linear-dispatcher: conflict check sweep failed');
+  });
+
+  // Leaked gate-worktree sweep (LIA-462) — runs every poll; the first tick at
+  // daemon start doubles as the boot-time sweep.
+  sweepStaleGateWorktrees(ctx).catch((err) => {
+    logger.warn({ err }, 'linear-dispatcher: gate-worktree sweep failed');
   });
 
   const readyState = ctx.stateByName.get('Ready for Agent')!;
