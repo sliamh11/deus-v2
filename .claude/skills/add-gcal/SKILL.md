@@ -121,6 +121,13 @@ No manual container configuration is needed.
 
 ## Phase 5: Keep-alive Timer
 
+**deus-v2 note (LIA-453 Scope A):** skip this phase on a deus-v2 install. deus-v2 shares v1's
+Google OAuth token, so v1's existing `com.deus.gcal-keepalive` job already keeps it fresh for
+both — running a second keep-alive on the same shared token adds collision risk with no
+benefit (same reasoning as the excluded `oauth-refresh`/`backup` duplication, see
+`docs/decisions/deus-v2-parallel-daemon-launchd.md`). This phase, including the
+`setup/com.deus.gcal-keepalive.plist.template` it references, applies to a v1-only install.
+
 The Google OAuth refresh token expires after ~7 days of inactivity. Install a daily keep-alive to prevent this:
 
 ```bash

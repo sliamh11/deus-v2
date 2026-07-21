@@ -118,6 +118,12 @@ function setupLaunchd(
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
         <key>HOME</key>
         <string>${homeDir}</string>
+        <key>ODYSSEUS_HTTP_ENABLED</key>
+        <string>1</string>
+        <key>INGRESS_GATEWAY_ENABLED</key>
+        <string>1</string>
+        <key>INGRESS_TUNNEL_ENABLED</key>
+        <string>1</string>
     </dict>
     <key>StandardOutPath</key>
     <string>${projectRoot}/logs/deus.log</string>
@@ -748,15 +754,34 @@ function getWindowsPythonPath(): string {
 // helpers (parameterize-method extraction; was three near-identical
 // setupMaintenance* functions). A new daily job = one more SCHEDULED_JOBS entry.
 
-export interface ScheduledJobSpec {
+interface ScheduledJobSpecCommon {
   /** Canonical id: macOS label `com.deus-v2.<id>`, linux unit `deus-v2-<id>`,
    *  windows task `DeusV2<PascalCase>`, log `logs/<id>.log`. (LIA-451) */
   id: string;
   scriptRelPath: string; // POSIX-style relative path from the project root
-  hour: number;
-  minute: number;
   description: string;
 }
+
+/**
+ * A scheduled job fires on exactly one of two schedule shapes, never both,
+ * never neither — enforced at the type level as a discriminated union
+ * (LIA-453 Scope A Phase 2):
+ *  - daily at HH:MM (`hour`/`minute`, the original mechanism — 3 existing
+ *    jobs use this, unchanged)
+ *  - a fixed interval in seconds (`intervalSec` — for jobs that need to run
+ *    more often than once a day, e.g. hourly healthchecks)
+ */
+export type ScheduledJobSpec =
+  | (ScheduledJobSpecCommon & {
+      hour: number;
+      minute: number;
+      intervalSec?: never;
+    })
+  | (ScheduledJobSpecCommon & {
+      hour?: never;
+      minute?: never;
+      intervalSec: number;
+    });
 
 export const SCHEDULED_JOBS: ScheduledJobSpec[] = [
   {
@@ -786,6 +811,32 @@ export const SCHEDULED_JOBS: ScheduledJobSpec[] = [
     minute: 20,
     description: 'Deus evolution DB backup',
   },
+  {
+    // LIA-453 Scope A Phase 2: cross-platform replacement for v1's
+    // out-of-repo com.deus.healthcheck script, following v2's own in-repo
+    // SCHEDULED_JOBS convention instead. Hourly (intervalSec, not
+    // hour/minute — see ScheduledJobSpec). Isolation lives in the script:
+    // scripts/healthcheck.py re-points its labels/paths at com.deus-v2* and
+    // ~/.config/deus-v2/, including an explicit notify.sentinel_path
+    // override so it never clobbers v1's ~/.config/deus/HEALTH_ALERT.json.
+    id: 'healthcheck',
+    scriptRelPath: 'scripts/healthcheck.py',
+    intervalSec: 3600,
+    description: 'Deus-v2 launchd fleet healthcheck',
+  },
+  {
+    // LIA-453 Scope A Phase 2: cross-platform replacement for v1's
+    // out-of-repo com.deus.log-to-issue script, following v2's own in-repo
+    // SCHEDULED_JOBS convention instead. Every 15 minutes (intervalSec, not
+    // hour/minute — see ScheduledJobSpec). Isolation lives in the script:
+    // scripts/log_to_issue.py re-points all four hardcoded ~/.config/deus/...
+    // path constants (STATE_PATH, CONFIG_PATH, DETAILS_DIR, LOCK_PATH) at
+    // ~/.config/deus-v2/, so v1's and v2's copies never share a lock file.
+    id: 'log-to-issue',
+    scriptRelPath: 'scripts/log_to_issue.py',
+    intervalSec: 900,
+    description: 'Deus-v2 runtime-error to GH issue stub',
+  },
 ];
 
 function jobTaskName(id: string): string {
@@ -799,8 +850,18 @@ function jobTaskName(id: string): string {
   );
 }
 
+/** Human-readable schedule description for log lines, shared across all
+ *  three per-platform installers (LIA-453 Scope A Phase 2). */
+function describeSchedule(spec: ScheduledJobSpec): string {
+  return spec.intervalSec !== undefined
+    ? `every ${spec.intervalSec}s`
+    : `daily ${String(spec.hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}`;
+}
+
 /** Pure: the launchd plist for a scheduled job. Exported for regression tests
- *  (locks the maintenance job's label/time/paths across the generic refactor). */
+ *  (locks the maintenance job's label/time/paths across the generic
+ *  refactor). Emits `StartInterval` when `spec.intervalSec` is set, or the
+ *  original `StartCalendarInterval` (HH:MM) otherwise (LIA-453 Phase 2). */
 export function buildScheduledJobPlist(
   spec: ScheduledJobSpec,
   projectRoot: string,
@@ -809,6 +870,17 @@ export function buildScheduledJobPlist(
 ): string {
   const label = `com.deus-v2.${spec.id}`;
   const logPath = `${projectRoot}/logs/${spec.id}.log`;
+  const scheduleBlock =
+    spec.intervalSec !== undefined
+      ? `    <key>StartInterval</key>
+    <integer>${spec.intervalSec}</integer>`
+      : `    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>${spec.hour}</integer>
+        <key>Minute</key>
+        <integer>${spec.minute}</integer>
+    </dict>`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -822,13 +894,7 @@ export function buildScheduledJobPlist(
     </array>
     <key>WorkingDirectory</key>
     <string>${projectRoot}</string>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>${spec.hour}</integer>
-        <key>Minute</key>
-        <integer>${spec.minute}</integer>
-    </dict>
+${scheduleBlock}
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
@@ -864,12 +930,14 @@ function installScheduledJobLaunchd(
     plistPath,
     buildScheduledJobPlist(spec, projectRoot, homeDir, pythonPath),
   );
-  const when = `${String(spec.hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}`;
   try {
     execSync(`launchctl load ${JSON.stringify(plistPath)}`, {
       stdio: 'ignore',
     });
-    logger.info({ plistPath }, `${spec.description} scheduled (daily ${when})`);
+    logger.info(
+      { plistPath },
+      `${spec.description} scheduled (${describeSchedule(spec)})`,
+    );
   } catch {
     logger.warn(`launchctl load for ${spec.id} failed (may already be loaded)`);
   }
@@ -897,7 +965,6 @@ function installScheduledJobLinux(
   // LIA-451: "deus-v2-<id>", namespaced away from v1's "deus-<id>" timer units.
   const unitBase = `deus-v2-${spec.id}`;
   const logPath = `${projectRoot}/logs/${spec.id}.log`;
-  const when = `${String(spec.hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}`;
 
   fs.mkdirSync(unitDir, { recursive: true });
 
@@ -913,11 +980,19 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin
 StandardOutput=append:${logPath}
 StandardError=append:${logPath}`;
 
+  // LIA-453 Phase 2: interval jobs use the monotonic OnUnitActiveSec= timer
+  // (fires every `intervalSec` seconds after the timer's own last
+  // activation); daily jobs keep the original OnCalendar= HH:MM:00 form.
+  const timerSchedule =
+    spec.intervalSec !== undefined
+      ? `OnUnitActiveSec=${spec.intervalSec}`
+      : `OnCalendar=*-*-* ${String(spec.hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}:00`;
+
   const timerUnit = `[Unit]
 Description=${spec.description} timer
 
 [Timer]
-OnCalendar=*-*-* ${when}:00
+${timerSchedule}
 Persistent=true
 
 [Install]
@@ -934,7 +1009,9 @@ WantedBy=timers.target`;
     execSync(`${systemctlPrefix} start ${unitBase}.timer`, {
       stdio: 'ignore',
     });
-    logger.info(`${spec.description} timer scheduled (daily ${when})`);
+    logger.info(
+      `${spec.description} timer scheduled (${describeSchedule(spec)})`,
+    );
   } catch {
     logger.warn(`systemd ${spec.id} timer setup failed`);
   }
@@ -946,7 +1023,6 @@ function installScheduledJobWindows(
 ): void {
   const pythonPath = getWindowsPythonPath();
   const taskName = jobTaskName(spec.id);
-  const when = `${String(spec.hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}`;
 
   try {
     // Delete existing task if present
@@ -962,6 +1038,22 @@ function installScheduledJobWindows(
       projectRoot,
       ...spec.scriptRelPath.split('/'),
     );
+    // LIA-453 Phase 2: interval jobs use /SC MINUTE /MO <minutes> (schtasks
+    // has no seconds granularity); daily jobs keep /SC DAILY /ST HH:MM.
+    const scheduleArgs =
+      spec.intervalSec !== undefined
+        ? [
+            '/SC',
+            'MINUTE',
+            '/MO',
+            String(Math.max(1, Math.round(spec.intervalSec / 60))),
+          ]
+        : [
+            '/SC',
+            'DAILY',
+            '/ST',
+            `${String(spec.hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}`,
+          ];
     execFileSync(
       'schtasks',
       [
@@ -970,15 +1062,14 @@ function installScheduledJobWindows(
         taskName,
         '/TR',
         `"${pythonPath}" "${script}"`,
-        '/SC',
-        'DAILY',
-        '/ST',
-        when,
+        ...scheduleArgs,
         '/F',
       ],
       { stdio: 'pipe' },
     );
-    logger.info(`Windows Task Scheduler: ${spec.id} scheduled (daily ${when})`);
+    logger.info(
+      `Windows Task Scheduler: ${spec.id} scheduled (${describeSchedule(spec)})`,
+    );
   } catch (err) {
     logger.warn(
       { err },
