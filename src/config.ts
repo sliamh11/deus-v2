@@ -16,6 +16,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_HAS_OWN_NUMBER',
   'DEUS_AGENT_BACKEND',
   'DEUS_NATIVE_TRANSPORT',
+  'DEUS_NATIVE_CLI_PERMISSION_PROFILE',
   'DEUS_CONTEXT_FILE_MAX_CHARS',
   'DEUS_OPENAI_MODEL',
   'LLAMA_CPP_BASE_URL',
@@ -273,6 +274,20 @@ export const DEUS_NATIVE_TRANSPORT: 'raw-http' | 'cli-subprocess' =
   ).toLowerCase() === 'cli-subprocess'
     ? 'cli-subprocess'
     : 'raw-http';
+
+// Opt-in named permission profile for `deus chat` turns on the deus-native
+// runtime (interactive-permission follow-up; Amendment 2026-07-21 in
+// docs/decisions/deus-v2-permission-rules.md). Same opt-in convention as
+// DEUS_NATIVE_TRANSPORT above: default `undefined` in EVERY environment, so
+// today's allow-all behavior is unchanged unless a user explicitly sets it
+// (e.g. to 'interactive' for live Y/N prompts on web_search/web_fetch).
+// Deliberately NOT validated here — resolvePermissionProfile
+// (agent-runtimes/permission-rules.ts) is the canonical accepted-name gate
+// and throws visibly on an unknown name at stack construction.
+export const DEUS_NATIVE_CLI_PERMISSION_PROFILE: string | undefined =
+  process.env.DEUS_NATIVE_CLI_PERMISSION_PROFILE ||
+  envConfig.DEUS_NATIVE_CLI_PERMISSION_PROFILE ||
+  undefined;
 
 export const DEUS_OPENAI_MODEL =
   process.env.DEUS_OPENAI_MODEL || envConfig.DEUS_OPENAI_MODEL || '';

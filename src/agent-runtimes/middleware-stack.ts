@@ -50,6 +50,7 @@
  * factory's doc comment names the future work that replaces its substance.
  */
 
+import crypto from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import { accessSync, constants as fsConstants } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -62,6 +63,8 @@ import {
   evaluatePermission,
   resolvePermissionProfile,
 } from './permission-rules.js';
+import { PendingPermissionRegistry } from './permission-registry.js';
+import type { RuntimeEventSink } from './types.js';
 import {
   retrieveMemoryContext,
   type MemoryRetrievalAdapter,
@@ -221,6 +224,42 @@ function orderMarkerHooks(
 }
 
 /**
+ * Dependencies for the interactive 'ask' branch of the permissions layer
+ * (Amendment 2026-07-21 in docs/decisions/deus-v2-permission-rules.md).
+ * When supplied, an `'ask'` policy verdict emits a `permission_request`
+ * RuntimeEvent through `eventSink` and awaits the registry's live decision;
+ * when omitted, `'ask'` fails closed to deny synchronously.
+ */
+export interface InteractivePermissionDeps {
+  registry: PendingPermissionRegistry;
+  eventSink: RuntimeEventSink;
+  sessionId: string;
+}
+
+/** Bound on the model/human-visible tool-input preview in a
+ *  `permission_request` event — enough to recognize the call, small enough
+ *  to never flood a prompt line or an NDJSON frame. */
+const TOOL_INPUT_PREVIEW_MAX_CHARS = 200;
+
+/**
+ * Bounded JSON preview of a tool call's args for the interactive prompt.
+ * Best-effort: unserializable args (cycles, BigInt) degrade to a stable
+ * placeholder rather than throwing inside the enforcement path.
+ */
+function boundedToolInputPreview(args: unknown): string {
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(args);
+  } catch {
+    json = undefined;
+  }
+  if (json === undefined) return '[unserializable tool input]';
+  return json.length > TOOL_INPUT_PREVIEW_MAX_CHARS
+    ? `${json.slice(0, TOOL_INPUT_PREVIEW_MAX_CHARS)}…`
+    : json;
+}
+
+/**
  * Permissions layer — REAL enforcement (B7/LIA-407). A thin `wrapToolCall`
  * adapter over the pure declarative evaluator in permission-rules.ts:
  * - resolves `permissionProfile` (default: `'default'`, today's allow-all
@@ -241,40 +280,130 @@ function orderMarkerHooks(
  *   Returning a `ToolMessage` (not a thrown error or `Command`) follows
  *   LangChain's installed authentication example and keeps the feedback
  *   inside the model's ReAct loop; no HITL/interrupt/edit path exists here
- *   (AC5, plan Non-goals).
+ *   (AC5, plan Non-goals);
+ * - on ASK (interactive profile) WITH `interactive` deps: registers a
+ *   requestId, emits ONE `permission_request` RuntimeEvent (bounded input
+ *   preview), awaits the live decision — `deny` (explicit or the registry's
+ *   120s auto-deny) produces the same synthetic denial as the static deny
+ *   path (noting the requestId), `allow_once`/`allow_always` delegate
+ *   exactly once with the ORIGINAL request. Without `interactive` deps,
+ *   `ask` fails closed to deny synchronously (distinct reason; no timeout
+ *   is ever started). `ToolCallDecisionRecord.decision` always records the
+ *   RESOLVED outcome ('allow' | 'deny'), never the raw 'ask' verdict.
  */
 export function buildPermissionsMiddleware(
   permissionProfile?: string,
   orderMarkers?: OrderMarker[],
+  interactive?: InteractivePermissionDeps,
 ): BuiltLayer<ToolCallDecisionRecord> {
   const profileName = permissionProfile ?? 'default';
   // Throws on an unknown profile name — fail visibly, before createAgent.
   const policy = resolvePermissionProfile(profileName);
   const log: ToolCallDecisionRecord[] = [];
+
+  const denialMessage = (
+    request: { toolCall: { name: string; id?: string } },
+    reason: string,
+  ): ToolMessage =>
+    new ToolMessage({
+      tool_call_id: request.toolCall.id ?? '',
+      name: request.toolCall.name,
+      status: 'error',
+      content:
+        `permission_denied: tool "${request.toolCall.name}" was blocked by ` +
+        `the "${profileName}" permission profile (${reason}). ` +
+        `The call was not executed; continue without this tool.`,
+    });
+
   const middleware = createMiddleware({
     name: 'permissions',
-    wrapToolCall: (request, handler) => {
+    wrapToolCall: async (request, handler) => {
       const toolName = request.toolCall.name;
       const evaluation = evaluatePermission(policy, toolName);
-      log.push({
-        toolName,
-        decision: evaluation.decision,
-        source: evaluation.source,
-        reason: evaluation.reason,
-      });
+
       if (evaluation.decision === 'allow') {
+        log.push({
+          toolName,
+          decision: 'allow',
+          source: evaluation.source,
+          reason: evaluation.reason,
+        });
         // AC5: the original request object, delegated exactly once.
         return handler(request);
       }
-      return new ToolMessage({
-        tool_call_id: request.toolCall.id ?? '',
-        name: toolName,
-        status: 'error',
-        content:
-          `permission_denied: tool "${toolName}" was blocked by the ` +
-          `"${profileName}" permission profile (${evaluation.reason}). ` +
-          `The call was not executed; continue without this tool.`,
+
+      if (evaluation.decision === 'deny') {
+        log.push({
+          toolName,
+          decision: 'deny',
+          source: evaluation.source,
+          reason: evaluation.reason,
+        });
+        return denialMessage(request, evaluation.reason);
+      }
+
+      // 'ask' — the policy defers to a live human decision (interactive
+      // profile; Amendment 2026-07-21 in
+      // docs/decisions/deus-v2-permission-rules.md).
+      if (interactive === undefined) {
+        // No interactive channel exists to route the question through —
+        // fail closed to deny SYNCHRONOUSLY (no registry, no timeout wait):
+        // an 'ask' verdict must never silently allow, and without an event
+        // route back to any caller there is nobody to ask.
+        const reason =
+          `${evaluation.reason}; no interactive permission channel is ` +
+          `available to ask, so the call fails closed to deny`;
+        log.push({
+          toolName,
+          decision: 'deny',
+          source: evaluation.source,
+          reason,
+        });
+        return denialMessage(request, reason);
+      }
+
+      // Register BEFORE emitting the event so a response can never race an
+      // unregistered requestId (same ordering the LIA-465 spike proved).
+      const requestId = crypto.randomUUID();
+      const decisionPromise = interactive.registry.register(requestId);
+      await interactive.eventSink({
+        type: 'permission_request',
+        requestId,
+        toolName,
+        toolInputPreview: boundedToolInputPreview(request.toolCall.args),
+        sessionId: interactive.sessionId,
+        requestedAt: new Date().toISOString(),
       });
+      const decision = await decisionPromise;
+
+      if (decision === 'deny') {
+        // Covers both an explicit human deny and the registry's fail-closed
+        // DENY_TIMEOUT_MS auto-deny — the registry resolves 'deny' either way.
+        const reason =
+          `${evaluation.reason}; the live interactive decision for ` +
+          `request ${requestId} was deny (an unanswered request auto-denies)`;
+        log.push({
+          toolName,
+          decision: 'deny',
+          source: evaluation.source,
+          reason,
+        });
+        return denialMessage(request, reason);
+      }
+
+      // 'allow_once' | 'allow_always' — this ticket treats both as "allow
+      // just this one call" (no persistence yet; see the plan's Non-goals).
+      log.push({
+        toolName,
+        decision: 'allow',
+        source: evaluation.source,
+        reason:
+          `${evaluation.reason}; the live interactive decision for ` +
+          `request ${requestId} was ${decision}`,
+      });
+      // AC5: the original request object, delegated exactly once — the same
+      // no-rewrite guarantee as the static allow path above.
+      return handler(request);
     },
     ...orderMarkerHooks('permissions', orderMarkers),
   });
@@ -807,10 +936,18 @@ export interface BuildMiddlewareStackDeps {
   orderMarkers?: OrderMarker[];
   /** Named permission profile for the permissions layer (B7/LIA-407).
    *  Omitted => 'default' (allow-all, today's behavior); 'read-only' =>
-   *  the fail-closed read-only preset. An unrecognized name THROWS during
-   *  stack construction — before any agent exists — rather than silently
-   *  weakening the requested restriction. */
+   *  the fail-closed read-only preset; 'interactive' => read-only plus a
+   *  live-prompt 'ask' on web_search/web_fetch (Amendment 2026-07-21). An
+   *  unrecognized name THROWS during stack construction — before any agent
+   *  exists — rather than silently weakening the requested restriction. */
   permissionProfile?: string;
+  /** Interactive 'ask' channel for the permissions layer — registry +
+   *  eventSink + sessionId (see `InteractivePermissionDeps`). Omitted =>
+   *  an 'ask' verdict fails closed to deny synchronously. Supplied by
+   *  deus-native's raw-HTTP runTurn only; nested-dispatch children
+   *  deliberately never receive this (no event-forwarding route exists —
+   *  plan Non-goals). */
+  permissionInteractive?: InteractivePermissionDeps;
   /** D1 (LIA-415): the submitted prompt + backend-scoped session id for the
    *  memory layer's one-per-turn retrieval. Supplied by deus-native's
    *  runTurn ONLY for control-group turns (the retrieval hook reads the
@@ -877,6 +1014,7 @@ export function buildMiddlewareStack(
         const built = buildPermissionsMiddleware(
           deps.permissionProfile,
           deps.orderMarkers,
+          deps.permissionInteractive,
         );
         middleware.push(built.middleware);
         logs.permissions = built.log;

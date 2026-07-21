@@ -7,80 +7,39 @@ import {
   RuntimeActivityBroadcaster,
   withRuntimeActivityBroadcast,
 } from '../../src/agent-runtimes/activity-broadcaster.js';
-import type {
-  AgentRuntime,
-  PermissionDecision,
-  RunContext,
-  RunResult,
-  RuntimeCommand,
-  RuntimeEvent,
-  RuntimeEventSink,
-  RuntimeSession,
+import {
+  DENY_TIMEOUT_MS,
+  PendingPermissionRegistry,
+} from '../../src/agent-runtimes/permission-registry.js';
+import {
+  PERMISSION_DECISIONS,
+  isPermissionDecision,
+  type AgentRuntime,
+  type PermissionDecision,
+  type RunContext,
+  type RunResult,
+  type RuntimeCommand,
+  type RuntimeEvent,
+  type RuntimeEventSink,
+  type RuntimeSession,
 } from '../../src/agent-runtimes/types.js';
 
-// Mirrors the sound part of the old TUI's design
-// (docs/decisions/tui-permission-bridge.md decision #4): if nobody answers,
-// deny rather than hang forever.
-export const DENY_TIMEOUT_MS = 120_000;
-
-export const PERMISSION_DECISIONS: readonly PermissionDecision[] = [
-  'allow_once',
-  'allow_always',
-  'deny',
-];
-
-function isPermissionDecision(value: unknown): value is PermissionDecision {
-  return (
-    typeof value === 'string' &&
-    (PERMISSION_DECISIONS as readonly string[]).includes(value)
-  );
-}
+// The interactive-permission follow-up ticket promoted this spike's
+// `PendingPermissionRegistry`/`DENY_TIMEOUT_MS` into production
+// (src/agent-runtimes/permission-registry.ts) and its
+// `PERMISSION_DECISIONS`/`isPermissionDecision` next to the
+// `PermissionDecision` type itself (src/agent-runtimes/types.ts). The spike
+// now imports the single source of truth instead of defining its own copies;
+// the re-exports below keep this file's public surface (and its tests)
+// unchanged.
+export {
+  DENY_TIMEOUT_MS,
+  PendingPermissionRegistry,
+  PERMISSION_DECISIONS,
+};
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Registry pattern: Map<requestId, {resolve, timeout}>, O(1) register/resolve.
- * No lookup-index or ordering structure needed at this scale — same
- * rationale docs/decisions/deus-v2-permission-rules.md's own Design section
- * uses for its O(n)/O(1) evaluator.
- */
-export class PendingPermissionRegistry {
-  private readonly pending = new Map<
-    string,
-    {
-      resolve: (decision: PermissionDecision) => void;
-      timeout: NodeJS.Timeout;
-    }
-  >();
-
-  register(
-    requestId: string,
-    timeoutMs: number = DENY_TIMEOUT_MS,
-  ): Promise<PermissionDecision> {
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(requestId);
-        resolve('deny');
-      }, timeoutMs);
-      this.pending.set(requestId, { resolve, timeout });
-    });
-  }
-
-  /** Returns false if requestId is unknown (already resolved, timed out, or never registered). */
-  resolve(requestId: string, decision: PermissionDecision): boolean {
-    const entry = this.pending.get(requestId);
-    if (!entry) return false;
-    clearTimeout(entry.timeout);
-    this.pending.delete(requestId);
-    entry.resolve(decision);
-    return true;
-  }
-
-  size(): number {
-    return this.pending.size;
-  }
 }
 
 /**

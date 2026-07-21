@@ -392,3 +392,140 @@ replay ADR's claim/complete protocol once it is wired.
   selection seam; deciding when a turn is in plan mode is separate work.
 - No argument-sensitive, path-sensitive, wildcard/regex, or
   user/group-specific rule matching.
+
+## Amendment (2026-07-21): Interactive permission prompts for `deus chat` (follow-up ticket)
+
+This amendment governs the new follow-up ticket described by
+`LIA-466`. LIA-465
+introduced the protocol types and proved the asynchronous permission round trip
+without wiring it into a production runtime; this follow-up connects that
+mechanism to `deus chat` and the production permissions middleware (`LIA-466`).
+It does not retroactively make interactive prompts part of what
+B7/LIA-407 itself delivered.
+
+### Policy verdict rename and widening
+
+The policy evaluator's type is renamed from:
+
+```ts
+PermissionDecision = 'allow' | 'deny'
+```
+
+to:
+
+```ts
+PolicyDecision = 'allow' | 'deny' | 'ask'
+```
+
+The rename resolves the collision with LIA-465's distinct transport-level
+`PermissionDecision = 'allow_once' | 'allow_always' | 'deny'`
+(`src/agent-runtimes/types.ts:117-122`;
+`LIA-466`). The
+following policy fields change from `PermissionDecision` to `PolicyDecision`
+and therefore widen from two to three possible values:
+
+- `PermissionRule.decision`
+- `PermissionPolicy.defaultDecision`
+- `PermissionEvaluation.decision`
+
+These are the three fields presently defined against the policy evaluator's
+two-value type (`src/agent-runtimes/permission-rules.ts:39-68`), and they are
+the exact fields changed by this follow-up
+(`LIA-466`).
+
+`ask` is a deterministic policy verdict saying that execution requires an
+external decision; it does not add mutable state, transport I/O, or prompting
+to `evaluatePermission`. The evaluator remains a pure, exact-tool-name,
+first-match-wins Chain of Responsibility with the policy's explicit
+`defaultDecision` as its fallback
+(`docs/decisions/deus-v2-permission-rules.md:69-82`,
+`:180-195`). The asynchronous resolution happens afterward in the
+`wrapToolCall` adapter. `ToolCallDecisionRecord.decision` remains
+`'allow' | 'deny'`, because it records the resolved execution outcome rather
+than the preceding policy verdict
+(`LIA-466`;
+`src/agent-runtimes/middleware-stack.ts:118-134`).
+
+### Registry extension: `interactive`
+
+`PERMISSION_PROFILES` gains an additive third named profile, `interactive`.
+Under that profile, `web_search` and `web_fetch` evaluate to `ask`; the other
+four catalogued read tools evaluate to `allow`; all eleven mutation-capable
+tools evaluate to `deny`; and the profile's `defaultDecision` is `deny`
+(`LIA-466`). References in the original ADR to the registry containing "exactly
+two" profiles are therefore superseded by this amendment
+(`docs/decisions/deus-v2-permission-rules.md:84-109`;
+`src/agent-runtimes/permission-rules.ts:168-177`).
+
+This is the extension mechanism already selected by the ADR's "Registry —
+named policy lookup" design: a reviewed profile is added to
+`PERMISSION_PROFILES` without changing `evaluatePermission`'s control flow
+(`docs/decisions/deus-v2-permission-rules.md:190-195`;
+`src/agent-runtimes/permission-rules.ts:168-177`). It does not alter rule
+ordering, exact-name matching, first-match-wins precedence, or per-policy
+fallback semantics.
+
+### Narrowing the original interactive-prompt Non-Goal
+
+For this follow-up, the original Non-Goals bullet:
+
+> No implementation of HITL approve/edit/interrupt flows, interactive
+> permission prompts, or argument rewriting.
+
+(`docs/decisions/deus-v2-permission-rules.md:379-382`) is narrowed to mean:
+
+> No LangChain-HITL-based approve/edit/interrupt or interactive
+> permission-prompt flow using `interrupt()`/`Command`, and no argument
+> rewriting.
+
+The new prompt mechanism does not use LangChain's HITL machinery. LIA-465's
+code comment records the governing distinction: its human-response
+`PermissionDecision` intentionally has no `edit` variant, and the permission
+path has no dependency on LangChain's unreliable upstream HITL edit mechanism
+(`src/agent-runtimes/types.ts:117-121`). LIA-465's reconciliation further
+records that it imports or instantiates neither LangChain `interrupt()` nor
+HITL middleware, and instead resolves the terminal allow/deny outcome
+asynchronously through a Deus-owned registry
+(`scripts/spikes/lia465_protocol_boundary_permission_spike.md:41-52`).
+
+The follow-up preserves that separation by promoting the independently owned
+`PendingPermissionRegistry` — a `Map<requestId, { resolve, timeout }>` whose
+timeout resolves to deny — and awaiting it only after the pure policy
+evaluator returns `ask`
+(`scripts/spikes/lia465_protocol_boundary_permission_spike.ts:43-78`;
+`LIA-466`). Because
+this mechanism neither calls LangChain `interrupt()`/`Command` nor offers an
+`edit` outcome or reconstructs tool arguments, it does not fall under the
+narrowed prohibition. LangChain-HITL-based prompting and all argument
+rewriting remain out of scope.
+
+### Mutating-tool precondition remains unchanged
+
+The ADR's "Precondition for the first mutating-tool ticket" remains fully in
+force and is not triggered or weakened by this amendment
+(`docs/decisions/deus-v2-permission-rules.md:347-357`). This follow-up adds no
+mutating tool and expressly makes no change to the production safe-tool
+allowlist
+(`LIA-466`). The live
+boundary remains exactly:
+
+```ts
+DEUS_NATIVE_SAFE_TOOL_NAMES = ['web_search', 'web_fetch']
+```
+
+(`src/agent-runtimes/tool-broker-langchain-adapter.ts:133-144`). Any future
+ticket that makes a mutating tool reachable must still satisfy the restrictive-
+default/construction-guard precondition above and the separate replay-safety
+contract; this interactive-prompt ticket supplies neither an exception nor a
+substitute (`docs/decisions/deus-v2-permission-rules.md:359-377`).
+
+### Continuing force of B7/LIA-407
+
+This amendment belongs to the new interactive-permission follow-up ticket, not
+to B7/LIA-407's original implementation. B7/LIA-407 remains otherwise
+unchanged. Except for the expressly amended policy type/value set, named-profile
+count, and interpretation of the interactive-prompt Non-Goal, its original
+decisions, consequences, and reversibility/rollback provisions continue to
+stand as written
+(`docs/decisions/deus-v2-permission-rules.md:48-240`,
+`:303-377`).

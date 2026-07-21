@@ -511,6 +511,29 @@ describe('runtime-event normalization (exhaustive)', () => {
     ]);
   });
 
+  it('permission_request → bounded terminal-safe permission prompt data', async () => {
+    await runWithEvents([
+      {
+        type: 'permission_request',
+        requestId: 'permission-1',
+        toolName: `web_search\u001b[31m${'x'.repeat(100)}`,
+        toolInputPreview: `{"query":"${'y'.repeat(300)}"}\u001b[0m`,
+        sessionId: MINTED_ID,
+        requestedAt: '2026-07-21T00:00:00.000Z',
+      },
+    ]);
+
+    expect(events).toHaveLength(1);
+    const permission = events[0];
+    expect(permission?.kind).toBe('permission_request');
+    if (permission?.kind !== 'permission_request') return;
+    expect(permission.requestId).toBe('permission-1');
+    expect(permission.toolName.length).toBeLessThanOrEqual(60);
+    expect(permission.toolInputPreview.length).toBeLessThanOrEqual(200);
+    expect(permission.toolName).not.toContain('\u001b');
+    expect(permission.toolInputPreview).not.toContain('\u001b');
+  });
+
   it('usage is diagnostics-only: absent counts stay undefined, nothing rendered', async () => {
     const fake = makeFakeRuntime({
       events: [

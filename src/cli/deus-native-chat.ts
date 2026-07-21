@@ -88,6 +88,12 @@ export type ChatDisplayEvent =
   | { kind: 'assistant_text'; text: string }
   | { kind: 'tool_use'; label: string }
   | { kind: 'progress'; text: string }
+  | {
+      kind: 'permission_request';
+      requestId: string;
+      toolName: string;
+      toolInputPreview: string;
+    }
   | { kind: 'assistant_done' }
   | { kind: 'chat_error'; message: string };
 
@@ -280,9 +286,12 @@ export function createDeusNativeChatController(deps: {
         });
         break;
       case 'permission_request':
-        // LIA-465 spike: no interactive prompt exists in this CLI client yet —
-        // deliberately ignored (not leaked to terminal output) until a
-        // follow-up ticket wires a real UI here.
+        await onEvent({
+          kind: 'permission_request',
+          requestId: event.requestId,
+          toolName: bound(event.toolName, 60),
+          toolInputPreview: bound(event.toolInputPreview, PROGRESS_TEXT_MAX),
+        });
         break;
       default: {
         // Exhaustiveness guard: a new RuntimeEvent variant must be mapped

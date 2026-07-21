@@ -16,6 +16,8 @@
 import fs from 'fs';
 import readline from 'readline';
 
+import { DENY_TIMEOUT_MS } from '../agent-runtimes/permission-registry.js';
+import type { PermissionDecision } from '../agent-runtimes/types.js';
 import {
   nativeChatDiscoveryPath,
   parseDiscoveryRecord,
@@ -126,6 +128,10 @@ export interface ChatTransport {
     cwd: string,
     onEvent: (event: ChatDisplayEvent) => void | Promise<void>,
   ): Promise<void>;
+  respondPermission(
+    requestId: string,
+    decision: PermissionDecision,
+  ): Promise<void>;
   setPlanMode(enabled: boolean): Promise<NativeChatStatus>;
   status(): Promise<NativeChatStatus>;
   close(): Promise<void>;
@@ -135,6 +141,7 @@ const DISPLAY_KINDS = new Set([
   'assistant_text',
   'tool_use',
   'progress',
+  'permission_request',
   'assistant_done',
   'chat_error',
 ]);
@@ -155,6 +162,20 @@ export function createHttpChatTransport(
   const authHeaders = { authorization: `Bearer ${record.token}` };
 
   return {
+    async respondPermission(
+      requestId: string,
+      decision: PermissionDecision,
+    ): Promise<void> {
+      const res = await fetch(`${base}/v1/native-chat/permission-response`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({ requestId, decision }),
+      });
+      if (!res.ok) {
+        throw new Error(`permission response failed (${res.status})`);
+      }
+    },
+
     async setPlanMode(enabled: boolean): Promise<NativeChatStatus> {
       const res = await fetch(`${base}/v1/native-chat/plan`, {
         method: 'POST',
@@ -284,7 +305,8 @@ export async function runChatCli(deps: ChatCliDeps): Promise<number> {
   // Renderer state: whether assistant text is mid-line, so tool/progress
   // lines and turn completion insert clean separation.
   let lineOpen = false;
-  const render = (event: ChatDisplayEvent): void => {
+  let pendingPermissionResolve: ((raw: string) => void) | undefined;
+  const render = async (event: ChatDisplayEvent): Promise<void> => {
     switch (event.kind) {
       case 'assistant_text':
         output.write(event.text);
@@ -303,6 +325,44 @@ export async function runChatCli(deps: ChatCliDeps): Promise<number> {
           lineOpen = false;
         }
         output.write(`  ${event.text}\n`);
+        break;
+      case 'permission_request':
+        if (lineOpen) {
+          output.write('\n');
+          lineOpen = false;
+        }
+        output.write(`Tool: ${event.toolName}\n`);
+        output.write(`Input: ${event.toolInputPreview}\n`);
+        output.write(`(auto-denies in ${DENY_TIMEOUT_MS / 1_000}s)\n`);
+        await new Promise<void>((resolvePermissionPrompt) => {
+          const showPermissionPrompt = (): void => {
+            output.write('[y]es / [N]o ');
+          };
+          pendingPermissionResolve = (raw: string): void => {
+            const answer = raw.trim().toLowerCase();
+            let decision: PermissionDecision;
+            if (answer === 'y' || answer === 'yes') {
+              decision = 'allow_once';
+            } else if (answer === '' || answer === 'n' || answer === 'no') {
+              decision = 'deny';
+            } else {
+              showPermissionPrompt();
+              return;
+            }
+
+            pendingPermissionResolve = undefined;
+            output.write('\n');
+            void transport
+              .respondPermission(event.requestId, decision)
+              .catch(() => {
+                errorOutput.write(
+                  `Error: failed to send the permission response; this request will auto-deny in ${DENY_TIMEOUT_MS / 1_000}s.\n`,
+                );
+              })
+              .then(resolvePermissionPrompt);
+          };
+          showPermissionPrompt();
+        });
         break;
       case 'assistant_done':
         if (lineOpen) output.write('\n');
@@ -405,6 +465,10 @@ export async function runChatCli(deps: ChatCliDeps): Promise<number> {
     };
 
     rl.on('line', (line) => {
+      if (pendingPermissionResolve) {
+        pendingPermissionResolve(line);
+        return;
+      }
       queue.push(line);
       void pump();
     });

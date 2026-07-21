@@ -97,6 +97,7 @@ import {
   buildMiddlewareStack,
   resolveMiddlewareStackConfig,
 } from './middleware-stack.js';
+import type { PendingPermissionRegistry } from './permission-registry.js';
 import {
   buildPromptLifecycleHook,
   loadSessionOpenContext,
@@ -250,7 +251,15 @@ export class DeusNativeRuntime implements AgentRuntime {
   // this field NEVER holds the raw, unfiltered `loadAgentSpecs()` result.
   private readonly agentSpecs: ReadonlyMap<string, LoadedAgentSpec>;
 
-  constructor(private deps: ContainerRuntimeDeps) {
+  constructor(
+    private deps: ContainerRuntimeDeps,
+    // Interactive-permission follow-up (Amendment 2026-07-21 in
+    // docs/decisions/deus-v2-permission-rules.md): the process-wide
+    // pending-permission registry, threaded from the composition root via
+    // createProductionRuntimeRegistry. Optional — when absent, an 'ask'
+    // policy verdict fails closed to deny in the permissions middleware.
+    private permissionRegistry?: PendingPermissionRegistry,
+  ) {
     this.wardenRoleModels = loadWardenRoleModels();
     this.agentSpecs = loadFilteredAgentSpecs();
   }
@@ -730,6 +739,26 @@ export class DeusNativeRuntime implements AgentRuntime {
                 },
               }
             : {}),
+          // Interactive 'ask' channel (Amendment 2026-07-21): only when the
+          // composition root wired a registry. `usageEventSink` is reused
+          // as-is — it is already a transparent passthrough for every
+          // non-'usage' event, so `permission_request` flows straight to the
+          // caller's eventSink (and the activity broadcaster around it).
+          // RAW-HTTP BRANCH ONLY: nested-dispatch children
+          // (`buildChildMiddleware` below) deliberately do NOT receive this —
+          // no event-forwarding route back to the caller exists for children,
+          // so their 'ask' fails closed to deny (plan Non-goals). The
+          // cli-subprocess transport's MCP gate seam likewise has no
+          // live-prompt path (fail-closed there too).
+          ...(this.permissionRegistry !== undefined
+            ? {
+                permissionInteractive: {
+                  registry: this.permissionRegistry,
+                  eventSink: usageEventSink,
+                  sessionId: outgoingSessionId,
+                },
+              }
+            : {}),
         },
       );
 
@@ -995,6 +1024,7 @@ export class DeusNativeRuntime implements AgentRuntime {
 
 export function createDeusNativeRuntime(
   deps: ContainerRuntimeDeps,
+  permissionRegistry?: PendingPermissionRegistry,
 ): DeusNativeRuntime {
-  return new DeusNativeRuntime(deps);
+  return new DeusNativeRuntime(deps, permissionRegistry);
 }
