@@ -229,14 +229,17 @@ deus/
 │   ├── env/env                    # Copy of .env for container mounting
 │   └── ipc/                       # Container IPC (messages/, tasks/)
 │
-├── logs/                          # Runtime logs (gitignored)
-│   ├── deus.log               # Host stdout
-│   └── deus.error.log         # Host stderr
-│   # Note: Per-container logs are in groups/{folder}/logs/container-*.log
-│
-└── launchd/
-    └── com.deus.plist         # macOS service configuration
+└── logs/                          # Runtime logs (gitignored)
+    ├── deus.log               # Host stdout
+    └── deus.error.log         # Host stderr
+    # Note: Per-container logs are in groups/{folder}/logs/container-*.log
 ```
+
+There is no checked-in `launchd/` template directory — the macOS service plist
+(`com.deus-v2`, LIA-453) is generated in-memory by `setup/service.ts`'s
+`setupLaunchd()` and written straight to
+`~/Library/LaunchAgents/com.deus-v2.plist`; see [Deployment](#deployment)
+below.
 
 `store/transcripts/deus-native/` is the Deus-owned, append-only raw conversation
 source for successful completed native turns. It is distinct from LangGraph
@@ -478,16 +481,22 @@ When Deus starts, it:
    - Recovers any unprocessed messages from before shutdown
    - Starts the message polling loop
 
-### Service: com.deus
+### Service: com.deus-v2
 
-**launchd/com.deus.plist:**
+There is no checked-in plist template. `npm run setup -- --step service` runs
+`setupLaunchd()` (`setup/service.ts`), which builds the plist content inline
+and writes it directly to `~/Library/LaunchAgents/com.deus-v2.plist` — the
+label, ports, and every path are namespaced `-v2` so the service can run
+side-by-side with v1's own `com.deus` daemon on the same host without
+collision (LIA-453 Scope A). The generated plist has this shape:
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.deus</string>
+    <string>com.deus-v2</string>
     <key>ProgramArguments</key>
     <array>
         <string>{{NODE_PATH}}</string>
@@ -502,11 +511,9 @@ When Deus starts, it:
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>{{HOME}}/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{{HOME}}/.local/bin</string>
         <key>HOME</key>
         <string>{{HOME}}</string>
-        <key>ASSISTANT_NAME</key>
-        <string>Deus</string>
     </dict>
     <key>StandardOutPath</key>
     <string>{{PROJECT_ROOT}}/logs/deus.log</string>
@@ -516,20 +523,27 @@ When Deus starts, it:
 </plist>
 ```
 
+`setupLaunchd()` also calls `launchctl load` on the freshly written plist as
+part of setup, so a separate manual load step is not required. Alongside the
+main daemon, setup unconditionally installs `com.deus-v2.log-review` (own
+`~/.deus-v2` state) plus the already-namespaced scheduled jobs
+(`com.deus-v2.maintenance`, `.morning-report`, `.evolution-backup`) — see
+`docs/decisions/deus-v2-parallel-daemon-launchd.md` for the full per-job
+rollout record.
+
 ### Managing the Service
 
 ```bash
-# Install service
-cp launchd/com.deus.plist ~/Library/LaunchAgents/
+# Install + start service (writes the plist and loads it)
+npm run setup -- --step service
 
-# Start service
-launchctl load ~/Library/LaunchAgents/com.deus.plist
-
-# Stop service
-launchctl unload ~/Library/LaunchAgents/com.deus.plist
+# Stop service — KeepAlive=true (setup/service.ts) means a bare `unload` gets
+# respawned; `bootout` is the correct stop for this job:
+launchctl bootout gui/$(id -u)/com.deus-v2
+rm ~/Library/LaunchAgents/com.deus-v2.plist
 
 # Check status
-launchctl list | grep deus
+launchctl list | grep com.deus-v2
 
 # View logs
 tail -f logs/deus.log

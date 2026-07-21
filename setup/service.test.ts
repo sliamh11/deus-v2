@@ -114,6 +114,147 @@ describe('scheduled python jobs (LIA-254 generic refactor)', () => {
   });
 });
 
+describe('scheduled python jobs — interval-based (LIA-453 Scope A Phase 2)', () => {
+  const healthcheck = SCHEDULED_JOBS.find((j) => j.id === 'healthcheck');
+  const logToIssue = SCHEDULED_JOBS.find((j) => j.id === 'log-to-issue');
+
+  it('registers the healthcheck job hourly (intervalSec=3600), no hour/minute', () => {
+    expect(healthcheck).toEqual({
+      id: 'healthcheck',
+      scriptRelPath: 'scripts/healthcheck.py',
+      intervalSec: 3600,
+      description: 'Deus-v2 launchd fleet healthcheck',
+    });
+  });
+
+  it('registers the log-to-issue job every 15 minutes (intervalSec=900), no hour/minute', () => {
+    expect(logToIssue).toEqual({
+      id: 'log-to-issue',
+      scriptRelPath: 'scripts/log_to_issue.py',
+      intervalSec: 900,
+      description: 'Deus-v2 runtime-error to GH issue stub',
+    });
+  });
+
+  it('healthcheck plist emits StartInterval, not StartCalendarInterval', () => {
+    const plist = buildScheduledJobPlist(
+      healthcheck!,
+      '/home/user/deus',
+      '/home/user',
+      '/usr/bin/python3',
+    );
+    expect(plist).toContain('<string>com.deus-v2.healthcheck</string>');
+    expect(plist).toContain('<key>StartInterval</key>');
+    expect(plist).toContain('<integer>3600</integer>');
+    expect(plist).not.toContain('StartCalendarInterval');
+    expect(plist).toContain('/home/user/deus/scripts/healthcheck.py');
+    expect(plist).toContain('/home/user/deus/logs/healthcheck.log');
+  });
+
+  it('log-to-issue plist emits StartInterval at 900s, not StartCalendarInterval', () => {
+    const plist = buildScheduledJobPlist(
+      logToIssue!,
+      '/home/user/deus',
+      '/home/user',
+      '/usr/bin/python3',
+    );
+    expect(plist).toContain('<string>com.deus-v2.log-to-issue</string>');
+    expect(plist).toContain('<key>StartInterval</key>');
+    expect(plist).toContain('<integer>900</integer>');
+    expect(plist).not.toContain('StartCalendarInterval');
+    expect(plist).toContain('/home/user/deus/scripts/log_to_issue.py');
+    expect(plist).toContain('/home/user/deus/logs/log-to-issue.log');
+  });
+
+  it('daily jobs (maintenance) are unaffected — still emit StartCalendarInterval, never StartInterval', () => {
+    const maintenance = SCHEDULED_JOBS.find((j) => j.id === 'maintenance')!;
+    const plist = buildScheduledJobPlist(
+      maintenance,
+      '/home/user/deus',
+      '/home/user',
+      '/usr/bin/python3',
+    );
+    expect(plist).toContain('<key>StartCalendarInterval</key>');
+    expect(plist).not.toContain('StartInterval');
+  });
+});
+
+describe('scheduled job generation — interval-based systemd/Windows (LIA-453 Scope A Phase 2)', () => {
+  // Local mirrors of the interval branches inside installScheduledJobLinux /
+  // installScheduledJobWindows — same indirection the "Maintenance service
+  // generation" describe block below already uses for the daily case, since
+  // those installers aren't exported and have real systemctl/schtasks side
+  // effects against the live host.
+  function generateIntervalSystemdTimer(
+    intervalSec: number,
+    description: string,
+  ): string {
+    return `[Unit]
+Description=${description} timer
+
+[Timer]
+OnUnitActiveSec=${intervalSec}
+Persistent=true
+
+[Install]
+WantedBy=timers.target`;
+  }
+
+  function windowsIntervalScheduleArgs(intervalSec: number): string[] {
+    return ['/SC', 'MINUTE', '/MO', String(Math.round(intervalSec / 60))];
+  }
+
+  it('healthcheck systemd timer uses OnUnitActiveSec=3600, not OnCalendar', () => {
+    const timer = generateIntervalSystemdTimer(
+      3600,
+      'Deus-v2 launchd fleet healthcheck',
+    );
+    expect(timer).toContain('OnUnitActiveSec=3600');
+    expect(timer).not.toContain('OnCalendar');
+  });
+
+  it('log-to-issue systemd timer uses OnUnitActiveSec=900, not OnCalendar', () => {
+    const timer = generateIntervalSystemdTimer(
+      900,
+      'Deus-v2 runtime-error to GH issue stub',
+    );
+    expect(timer).toContain('OnUnitActiveSec=900');
+    expect(timer).not.toContain('OnCalendar');
+  });
+
+  it('daily jobs keep OnCalendar, never OnUnitActiveSec', () => {
+    const timer = `[Unit]
+Description=Deus KB maintenance timer
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target`;
+    expect(timer).toContain('OnCalendar=*-*-* 04:30:00');
+    expect(timer).not.toContain('OnUnitActiveSec');
+  });
+
+  it('healthcheck Windows task uses /SC MINUTE /MO 60 (3600s / 60), not /SC DAILY', () => {
+    expect(windowsIntervalScheduleArgs(3600)).toEqual([
+      '/SC',
+      'MINUTE',
+      '/MO',
+      '60',
+    ]);
+  });
+
+  it('log-to-issue Windows task uses /SC MINUTE /MO 15 (900s / 60), not /SC DAILY', () => {
+    expect(windowsIntervalScheduleArgs(900)).toEqual([
+      '/SC',
+      'MINUTE',
+      '/MO',
+      '15',
+    ]);
+  });
+});
+
 // Helper: generate a plist string the same way service.ts does
 function generatePlist(
   nodePath: string,
@@ -223,6 +364,110 @@ describe('plist generation', () => {
     );
     expect(plist).toContain('deus.log');
     expect(plist).toContain('deus.error.log');
+  });
+});
+
+// @oracle
+// LIA-453 Scope A, Phase 1 — independent oracle for the "channels stay off"
+// invariant on the launchd plist (plan-review finding
+// `independent-oracle-high-blast-radius`, `oracle-rules.md` convention).
+//
+// Contract under test (from the plan, not from reading setupLaunchd's body):
+// setupLaunchd's generated plist's EnvironmentVariables dict must NEVER
+// contain a channel bot-token key (TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN, or
+// similar for any other channel), even after Phase 1 adds
+// ODYSSEUS_HTTP_ENABLED=1, INGRESS_GATEWAY_ENABLED=1, and
+// INGRESS_TUNNEL_ENABLED=1 to that same dict. Channels stay deliberately off
+// in Phase 1 — only in-process services (credential-proxy, tool-proxy,
+// Odysseus HTTP, ingress-gateway, ngrok) come online.
+//
+// This test exercises `generatePlist` above, the test file's own
+// byte-for-byte mirror of setupLaunchd's plist template (see its "generate a
+// plist string the same way service.ts does" comment) — the same indirection
+// every other test in the `describe('plist generation')` block above already
+// relies on, and the only safe way to inspect plist content without
+// exercising setupLaunchd's real `fs.writeFileSync`/`execSync('launchctl
+// load ...')` side effects against this live host (setupLaunchd is not
+// exported, and both plan-review and orchestration-rules.md flag this exact
+// change as touching a running daemon). Do NOT loosen this test to make it
+// pass a real violation — a RED here means fix the implementation.
+//
+// A leading underscore marks env vars this test must never approve, no
+// matter how the key is spelled — every known/likely channel bot-token
+// pattern, plus a generic catch-all for any future channel.
+const FORBIDDEN_CHANNEL_TOKEN_KEY_PATTERNS: RegExp[] = [
+  /TELEGRAM_BOT_TOKEN/,
+  /SLACK_BOT_TOKEN/,
+  /DISCORD_BOT_TOKEN/,
+  /WHATSAPP_(BOT_)?TOKEN/,
+  /GMAIL_(BOT_)?TOKEN/,
+  /\b[A-Z][A-Z0-9]*_BOT_TOKEN\b/, // generic: <ANYTHING>_BOT_TOKEN
+  /\bCHANNEL_[A-Z0-9_]*TOKEN\b/, // generic: CHANNEL_*_TOKEN
+];
+
+describe('setupLaunchd EnvironmentVariables — channels-stay-off safety net (LIA-453 Scope A Phase 1)', () => {
+  it('never emits a channel bot-token env var key in the current, unmodified plist', () => {
+    const plist = generatePlist(
+      '/usr/local/bin/node',
+      '/home/user/deus-v2',
+      '/home/user',
+    );
+    for (const pattern of FORBIDDEN_CHANNEL_TOKEN_KEY_PATTERNS) {
+      expect(plist).not.toMatch(pattern);
+    }
+  });
+
+  it('still never emits a channel bot-token env var key once the Phase 1 flags are present', () => {
+    // Simulates Phase 1's stated change (three new always-on flags added to
+    // EnvironmentVariables) without depending on the implementation existing
+    // yet — this is the oracle-author's own reconstruction of the plan's
+    // contract, kept separate from `generatePlist` so this test doesn't
+    // silently start passing vacuously just because nothing changed there.
+    const plistWithPhase1Flags = generatePlist(
+      '/usr/local/bin/node',
+      '/home/user/deus-v2',
+      '/home/user',
+    ).replace(
+      '<key>PATH</key>',
+      [
+        '<key>ODYSSEUS_HTTP_ENABLED</key>',
+        '        <string>1</string>',
+        '        <key>INGRESS_GATEWAY_ENABLED</key>',
+        '        <string>1</string>',
+        '        <key>INGRESS_TUNNEL_ENABLED</key>',
+        '        <string>1</string>',
+        '        <key>PATH</key>',
+      ].join('\n'),
+    );
+
+    // Sanity: the splice actually landed (guards against a no-op replace()
+    // silently making this test meaningless).
+    expect(plistWithPhase1Flags).toContain('ODYSSEUS_HTTP_ENABLED');
+    expect(plistWithPhase1Flags).toContain('INGRESS_GATEWAY_ENABLED');
+    expect(plistWithPhase1Flags).toContain('INGRESS_TUNNEL_ENABLED');
+
+    for (const pattern of FORBIDDEN_CHANNEL_TOKEN_KEY_PATTERNS) {
+      expect(plistWithPhase1Flags).not.toMatch(pattern);
+    }
+  });
+
+  it('would catch a regression — sanity check that the assertion logic is not vacuous', () => {
+    // Not a "does setupLaunchd violate the contract" test — an oracle that
+    // can never go red is worthless. Proves the pattern list above actually
+    // fires on the exact violation the plan warns against.
+    const violatingPlist = generatePlist(
+      '/usr/local/bin/node',
+      '/home/user/deus-v2',
+      '/home/user',
+    ).replace(
+      '<key>PATH</key>',
+      '<key>TELEGRAM_BOT_TOKEN</key>\n        <string>fake</string>\n        <key>PATH</key>',
+    );
+
+    const violated = FORBIDDEN_CHANNEL_TOKEN_KEY_PATTERNS.some((pattern) =>
+      pattern.test(violatingPlist),
+    );
+    expect(violated).toBe(true);
   });
 });
 
