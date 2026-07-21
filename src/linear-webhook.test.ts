@@ -25,11 +25,10 @@ import {
   computeScopeLabelChanges,
   extractScopeBlockFromDescription,
   computeTerminalLabelCleanup,
-  retryWithBackoff,
-  _setSleepFnForTests,
   runInlineCompletionCheck,
   shouldSyncVaultForTeam,
 } from './linear-webhook.js';
+import { retryWithBackoff, _setSleepFnForTests } from './webhook-retry.js';
 import { RetryableError, UserError, FatalError } from './errors/index.js';
 
 beforeEach(() => {
