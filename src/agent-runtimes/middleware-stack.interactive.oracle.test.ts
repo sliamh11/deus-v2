@@ -180,7 +180,9 @@ describe("@oracle interactive 'ask' branch -- deny path never delegates, produce
       (e) => e.type === 'permission_request',
     );
     expect(permissionRequestEvents).toHaveLength(1);
-    expect(permissionRequestEvents[0]).toMatchObject({ toolName: 'web_search' });
+    expect(permissionRequestEvents[0]).toMatchObject({
+      toolName: 'web_search',
+    });
 
     // @oracle: "before resolution the handler has zero calls"
     expect(handlerCallsObservedAtEventTime).toBe(0);

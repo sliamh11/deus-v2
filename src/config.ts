@@ -283,7 +283,7 @@ export const DEUS_NATIVE_TRANSPORT: 'raw-http' | 'cli-subprocess' =
 // (e.g. to 'interactive' for live Y/N prompts on web_search/web_fetch).
 // Deliberately NOT validated here — resolvePermissionProfile
 // (agent-runtimes/permission-rules.ts) is the canonical accepted-name gate
-// and throws visibly on an unknown name at stack construction.
+// and throws visibly on an unknown name at stack construction. LIA-466.
 export const DEUS_NATIVE_CLI_PERMISSION_PROFILE: string | undefined =
   process.env.DEUS_NATIVE_CLI_PERMISSION_PROFILE ||
   envConfig.DEUS_NATIVE_CLI_PERMISSION_PROFILE ||

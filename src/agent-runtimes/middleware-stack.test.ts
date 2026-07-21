@@ -635,7 +635,7 @@ describe("permissions middleware — interactive 'ask' branch", () => {
     ]);
   });
 
-  it("allow_always also delegates (treated identically to allow_once this ticket — no persistence yet)", async () => {
+  it('allow_always also delegates (treated identically to allow_once this ticket — no persistence yet)', async () => {
     const { registry, events, middleware, log } = buildInteractive();
     const request = makeToolCallRequest('web_fetch', { url: 'https://x' });
     const handler = vi.fn(
@@ -724,7 +724,10 @@ describe("permissions middleware — interactive 'ask' branch", () => {
       );
       const handler = vi.fn(
         () =>
-          new ToolMessage({ content: 'ran', tool_call_id: 'call_ask_nodeps_1' }),
+          new ToolMessage({
+            content: 'ran',
+            tool_call_id: 'call_ask_nodeps_1',
+          }),
       );
 
       // Under fake timers, an accidental wait on the 120s auto-deny would

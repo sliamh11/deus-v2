@@ -156,7 +156,10 @@ describe('@oracle interactive profile -- live safe-tool boundary is unchanged (A
     // (or narrowed) safe-tool surface introduced alongside this ticket would
     // be a scope violation this test catches independent of the profile
     // logic below.
-    expect([...DEUS_NATIVE_SAFE_TOOL_NAMES]).toEqual(['web_search', 'web_fetch']);
+    expect([...DEUS_NATIVE_SAFE_TOOL_NAMES]).toEqual([
+      'web_search',
+      'web_fetch',
+    ]);
   });
 });
 
@@ -215,7 +218,11 @@ describe("@oracle interactive profile -- matches 'read-only' exactly outside the
     // out from under this file's hardcoded classification.
     const liveToolNames = getOpenAIToolDefinitions().map((d) => d.name);
     expect(liveToolNames.sort()).toEqual(
-      [...ASK_TOOL_NAMES, ...OTHER_READ_TOOL_NAMES, ...MUTATION_TOOL_NAMES].sort(),
+      [
+        ...ASK_TOOL_NAMES,
+        ...OTHER_READ_TOOL_NAMES,
+        ...MUTATION_TOOL_NAMES,
+      ].sort(),
     );
   });
 
@@ -225,7 +232,10 @@ describe("@oracle interactive profile -- matches 'read-only' exactly outside the
       // @oracle: plan Scope -- "everything else matches read-only exactly".
       // ADR amendment -- "the other four catalogued read tools evaluate to
       // allow".
-      const interactiveResult = evaluatePermission(interactivePolicy(), toolName);
+      const interactiveResult = evaluatePermission(
+        interactivePolicy(),
+        toolName,
+      );
       const readOnlyResult = evaluatePermission(readOnlyPolicy(), toolName);
       expect(interactiveResult.decision).toBe('allow');
       expect(interactiveResult.decision).toBe(readOnlyResult.decision);
@@ -237,7 +247,10 @@ describe("@oracle interactive profile -- matches 'read-only' exactly outside the
     (toolName) => {
       // @oracle: ADR amendment -- "all eleven mutation-capable tools
       // evaluate to deny".
-      const interactiveResult = evaluatePermission(interactivePolicy(), toolName);
+      const interactiveResult = evaluatePermission(
+        interactivePolicy(),
+        toolName,
+      );
       const readOnlyResult = evaluatePermission(readOnlyPolicy(), toolName);
       expect(interactiveResult.decision).toBe('deny');
       expect(interactiveResult.decision).toBe(readOnlyResult.decision);
@@ -254,7 +267,10 @@ describe("@oracle interactive profile -- matches 'read-only' exactly outside the
     const askSet = new Set<string>(ASK_TOOL_NAMES);
     for (const toolName of liveToolNames) {
       if (askSet.has(toolName)) continue;
-      const interactiveResult = evaluatePermission(interactivePolicy(), toolName);
+      const interactiveResult = evaluatePermission(
+        interactivePolicy(),
+        toolName,
+      );
       const readOnlyResult = evaluatePermission(readOnlyPolicy(), toolName);
       expect(
         interactiveResult.decision,
