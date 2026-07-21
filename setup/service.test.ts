@@ -284,6 +284,16 @@ function generatePlist(
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
         <key>HOME</key>
         <string>${homeDir}</string>
+        <key>ODYSSEUS_HTTP_ENABLED</key>
+        <string>1</string>
+        <key>INGRESS_GATEWAY_ENABLED</key>
+        <string>1</string>
+        <key>INGRESS_TUNNEL_ENABLED</key>
+        <string>1</string>
+        <key>DEUS_AGENT_BACKEND</key>
+        <string>deus-native</string>
+        <key>DEUS_NATIVE_TRANSPORT</key>
+        <string>cli-subprocess</string>
     </dict>
     <key>StandardOutPath</key>
     <string>${projectRoot}/logs/deus.log</string>
@@ -364,6 +374,27 @@ describe('plist generation', () => {
     );
     expect(plist).toContain('deus.log');
     expect(plist).toContain('deus.error.log');
+  });
+
+  it('sets DEUS_AGENT_BACKEND=deus-native and DEUS_NATIVE_TRANSPORT=cli-subprocess', () => {
+    // Regression guard: the old Scope-B nohup launcher (~/bin/deus-v2)
+    // always exported these two before spawning the daemon directly. The
+    // launchd plist generator (added in LIA-453) never carried them over --
+    // without them the daemon silently falls back to the plain `claude`
+    // backend (src/config.ts's default) instead of the deus-native runtime
+    // this whole migration is about, and instead of the cli-subprocess
+    // transport that was rigorously validated (18/18) against the raw-HTTP
+    // 429 blocker this same plist's flags exist to work around. Caught only
+    // by actually running the live daemon and inspecting its logs.
+    const plist = generatePlist(
+      '/usr/local/bin/node',
+      '/home/user/deus',
+      '/home/user',
+    );
+    expect(plist).toContain('<key>DEUS_AGENT_BACKEND</key>');
+    expect(plist).toContain('<string>deus-native</string>');
+    expect(plist).toContain('<key>DEUS_NATIVE_TRANSPORT</key>');
+    expect(plist).toContain('<string>cli-subprocess</string>');
   });
 });
 

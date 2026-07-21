@@ -124,6 +124,10 @@ function setupLaunchd(
         <string>1</string>
         <key>INGRESS_TUNNEL_ENABLED</key>
         <string>1</string>
+        <key>DEUS_AGENT_BACKEND</key>
+        <string>deus-native</string>
+        <key>DEUS_NATIVE_TRANSPORT</key>
+        <string>cli-subprocess</string>
     </dict>
     <key>StandardOutPath</key>
     <string>${projectRoot}/logs/deus.log</string>
