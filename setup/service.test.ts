@@ -12,6 +12,9 @@ import { SCHEDULED_JOBS, buildScheduledJobPlist } from './service.js';
 describe('scheduled python jobs (LIA-254 generic refactor)', () => {
   const maintenance = SCHEDULED_JOBS.find((j) => j.id === 'maintenance');
   const morning = SCHEDULED_JOBS.find((j) => j.id === 'morning-report');
+  const evolutionBackup = SCHEDULED_JOBS.find(
+    (j) => j.id === 'evolution-backup',
+  );
 
   it('preserves the maintenance job spec (regression guard for the refactor)', () => {
     // The 04:30 KB maintenance job is live-critical — the generic extraction
@@ -62,6 +65,52 @@ describe('scheduled python jobs (LIA-254 generic refactor)', () => {
     expect(plist).toContain('<integer>7</integer>'); // hour
     expect(plist).toContain('<integer>0</integer>'); // minute
     expect(plist).toContain('/home/user/deus/logs/morning-report.log');
+  });
+
+  it('registers the evolution-backup job at 04:20 (LIA-453)', () => {
+    expect(evolutionBackup).toEqual({
+      id: 'evolution-backup',
+      scriptRelPath: 'scripts/evolution_backup.py',
+      hour: 4,
+      minute: 20,
+      description: 'Deus evolution DB backup',
+    });
+  });
+
+  it('evolution-backup plist carries the -v2 label, never v1 com.deus.evolution-backup', () => {
+    const plist = buildScheduledJobPlist(
+      evolutionBackup!,
+      '/home/user/deus',
+      '/home/user',
+      '/usr/bin/python3',
+    );
+    expect(plist).toContain('<string>com.deus-v2.evolution-backup</string>');
+    // Hard guard against v1-label leakage: the unsuffixed v1 label must never
+    // appear as a whole <string> value.
+    expect(plist).not.toContain('<string>com.deus.evolution-backup</string>');
+    expect(plist).toContain('/home/user/deus/scripts/evolution_backup.py');
+    expect(plist).toContain('/home/user/deus/logs/evolution-backup.log');
+  });
+
+  it('evolution-backup schedule (04:20) is distinct from v1 evolution-backup (04:00)', () => {
+    // v1's com.deus.evolution-backup fires at 04:00; v2 must not collide.
+    expect(evolutionBackup!.hour).toBe(4);
+    expect(evolutionBackup!.minute).toBe(20);
+    expect(evolutionBackup!.minute).not.toBe(0); // v1's minute
+  });
+
+  it('no scheduled job label collides with its unsuffixed v1 twin', () => {
+    // Every com.deus-v2.<id> must differ from the v1 com.deus.<id> string.
+    for (const spec of SCHEDULED_JOBS) {
+      const plist = buildScheduledJobPlist(
+        spec,
+        '/home/user/deus',
+        '/home/user',
+        '/usr/bin/python3',
+      );
+      expect(plist).toContain(`<string>com.deus-v2.${spec.id}</string>`);
+      expect(plist).not.toContain(`<string>com.deus.${spec.id}</string>`);
+    }
   });
 });
 
