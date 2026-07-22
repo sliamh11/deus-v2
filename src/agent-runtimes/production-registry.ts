@@ -2,6 +2,7 @@ import {
   RuntimeActivityBroadcaster,
   withRuntimeActivityBroadcast,
 } from './activity-broadcaster.js';
+import type { SessionAlwaysAllowGrants } from './always-allow-grants.js';
 import { createClaudeRuntime } from './claude-backend.js';
 import type { ContainerRuntimeDeps } from './container-backend.js';
 import { createDeusNativeRuntime } from './deus-native-backend.js';
@@ -21,11 +22,18 @@ import { initRuntimeRegistry, type RuntimeRegistry } from './registry.js';
  * registry for interactive 'ask' prompts (Amendment 2026-07-21 in
  * docs/decisions/deus-v2-permission-rules.md). Threaded only into the
  * deus-native runtime; when omitted, an 'ask' verdict fails closed to deny.
+ *
+ * `alwaysAllowGrants` (optional): the process-wide session-scoped
+ * `allow_always` grant store (2026-07-22 Amendment). Threaded only into the
+ * deus-native runtime, mirroring `permissionRegistry`'s wiring exactly; when
+ * omitted, `allow_always` behaves identically to `allow_once` (no
+ * persistence) — today's pre-amendment behavior.
  */
 export function createProductionRuntimeRegistry(
   deps: ContainerRuntimeDeps,
   activityBroadcaster: RuntimeActivityBroadcaster,
   permissionRegistry?: PendingPermissionRegistry,
+  alwaysAllowGrants?: SessionAlwaysAllowGrants,
 ): RuntimeRegistry {
   const registry = initRuntimeRegistry();
 
@@ -34,7 +42,7 @@ export function createProductionRuntimeRegistry(
   registry.register(createLlamaCppRuntime(deps));
   registry.register(
     withRuntimeActivityBroadcast(
-      createDeusNativeRuntime(deps, permissionRegistry),
+      createDeusNativeRuntime(deps, permissionRegistry, alwaysAllowGrants),
       activityBroadcaster,
     ),
   );

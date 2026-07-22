@@ -83,6 +83,7 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { processImage } from './image.js';
 import { logger } from './logger.js';
 import { RuntimeActivityBroadcaster } from './agent-runtimes/activity-broadcaster.js';
+import { SessionAlwaysAllowGrants } from './agent-runtimes/always-allow-grants.js';
 import { PendingPermissionRegistry } from './agent-runtimes/permission-registry.js';
 import { createProductionRuntimeRegistry } from './agent-runtimes/production-registry.js';
 import {
@@ -190,11 +191,18 @@ async function main(): Promise<void> {
   // instance. Unanswered requests self-clean via the registry's 120s
   // auto-deny timeout, so no explicit close is needed at shutdown.
   const permissionRegistry = new PendingPermissionRegistry();
+  // Session-scoped `allow_always` grants (2026-07-22 Amendment to
+  // docs/decisions/deus-v2-permission-rules.md): same process-wide singleton
+  // posture as `permissionRegistry` above — `buildPermissionsMiddleware` is
+  // rebuilt fresh every turn, so the grant store must outlive any one turn
+  // and be shared across the whole daemon, not per-turn-local.
+  const alwaysAllowGrants = new SessionAlwaysAllowGrants();
 
   const registry = createProductionRuntimeRegistry(
     backendDeps,
     activityBroadcaster,
     permissionRegistry,
+    alwaysAllowGrants,
   );
   logger.info({ backends: registry.list() }, 'Backend registry initialized');
 
