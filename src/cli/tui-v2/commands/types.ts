@@ -49,7 +49,7 @@
  *   Deus's `/plan` has no approved-plan-file concept to copy — see
  *   `planCommand.ts`'s header in this directory for the full scoping note).
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
+ * See LIA-473's plan build-sequence
  * step 9.
  */
 

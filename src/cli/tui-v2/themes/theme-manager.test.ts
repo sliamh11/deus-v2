@@ -1,6 +1,6 @@
 /**
  * Basic unit tests for the adapted theme-manager.ts (build-sequence step 3,
- * see /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md). Covers what
+ * see LIA-473's plan). Covers what
  * survived the port unchanged (active-theme selection, terminal-background
  * interpolation, settings-driven custom themes, NO_COLOR) — not a re-port of
  * gemini-cli's own theme-manager.test.ts, which also covered the

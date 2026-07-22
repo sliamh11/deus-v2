@@ -22,7 +22,7 @@
  * default theme comes from the real, already-ported
  * `src/cli/tui-v2/themes/theme-manager.ts` (build-sequence step 3).
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
+ * See LIA-473's plan build-sequence
  * step 4.
  */
 

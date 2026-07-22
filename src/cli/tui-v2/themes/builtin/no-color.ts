@@ -8,7 +8,7 @@
  * choice. Deleting it would silently drop NO_COLOR support rather than
  * "not port a builtin palette."
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
+ * See LIA-473's plan build-sequence
  * step 3.
  */
 

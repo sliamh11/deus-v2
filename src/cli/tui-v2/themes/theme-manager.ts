@@ -48,7 +48,7 @@
  * single-name comparison since there is no separate light variant to pair
  * against.
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
+ * See LIA-473's plan build-sequence
  * step 3.
  */
 

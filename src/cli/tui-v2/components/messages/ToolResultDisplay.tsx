@@ -32,7 +32,7 @@
  * Wiring a real producer needs a `ChatDisplayEvent`/`RuntimeEvent`-level
  * change — out of scope here, and explicitly a non-goal of
  * `deus-native-chat.ts` today. Exercised only by this file's own tests
- * until that backend capability lands.
+ * until that backend capability lands. Tracked in LIA-474.
  */
 
 import type React from 'react';

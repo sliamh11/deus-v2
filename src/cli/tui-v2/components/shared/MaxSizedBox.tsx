@@ -29,7 +29,7 @@
  * of Gemini's `theme.text.secondary` import -- same semantic token, real
  * Deus source.
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
+ * See LIA-473's plan build-sequence
  * step 4.
  */
 

@@ -14,7 +14,7 @@
  *    `../constants.js`, which bundles ~30 unrelated constants for components
  *    outside this port's scope.
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
+ * See LIA-473's plan build-sequence
  * step 3.
  */
 

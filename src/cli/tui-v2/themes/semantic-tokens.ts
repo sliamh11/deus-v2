@@ -4,7 +4,7 @@
  * needed — this file's only import (`./theme.js`) resolves identically in
  * Deus's layout since theme.ts sits alongside it here too.
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
+ * See LIA-473's plan build-sequence
  * step 3.
  */
 

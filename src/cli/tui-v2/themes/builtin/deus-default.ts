@@ -1,7 +1,7 @@
 /**
  * Deus's own default theme — new, not a port. Written per build-sequence
  * step 3's explicit creative license
- * (/Users/liam10play/.claude/plans/deus-tui-gemini-fork.md: "a reasonable,
+ * (LIA-473's plan: "a reasonable,
  * professional-looking default palette is your creative call ... go wild, be
  * creative, just keep it coherent and readable in both light and dark
  * terminal backgrounds") to replace all 19 of gemini-cli's deleted
@@ -47,7 +47,7 @@
  * clash professional dark themes (GitHub Dark, Tokyo Night, One Dark) all
  * avoid for the same reason.
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
+ * See LIA-473's plan build-sequence
  * step 3.
  */
 

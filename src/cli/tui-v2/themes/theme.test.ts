@@ -1,6 +1,6 @@
 /**
  * Basic unit tests for the ported theme.ts (build-sequence step 3, see
- * /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md). Not a re-port of
+ * LIA-473's plan). Not a re-port of
  * gemini-cli's own theme.test.ts — a focused check that the color-resolution
  * primitives (unchanged donor logic) still behave post-port, and that
  * Theme/createCustomTheme (whose CustomTheme type is now locally defined

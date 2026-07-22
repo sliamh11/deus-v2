@@ -34,8 +34,9 @@
  *    `@jrichman/ink@6.6.9` (confirmed: `node_modules/ink/build/index.d.ts`
  *    exports it directly) — kept unchanged, no adaptation needed.
  *
- * See /Users/liam10play/.claude/plans/deus-tui-gemini-fork.md build-sequence
- * step 7.
+ * See LIA-473's plan build-sequence
+ * step 7. NOTE: no live production caller yet — ChatDisplayEvent has no
+ * diff-carrying variant today. Tracked in LIA-474.
  */
 
 import type React from 'react';
