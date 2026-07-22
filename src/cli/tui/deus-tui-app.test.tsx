@@ -1,6 +1,6 @@
 /**
  * Component-level tests for `deus tui`'s root `<App>` (Track B step 14 of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md) via
+ * LIA-471's spec) via
  * `ink-testing-library`'s `render()`/`lastFrame()`, with a fake
  * `ChatTransport` injected through the same DI seam
  * `deus-native-chat-client.test.ts` already uses for the readline client —
@@ -26,6 +26,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from 'ink-testing-library';
 import type { ReactElement } from 'react';
 
+import { DENY_TIMEOUT_MS } from '../../agent-runtimes/permission-registry.js';
 import type { PermissionDecision } from '../../agent-runtimes/types.js';
 import type {
   ChatDisplayEvent,
@@ -405,6 +406,94 @@ describe('<App> — permission modal', () => {
     expect(fake.permissionResponses).toEqual([
       { requestId: 'permission-2', decision: 'deny' },
     ]);
+  });
+
+  it('sends allow_always on "a" (the always-allow shortcut)', async () => {
+    const fake = fakeTransport({
+      turnEvents: [
+        [
+          {
+            kind: 'permission_request',
+            requestId: 'permission-3',
+            toolName: 'web_search',
+            toolInputPreview: '{"query":"weather"}',
+          },
+          { kind: 'assistant_text', text: 'turn continued' },
+          { kind: 'assistant_done' },
+        ],
+      ],
+    });
+    const instance = await mountApp(
+      <App
+        transport={fake.transport}
+        cwd="/client/cwd"
+        initialStatus={makeStatus()}
+        onExit={() => {}}
+      />,
+    );
+
+    typeText(instance.stdin, 'search please');
+    instance.stdin.write('\r');
+    await waitFor(
+      () => (instance.lastFrame() ?? '').includes('Permission requested'),
+      'permission modal shown',
+    );
+
+    instance.stdin.write('a');
+
+    await waitFor(
+      () => fake.permissionResponses.length > 0,
+      'permission response sent',
+    );
+    expect(fake.permissionResponses).toEqual([
+      { requestId: 'permission-3', decision: 'allow_always' },
+    ]);
+
+    await waitFor(
+      () => (instance.lastFrame() ?? '').includes('turn continued'),
+      'turn resumed after the answer',
+    );
+    expect(instance.lastFrame()).not.toContain('Permission requested');
+  });
+
+  it('renders a transcript error when respondPermission rejects, without blocking the auto-deny timer', async () => {
+    const fake = fakeTransport({
+      turnEvents: [
+        [
+          {
+            kind: 'permission_request',
+            requestId: 'permission-4',
+            toolName: 'web_fetch',
+            toolInputPreview: '{"url":"https://example.com"}',
+          },
+          { kind: 'assistant_done' },
+        ],
+      ],
+      failPermissionResponse: true,
+    });
+    const instance = await mountApp(
+      <App
+        transport={fake.transport}
+        cwd="/client/cwd"
+        initialStatus={makeStatus()}
+        onExit={() => {}}
+      />,
+    );
+
+    typeText(instance.stdin, 'fetch please');
+    instance.stdin.write('\r');
+    await waitFor(
+      () => (instance.lastFrame() ?? '').includes('Permission requested'),
+      'permission modal shown',
+    );
+
+    instance.stdin.write('y');
+
+    const expectedError = `failed to send the permission response; this request will auto-deny in ${DENY_TIMEOUT_MS / 1_000}s.`;
+    await waitFor(
+      () => (instance.lastFrame() ?? '').includes(expectedError),
+      'transcript error line for the failed permission response',
+    );
   });
 });
 

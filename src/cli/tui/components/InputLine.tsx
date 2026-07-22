@@ -1,6 +1,6 @@
 /**
  * Controlled single-line text input for `deus tui` (Track B step 5 of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md). Deliberately
+ * LIA-471's spec). Deliberately
  * "dumb": it captures raw keystrokes into a controlled `value` and reports
  * Enter (`onSubmit`) or `/` on an empty line (`onOpenPalette`) upward — it
  * does NOT itself interpret `/plan on|off`, `/status`, `/exit`, `/quit`.

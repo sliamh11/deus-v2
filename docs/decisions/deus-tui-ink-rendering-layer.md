@@ -5,7 +5,7 @@
 **Scope:** `src/cli/tui/`, `deus-cmd.sh`, `deus-cmd.ps1`, `tsconfig.json`,
 `vitest.config.ts`, `package.json`, `tests/test_session_type_contract.py`,
 `docs/decisions/tui-archival.md`, `docs/agent-agnostic-debt.md`
-**Ticket:** Track B of `/Users/liam10play/.claude/plans/expressive-foraging-reef.md`
+**Ticket:** LIA-471
 **Related:**
 
 - [tui-archival.md](tui-archival.md) — archived the prior Rust TUI (LIA-389)

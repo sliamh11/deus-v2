@@ -1,6 +1,6 @@
 /**
  * Root `<App>` component for `deus tui` (Track B steps 5-8 of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md) and
+ * LIA-471's spec) and
  * `launchTuiApp`, the real `LaunchTuiApp` `deus-tui-entry.ts` wires in.
  *
  * Owns the transport (`ChatTransport` from `deus-native-chat-client.ts`,

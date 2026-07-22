@@ -1,6 +1,6 @@
 /**
  * Isolated, security-adjacent keymap for the `deus tui` permission modal
- * (Track B of /Users/liam10play/.claude/plans/expressive-foraging-reef.md).
+ * (Track B of LIA-471's spec).
  * A wrong mapping here could silently turn an intended
  * deny into `allow_always`, so this stays a small, standalone pure function
  * with no Ink/React dependency — independently oracle-tested (see the

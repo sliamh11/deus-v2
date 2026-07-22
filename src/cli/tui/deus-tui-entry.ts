@@ -1,6 +1,6 @@
 /**
  * `deus tui` process entrypoint (Track B of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md,
+ * LIA-471's spec,
  * deus-tui-ink-rendering branch). This is the compiled executable the
  * shell/PowerShell launchers will
  * `exec` into (mirroring `deus-cmd.sh`'s existing `chat)` case).

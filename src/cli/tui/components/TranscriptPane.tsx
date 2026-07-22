@@ -1,6 +1,6 @@
 /**
  * Scrollable transcript log for `deus tui` (Track B step 5 of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md) — one row per
+ * LIA-471's spec) — one row per
  * `TranscriptEntry` (already produced by `deus-tui-state.ts`'s reducer from
  * the same `ChatDisplayEvent` union the readline client renders). This is a
  * JSX-list re-expression of the switch in `deus-native-chat-client.ts`'s

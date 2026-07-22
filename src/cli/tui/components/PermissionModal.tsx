@@ -1,6 +1,6 @@
 /**
  * Permission-request modal for `deus tui` (Track B step 5 of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md). Renders the
+ * LIA-471's spec). Renders the
  * same `toolName`/`toolInputPreview` fields the readline client prints
  * (`deus-native-chat-client.ts:334-335`), plus a LIVE `DENY_TIMEOUT_MS`
  * countdown (the readline client only prints this once, statically; this

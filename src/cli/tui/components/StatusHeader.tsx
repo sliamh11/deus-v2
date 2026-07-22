@@ -1,6 +1,6 @@
 /**
  * Persistent status bar for `deus tui` (Track B step 5 of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md). Renders the
+ * LIA-471's spec). Renders the
  * same `NativeChatStatus` fields the readline client's `renderMode`/
  * `renderStatus` functions already print
  * (`deus-native-chat-client.ts:259-275`) — backend, mode + permission

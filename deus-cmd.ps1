@@ -646,7 +646,7 @@ switch ($Command.ToLower()) {
     }
 
     "tui" {
-        # Track B of /Users/liam10play/.claude/plans/expressive-foraging-reef.md
+        # Track B of LIA-471's spec
         # (docs/decisions/deus-tui-ink-rendering-layer.md): the Ink-based rich
         # rendering layer over the SAME deus-native chat protocol the "chat"
         # case above uses -- a pure rendering-layer swap, zero protocol

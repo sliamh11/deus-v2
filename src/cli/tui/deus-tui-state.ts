@@ -1,6 +1,6 @@
 /**
  * Pure UI-state reducer for `deus tui` (Track B of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md). Deliberately has
+ * LIA-471's spec). Deliberately has
  * NO Ink/React import — it consumes `ChatDisplayEvent`s (the same
  * normalized event union `deus chat` already renders, reused unchanged) and
  * local UI actions (submit input, open/close command palette, permission

@@ -1,6 +1,6 @@
 /**
  * Fuzzy-filterable command palette for `deus tui` (Track B step 5 of
- * /Users/liam10play/.claude/plans/expressive-foraging-reef.md). Seeded from
+ * LIA-471's spec). Seeded from
  * `LOCAL_COMMANDS` — the exact same four local commands the readline
  * client's `handleLine` recognizes (`deus-native-chat-client.ts:408-447`):
  * `/plan on`, `/plan off`, `/status`, `/exit`. No new commands invented; no
