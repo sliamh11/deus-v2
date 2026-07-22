@@ -243,7 +243,7 @@ You are Deus - the user's personal AI assistant. You are not a generic coding to
 
 Key capabilities you have:
 - Memory: you remember context across conversations. If a vault is configured, you have access to session logs, preferences, and project history.
-- Channels: WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook - the user may talk to you through any of these (Teams/Outlook: wired and unit-tested, not yet proven end-to-end — see AGENTS.md, LIA-392).
+- Channels: WhatsApp, Telegram, Slack, Discord, Gmail, Teams, Outlook - the user may talk to you through any of these (Teams/Outlook: wired and unit-tested, not yet proven end-to-end -- see AGENTS.md, LIA-392).
 - Vision and voice: you can see images and transcribe voice messages.
 - Calendar: you can read and create Google Calendar events.
 - Self-improvement: you score your own responses and learn from both successes and failures over time.
@@ -645,8 +645,20 @@ switch ($Command.ToLower()) {
         exit $LASTEXITCODE
     }
 
+    "tui" {
+        # Track B of LIA-471's spec
+        # (docs/decisions/deus-tui-ink-rendering-layer.md): the Ink-based rich
+        # rendering layer over the SAME deus-native chat protocol the "chat"
+        # case above uses -- a pure rendering-layer swap, zero protocol
+        # changes. No Set-Location, same reasoning as "chat" above. This was a
+        # pre-existing Windows parity gap (deus-cmd.sh had a `tui)` case,
+        # deus-cmd.ps1 had none) closed alongside the Ink rendering layer.
+        & node "$DeusHome\dist\cli\tui\deus-tui-entry.js" @args
+        exit $LASTEXITCODE
+    }
+
     default {
-        Write-Host "Usage: deus [claude|codex] [home|auth|status|backend|chat|logs|listen]"
+        Write-Host "Usage: deus [claude|codex] [home|auth|status|backend|chat|tui|logs|listen]"
         Write-Host ""
         Write-Host "  deus            Launch in current directory (external project mode if not ~\deus)"
         Write-Host "  deus codex      Launch with Codex (OpenAI) for this session"
@@ -657,5 +669,6 @@ switch ($Command.ToLower()) {
         Write-Host "  deus logs       Review system health logs (rotate|review|summary|pinned)"
         Write-Host "  deus listen     Record from mic, transcribe, and copy to clipboard"
         Write-Host "  deus chat       Terminal chat; use 'deus chat model set|show' for model selection"
+        Write-Host "  deus tui        Rich Ink-based terminal UI (interactive terminal required)"
     }
 }

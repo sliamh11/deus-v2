@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: [
       'src/**/*.test.ts',
+      'src/**/*.test.tsx',
       'setup/**/*.test.ts',
       'scripts/spikes/**/*.test.ts',
     ],

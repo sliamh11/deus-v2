@@ -252,11 +252,18 @@ class TestCLISession:
     def test_tui_archived_message_defined(self):
         assert "DEUS_TUI_ARCHIVED_MSG" in self.source
 
-    def test_deus_tui_subcommand_errors_not_launches(self):
-        # `deus tui` must print the archival message and exit non-zero, not
-        # attempt to build/exec a Rust binary that no longer exists.
+    def test_deus_tui_subcommand_execs_ink_entry_not_rust(self):
+        # `deus tui` is no longer the archival-diagnostic stub (LIA-389) —
+        # docs/decisions/deus-tui-ink-rendering-layer.md (2026-07-22) gave it
+        # a real implementation. It must never attempt to build/exec the Rust
+        # binary that no longer exists, and must exec the new Ink entry point
+        # instead (positive assertion — the prior version of this test only
+        # asserted the negative, which kept passing by accident once the
+        # `tui)` case stopped being a Rust launcher OR an archival stub
+        # alike; this pins the actual current behavior).
         assert "tui/target/release/deus-tui" not in self.source
         assert "cargo build" not in self.source
+        assert "dist/cli/tui/deus-tui-entry.js" in self.source
 
 
 # ---------------------------------------------------------------------------
