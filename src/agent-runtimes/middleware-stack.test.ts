@@ -36,6 +36,7 @@ import type {
   MemoryReembedRequest,
 } from './memory-reembed.js';
 import { PendingPermissionRegistry } from './permission-registry.js';
+import { SessionAlwaysAllowGrants } from './always-allow-grants.js';
 import type { RuntimeEvent } from './types.js';
 
 // ── C1 (LIA-409): hermetic child-process seam for the wardens supplementary
@@ -559,7 +560,7 @@ function asPermissionRequest(event: RuntimeEvent) {
 describe("permissions middleware — interactive 'ask' branch", () => {
   const SESSION_ID = 'interactive-test-session';
 
-  function buildInteractive() {
+  function buildInteractive(alwaysAllowGrants?: SessionAlwaysAllowGrants) {
     const registry = new PendingPermissionRegistry();
     const events: RuntimeEvent[] = [];
     const { middleware, log } = buildPermissionsMiddleware(
@@ -571,6 +572,7 @@ describe("permissions middleware — interactive 'ask' branch", () => {
           events.push(event);
         },
         sessionId: SESSION_ID,
+        alwaysAllowGrants,
       },
     );
     return { registry, events, middleware, log };
@@ -635,7 +637,7 @@ describe("permissions middleware — interactive 'ask' branch", () => {
     ]);
   });
 
-  it('allow_always also delegates (treated identically to allow_once this ticket — no persistence yet)', async () => {
+  it('allow_always delegates the live call even without a grants store (omitted store preserves pre-2026-07-22 behavior exactly)', async () => {
     const { registry, events, middleware, log } = buildInteractive();
     const request = makeToolCallRequest('web_fetch', { url: 'https://x' });
     const handler = vi.fn(
@@ -649,6 +651,57 @@ describe("permissions middleware — interactive 'ask' branch", () => {
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(log[0]).toMatchObject({ toolName: 'web_fetch', decision: 'allow' });
+  });
+
+  // Supplementary to the full round-trip coverage in
+  // middleware-stack.always-allow.oracle.test.ts (2026-07-22 Amendment):
+  // pins that the REAL SessionAlwaysAllowGrants class, not just a mock
+  // store, wires end to end through this suite's own fixtures.
+  it('with a real SessionAlwaysAllowGrants store, allow_always persists the grant and the next ask for the same tool short-circuits', async () => {
+    const grants = new SessionAlwaysAllowGrants();
+    const { registry, events, middleware, log } = buildInteractive(grants);
+
+    const firstRequest = makeToolCallRequest('web_search', {
+      query: 'first',
+    });
+    const firstHandler = vi.fn(
+      () => new ToolMessage({ content: 'ok', tool_call_id: 'call_grant_1' }),
+    );
+    const firstPending = invokeWrapToolCall(
+      middleware,
+      firstRequest,
+      firstHandler,
+    );
+    await new Promise((r) => setImmediate(r));
+    registry.resolve(asPermissionRequest(events[0]).requestId, 'allow_always');
+    await firstPending;
+
+    expect(firstHandler).toHaveBeenCalledTimes(1);
+    expect(grants.has(SESSION_ID, 'web_search')).toBe(true);
+
+    const secondRequest = makeToolCallRequest('web_search', {
+      query: 'second',
+    });
+    const secondHandler = vi.fn(
+      () => new ToolMessage({ content: 'ok', tool_call_id: 'call_grant_2' }),
+    );
+    const secondResult = await invokeWrapToolCall(
+      middleware,
+      secondRequest,
+      secondHandler,
+    );
+
+    // No second permission_request event and no registry churn.
+    expect(events).toHaveLength(1);
+    expect(registry.size()).toBe(0);
+    expect(secondHandler).toHaveBeenCalledTimes(1);
+    expect(secondResult).toBeInstanceOf(ToolMessage);
+    expect(log).toHaveLength(2);
+    expect(log[1]).toMatchObject({
+      toolName: 'web_search',
+      decision: 'allow',
+      source: 'always-allow-grant',
+    });
   });
 
   it('live deny: handler never runs; synthetic permission_denied ToolMessage notes the requestId; log records deny', async () => {

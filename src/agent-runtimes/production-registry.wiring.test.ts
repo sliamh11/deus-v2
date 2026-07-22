@@ -33,6 +33,7 @@ vi.mock('./activity-broadcaster.js', () => ({
 }));
 
 import { RuntimeActivityBroadcaster } from './activity-broadcaster.js';
+import { SessionAlwaysAllowGrants } from './always-allow-grants.js';
 import type { ContainerRuntimeDeps } from './container-backend.js';
 import { PendingPermissionRegistry } from './permission-registry.js';
 import { createProductionRuntimeRegistry } from './production-registry.js';
@@ -63,13 +64,39 @@ describe('production runtime registry wiring', () => {
     );
 
     expect(registry.resolve(group)).toBe(wiring.nativeRuntime);
+    // Third arg (alwaysAllowGrants) is omitted by this call, so the factory
+    // receives `undefined` for it — preserves pre-2026-07-22 behavior.
     expect(wiring.createDeusNativeRuntime).toHaveBeenCalledWith(
       deps,
       permissionRegistry,
+      undefined,
     );
     expect(wiring.withRuntimeActivityBroadcast).toHaveBeenCalledWith(
       wiring.nativeRuntime,
       expect.any(RuntimeActivityBroadcaster),
+    );
+  });
+
+  it('forwards the process-wide SessionAlwaysAllowGrants store to the deus-native factory (2026-07-22 Amendment) — same instance, not a copy', () => {
+    const deps: ContainerRuntimeDeps = {
+      resolveGroup: () => undefined,
+      assistantName: 'Deus',
+      registerProcess: () => undefined,
+    };
+    const permissionRegistry = new PendingPermissionRegistry();
+    const alwaysAllowGrants = new SessionAlwaysAllowGrants();
+    const registry = createProductionRuntimeRegistry(
+      deps,
+      new RuntimeActivityBroadcaster(),
+      permissionRegistry,
+      alwaysAllowGrants,
+    );
+
+    expect(registry).toBeDefined();
+    expect(wiring.createDeusNativeRuntime).toHaveBeenCalledWith(
+      deps,
+      permissionRegistry,
+      alwaysAllowGrants,
     );
   });
 });
