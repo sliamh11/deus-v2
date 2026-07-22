@@ -7,7 +7,10 @@
  *
  * Deliberately does NOT reimplement `tui/components/InputLine.tsx`'s
  * `/`-opens-palette (the fuzzy command palette is design decision #4,
- * explicitly deferred past this PR's MVP) — but DOES now own local-command
+ * explicitly deferred past this PR's MVP), and does not tokenize/highlight
+ * slash-commands or @-mentions while typing (that's `utils/highlight.ts`'s
+ * job in Gemini, never ported here — tracked in LIA-475). Composer DOES
+ * now own local-command
  * (`/status`/`/plan`/`/exit`) submission and Ctrl+R reverse-history search,
  * both added by build-sequence step 9:
  *
