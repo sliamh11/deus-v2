@@ -58,6 +58,7 @@ groups/*
 groups/main/*
 groups/global/*
 groups/linear-dispatch/*
+groups/deus-native-cli/*
 !groups/main/CLAUDE.md.template
 !groups/global/CLAUDE.md.template
 !groups/linear-dispatch/CLAUDE.md.template
