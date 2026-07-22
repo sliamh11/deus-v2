@@ -22,7 +22,7 @@
  * identity caused *later* keystrokes to drop even after mount had settled.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from 'ink-testing-library';
 import type { ReactElement } from 'react';
 
@@ -37,6 +37,14 @@ import {
   type ChatTransport,
 } from '../deus-native-chat-client.js';
 import { App, launchTuiApp } from './deus-tui-app.js';
+
+// Vitest's 5s default per-test timeout was flush against this file's own
+// waitFor() budget (see below) -- a single waitFor call blocking near its
+// full timeout under CI load could have Vitest kill the test before
+// waitFor's own error even fires. 20s gives real headroom for a test with
+// several sequential waitFor calls without slowing local runs, where every
+// predicate here resolves in single-digit ms.
+vi.setConfig({ testTimeout: 20_000 });
 
 afterEach(() => {
   cleanup();
