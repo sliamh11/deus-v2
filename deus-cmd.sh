@@ -7,7 +7,12 @@ readonly DEUS_SKILLS_DIR="$HOME/.claude/skills"
 
 # Rust TUI archival (LIA-389, docs/decisions/tui-archival.md). The implementation
 # was removed from main and preserved on the `legacy/tui-phase1` branch/tag.
-# This exact string is the frozen test oracle for
+# `deus tui` itself no longer prints this (see the `tui)` case below — it now
+# execs the new Ink-based entry point, docs/decisions/deus-tui-ink-rendering-layer.md).
+# This constant is kept, unreferenced, ONLY because `test_session_type_contract.py`'s
+# `test_tui_archived_message_defined` pins its continued existence in source as a
+# historical-value regression guard (do not remove the definition without updating
+# that test) — and because it's the frozen test oracle for
 # scripts/tests/test_deus_cmd_print_identity.py — do not edit either side
 # without updating the other.
 readonly DEUS_TUI_ARCHIVED_MSG="The Rust TUI was archived (LIA-389). Use 'deus chat' for terminal chat."
@@ -819,8 +824,13 @@ sys.exit(1)
     # Stale tui_default nudge: skip in print mode so a VS Code panel calling
     # --print-identity on every session open doesn't get noise on every call.
     if [ "$PRINT_IDENTITY" != "true" ] && [ "$(_read_config_key tui_default)" = "true" ]; then
-      # Stale tui_default nudge (LIA-389): TUI archived, terminal chat is the replacement.
-      echo "$DEUS_TUI_ARCHIVED_MSG" >&2
+      # `tui_default` predates this repo's `deus`/`deus home` always printing
+      # the bare identity (LIA-389) and still has no effect here — bare
+      # `deus` never auto-launches a TUI, archived or otherwise. Now that a
+      # real `deus tui` exists again (Ink-based, see
+      # docs/decisions/deus-tui-ink-rendering-layer.md), point the user at
+      # running it directly instead of the old archived-Rust-TUI message.
+      echo "Note: 'tui_default' has no effect on 'deus'/'deus home' (bare launch never auto-starts a TUI). Run 'deus tui' directly for the interactive terminal UI." >&2
     fi
     # Print mode must never exec an interactive UI — the query flag wins.
     if [ "$AGENTS_MODE" = "true" ] && [ "$PRINT_IDENTITY" != "true" ]; then
@@ -1515,9 +1525,14 @@ $STARTUP_INSTRUCTION"
     exec python3 "$SCRIPT_DIR/scripts/memory_tree.py" calibrate-sweep "$bench_file" --json
     ;;
   tui)
-    # `deus tui` archived (LIA-389): the Rust TUI is gone, `deus chat` replaces it.
-    echo "$DEUS_TUI_ARCHIVED_MSG" >&2
-    exit 1
+    # LIA-389 archived the old Rust TUI; this is its replacement — a new
+    # Ink-based rendering layer over the SAME deus-native chat protocol
+    # `deus chat` uses (docs/decisions/deus-tui-ink-rendering-layer.md).
+    # Deliberately NO cd, mirroring the `chat)` case just above: the client
+    # forwards the user's original cwd to the daemon, and its discovery
+    # record lives under ~/.config/deus-v2, not the repo.
+    shift
+    exec node "$SCRIPT_DIR/dist/cli/tui/deus-tui-entry.js" "$@"
     ;;
   build)
     shift

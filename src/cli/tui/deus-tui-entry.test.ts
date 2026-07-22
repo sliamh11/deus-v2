@@ -147,12 +147,20 @@ describe('runTuiEntry — transport construction on the TTY path', () => {
     expect(chunks.join('')).toContain('render exploded');
   });
 
-  it('defaults to the not-yet-implemented placeholder when no launchApp is supplied', async () => {
+  it('defaults to the real Ink launcher (launchTuiApp) when no launchApp is supplied — fails closed against an unreachable daemon', async () => {
+    // No launchApp override: this exercises the REAL launchTuiApp
+    // (deus-tui-app.tsx), wired in as runTuiEntry's default in Track B step
+    // 8. baseDeps()'s discovery record deliberately points at an
+    // unreachable port (see writeDiscoveryRecord's own comment), so
+    // launchTuiApp's pre-render transport.status() liveness check fails and
+    // it returns 1 with CHAT_UNAVAILABLE_MESSAGE — without ever calling
+    // Ink's render() — exactly mirroring runChatCli's own startup check.
+    // (The not-yet-implemented placeholder this test used to assert on is
+    // gone now that the real launcher is wired in; see deus-tui-app.ts's
+    // module doc for why launchTuiApp checks liveness before rendering.)
     const { stream, chunks } = fakeErrorOutput();
     const code = await runTuiEntry(baseDeps({ errorOutput: stream }));
     expect(code).toBe(1);
-    expect(chunks.join('')).toContain(
-      'Ink rendering layer has not been built yet',
-    );
+    expect(chunks.join('')).toBe(`${CHAT_UNAVAILABLE_MESSAGE}\n`);
   });
 });

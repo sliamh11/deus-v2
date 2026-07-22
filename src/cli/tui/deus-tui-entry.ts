@@ -17,11 +17,11 @@
  * discovery record or constructing a transport that nothing will render
  * against. `deus chat` remains the scriptable/CI-safe path.
  *
- * The actual Ink root component (`deus-tui-app.tsx`) has not landed yet in
- * this build sequence (Track B step 6) — `launchApp` is an injected seam so
- * this file's entry/transport/refusal logic is independently testable now,
- * and gets its real Ink implementation wired in without needing to change
- * this file's structure later. Nothing in this file imports Ink or React.
+ * The real Ink root component (`deus-tui-app.tsx`, Track B step 6) is the
+ * default `launchApp` below (`launchTuiApp`) — `TuiEntryDeps.launchApp`
+ * stays an injectable seam so this file's entry/transport/refusal logic is
+ * independently testable with a fake, exactly as it already was before
+ * step 6 landed.
  */
 
 import fs from 'fs';
@@ -36,32 +36,21 @@ import {
   parseDiscoveryRecord,
   type NativeChatDiscoveryRecord,
 } from '../deus-native-chat.js';
+import { launchTuiApp } from './deus-tui-app.js';
 
 export const TUI_NON_TTY_MESSAGE =
   'deus tui requires an interactive terminal; use `deus chat` for scripted/CI usage.';
 
 /**
  * Launches the interactive Ink app and resolves the process exit code.
- * Replaced by the real `deus-tui-app.tsx` launcher in a later
- * build-sequence step.
+ * Defaults to `launchTuiApp` (`deus-tui-app.tsx`); overridden in tests with
+ * a fake so `runTuiEntry`'s own logic is verifiable without a real TTY/Ink
+ * render.
  */
 export type LaunchTuiApp = (
   transport: ChatTransport,
   cwd: string,
 ) => Promise<number>;
-
-/**
- * Construct-only placeholder: the Ink rendering layer hasn't been built yet
- * in this branch (Track B step 6). Kept as an explicit error rather than a
- * silent no-op so `deus tui` never appears to hang or succeed without
- * actually rendering anything if this file is wired to a real terminal
- * before that step lands.
- */
-const notYetImplementedLaunch: LaunchTuiApp = async () => {
-  throw new Error(
-    'deus tui: the Ink rendering layer has not been built yet in this branch.',
-  );
-};
 
 export interface TuiEntryDeps {
   isTTY: boolean;
@@ -101,7 +90,15 @@ export async function runTuiEntry(deps: TuiEntryDeps): Promise<number> {
 
   const transport = createHttpChatTransport(record);
   deps.onTransportReady?.(transport);
-  const launch = deps.launchApp ?? notYetImplementedLaunch;
+  // Wire deps.errorOutput through to launchTuiApp's own pre-render liveness
+  // check so its failure message lands on the SAME stream every other
+  // failure path in this function writes to, not a hardcoded
+  // `process.stderr` the caller (a test, or a future non-stdio host) can't
+  // observe.
+  const launch =
+    deps.launchApp ??
+    ((transport_, cwd) =>
+      launchTuiApp(transport_, cwd, { errorOutput: deps.errorOutput }));
   try {
     return await launch(transport, deps.cwd);
   } catch (err) {

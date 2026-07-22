@@ -118,9 +118,13 @@ def test_print_identity_prints_full_prompt_before_launch_at_both_sites():
 
 def test_deus_tui_archived_no_launch_reachable():
     # The Rust TUI launcher is fully gone: no build/exec path, no
-    # `$TUI_DEFAULT` gate before `launch_agent`. `deus tui` itself now
-    # errors via DEUS_TUI_ARCHIVED_MSG (see test_session_type_contract.py's
-    # TestCLISession for the exact-string/non-zero-exit assertions).
+    # `$TUI_DEFAULT` gate before `launch_agent`. `deus tui` no longer errors
+    # (that was the LIA-389-era archival stub) — it now execs the new
+    # Ink-based entry point (docs/decisions/deus-tui-ink-rendering-layer.md,
+    # 2026-07-22; see test_session_type_contract.py's
+    # test_deus_tui_subcommand_execs_ink_entry_not_rust for that positive
+    # assertion). This test only pins the absence of the old Rust build/exec
+    # path, which stays true either way.
     script = _script()
     assert "_launch_tui_with_context" not in script
     assert "TUI_DEFAULT" not in script

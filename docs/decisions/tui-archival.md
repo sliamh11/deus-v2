@@ -146,6 +146,22 @@ home` entry points print the same diagnostic to stderr and continue to
 the normal (non-TUI) launch, so existing configs degrade gracefully
 instead of breaking the primary entry point.
 
+**Superseded for the `deus tui` CLI stub (2026-07-22):** the paragraph
+above described `deus tui`'s behavior as originally shipped by this ADR.
+It is no longer accurate as a description of current behavior —
+`deus-tui-ink-rendering-layer.md` gave `deus tui` a real implementation (a
+new Ink-based rendering layer over the same `deus-native` chat protocol
+`deus chat` uses), so invoking `deus tui` now launches that, not this
+diagnostic. This ADR's DECISION to remove the Rust implementation and its
+ANALYSIS of what was lost are unaffected and remain the historical record
+of record for that removal; only the "what happens when you type `deus
+tui` today" claim is superseded. The `DEUS_TUI_ARCHIVED_MSG` constant
+itself remains defined in `deus-cmd.sh` (a frozen string
+`scripts/tests/test_session_type_contract.py` still pins the existence
+of) but is no longer surfaced to users from the `tui)` case; the
+`tui_default` config-key nudge now points at running the new `deus tui`
+directly instead of at `deus chat`.
+
 The four TUI-specific ADRs remain in the repository as historical
 records, each with its Status line changed to Archived or Superseded (see
 their headers) and cross-linked to this ADR.
