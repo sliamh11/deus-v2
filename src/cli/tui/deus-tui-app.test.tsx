@@ -357,6 +357,13 @@ describe('<App> — permission modal', () => {
       () => (instance.lastFrame() ?? '').includes('Permission requested'),
       'permission modal shown',
     );
+    // PermissionModal mounts fresh here (conditional render on the
+    // permission_request event) and its own useInput subscribes from a
+    // passive effect, same as InputLine's documented mount quirk above --
+    // a decision keypress sent before that effect flushes is silently
+    // dropped. Fast/local timing usually masks it; CI's slower scheduler
+    // did not (3 different tests here flaked on CI, never locally).
+    await tick();
     expect(instance.lastFrame()).toContain('web_search');
 
     // The turn must be BLOCKED on the permission answer — the event after
@@ -409,6 +416,13 @@ describe('<App> — permission modal', () => {
       () => (instance.lastFrame() ?? '').includes('Permission requested'),
       'permission modal shown',
     );
+    // PermissionModal mounts fresh here (conditional render on the
+    // permission_request event) and its own useInput subscribes from a
+    // passive effect, same as InputLine's documented mount quirk above --
+    // a decision keypress sent before that effect flushes is silently
+    // dropped. Fast/local timing usually masks it; CI's slower scheduler
+    // did not (3 different tests here flaked on CI, never locally).
+    await tick();
 
     instance.stdin.write('\r'); // bare Enter, no text typed
 
@@ -451,6 +465,13 @@ describe('<App> — permission modal', () => {
       () => (instance.lastFrame() ?? '').includes('Permission requested'),
       'permission modal shown',
     );
+    // PermissionModal mounts fresh here (conditional render on the
+    // permission_request event) and its own useInput subscribes from a
+    // passive effect, same as InputLine's documented mount quirk above --
+    // a decision keypress sent before that effect flushes is silently
+    // dropped. Fast/local timing usually masks it; CI's slower scheduler
+    // did not (3 different tests here flaked on CI, never locally).
+    await tick();
 
     instance.stdin.write('a');
 
@@ -499,6 +520,13 @@ describe('<App> — permission modal', () => {
       () => (instance.lastFrame() ?? '').includes('Permission requested'),
       'permission modal shown',
     );
+    // PermissionModal mounts fresh here (conditional render on the
+    // permission_request event) and its own useInput subscribes from a
+    // passive effect, same as InputLine's documented mount quirk above --
+    // a decision keypress sent before that effect flushes is silently
+    // dropped. Fast/local timing usually masks it; CI's slower scheduler
+    // did not (3 different tests here flaked on CI, never locally).
+    await tick();
 
     instance.stdin.write('y');
 
