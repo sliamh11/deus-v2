@@ -25,8 +25,9 @@
  *    second request it actually received.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from 'ink-testing-library';
+import chalk from 'chalk';
 
 import type { PermissionDecision } from '../../agent-runtimes/types.js';
 import type {
@@ -35,6 +36,34 @@ import type {
 } from '../deus-native-chat.js';
 import type { ChatTransport } from '../deus-native-chat-client.js';
 import { AppContainer } from './AppContainer.js';
+
+// This test's assertion 3 (below) distinguishes "Always allow" / "Deny" /
+// "Allow once" by the ANSI color escape each is actually rendered with —
+// but Ink's `<Text color>` renders through the process-wide `chalk`
+// singleton (`ink/build/colorize.js`, `ink/build/components/Text.js` both
+// `import chalk from 'chalk'`), and chalk auto-detects its color level ONCE
+// from the REAL process's stdio, not from the in-memory `Stdout`
+// `ink-testing-library` hands to the tree under test — chalk's vendored
+// `supports-color` short-circuits to level 0 whenever the real stream isn't
+// a TTY and no `FORCE_COLOR` is set, before any CI-env-var or platform
+// check even runs. On an interactive dev shell (a real TTY, or one that
+// exports `FORCE_COLOR`) this is invisible; on a CI runner's non-
+// interactive, piped stdout it isn't, and `lastAnsiColorBefore` below
+// returns `''` for all three labels, so `alwaysAllowColor`/`denyColor`/
+// `allowOnceColor` all compare equal — reproduced directly (locally, with
+// `FORCE_COLOR`/`COLORTERM`/`TERM` unset, matching a bare CI shell) as the
+// exact `expected '' not to be ''` failure this test hit on Windows CI; the
+// same mechanism (verified the same way) explains
+// `tui-v2/utils/CodeColorizer.test.tsx`'s sibling failure — see that file's
+// own comment for the full chalk/supports-color trace. `chalk.level` is a
+// live, mutable property real chalk-based callers read at EACH call, so
+// forcing it here makes this test assert what it actually means to test —
+// that the three permission choices render in genuinely different colors —
+// instead of accidentally asserting a property of the calling process's
+// terminal.
+beforeAll(() => {
+  chalk.level = 3;
+});
 
 // Several sequential waitFor() calls, each with its own 5s budget, can
 // together exceed Vitest's 5s default per-test timeout even though every

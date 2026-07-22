@@ -26,11 +26,39 @@
  * step 4.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import { cleanup, render } from 'ink-testing-library';
 import type { ReactElement } from 'react';
 import stripAnsi from 'strip-ansi';
+import chalk from 'chalk';
 import { colorizeCode, colorizeLine } from './CodeColorizer.js';
+
+// Ink's `<Text color>` renders through the process-wide `chalk` singleton
+// (`ink/build/colorize.js`, `ink/build/components/Text.js` both `import
+// chalk from 'chalk'`), and chalk auto-detects its color level ONCE from
+// the REAL process's stdio (`chalk`'s vendored `supports-color`: `haveStream
+// && !streamIsTTY && forceColor === undefined` short-circuits to level 0
+// before any CI-env-var or platform check even runs) — not from the
+// in-memory `Stdout` `ink-testing-library` hands to the component tree
+// under test. A real terminal (`tty.isatty(1)` true) or a `FORCE_COLOR`-set
+// shell masks this; a CI runner's non-interactive, piped stdout does not,
+// so `hasAnsiColor(highlightedFrame)` below silently goes from `true` to
+// `false` and the two frames become byte-identical — reproduced directly
+// (locally, with `FORCE_COLOR`/`COLORTERM`/`TERM` unset, matching a bare CI
+// shell) as the exact `expected false to be true` failure this test hit on
+// Windows CI. `chalk.level` is a live, mutable property real chalk-based
+// callers read at EACH call (confirmed directly: setting it after import
+// still changes subsequent `chalk.red(...)`-style output), so forcing it
+// here makes this test assert what it actually means to test — that
+// `colorizeCode` applies real per-token theme colors, not a no-op — instead
+// of accidentally asserting a property of the calling process's terminal.
+// Scoped to this file only (`beforeAll`, not a global setup file): no other
+// test in this repo currently asserts on raw ANSI color bytes (see this
+// commit's message for the repo-wide grep), so a global override isn't
+// warranted yet.
+beforeAll(() => {
+  chalk.level = 3;
+});
 
 afterEach(() => {
   cleanup();
