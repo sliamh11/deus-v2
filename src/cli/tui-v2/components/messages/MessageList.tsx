@@ -8,6 +8,14 @@
  * point, replaced wholesale in build-sequence step 7), everything else
  * routes to `MessageItem.tsx`. Neither this file nor `MessageItem.tsx`
  * should need to change when step 7 lands richer tool-call rendering.
+ *
+ * `activeMatchEntryId` (build-sequence step 9's Ctrl+F addition) marks the
+ * row `search/transcript-search.ts`'s current match points at with a
+ * left-border accent — a lightweight "you are here" cue rather than
+ * per-character highlighting inside the row's own text (`MessageItem.tsx`/
+ * `ToolCallItem.tsx` render plain `<Text>`, not a span-splittable rich-text
+ * tree yet — see `ToolCallItem.tsx`'s header for why tool rows in
+ * particular are still a flat string).
  */
 
 import type React from 'react';
@@ -21,6 +29,8 @@ import { ToolCallItem } from './ToolCallItem.js';
 export interface MessageListProps {
   entries: TranscriptEntry[];
   maxVisible?: number;
+  /** The transcript entry `search/transcript-search.ts`'s current match is in, if a search is active with at least one match. */
+  activeMatchEntryId?: number;
 }
 
 const DEFAULT_MAX_VISIBLE = 200;
@@ -28,6 +38,7 @@ const DEFAULT_MAX_VISIBLE = 200;
 export function MessageList({
   entries,
   maxVisible = DEFAULT_MAX_VISIBLE,
+  activeMatchEntryId,
 }: MessageListProps): React.ReactNode {
   const semanticColors = themeManager.getSemanticColors();
   const visible =
@@ -41,7 +52,13 @@ export function MessageList({
         </Text>
       ) : (
         visible.map((entry) => (
-          <Box key={entry.id}>
+          <Box
+            key={entry.id}
+            borderStyle={entry.id === activeMatchEntryId ? 'round' : undefined}
+            borderColor={
+              entry.id === activeMatchEntryId ? semanticColors.ui.focus : undefined
+            }
+          >
             {entry.kind === 'tool' ? (
               <ToolCallItem entry={entry} />
             ) : (

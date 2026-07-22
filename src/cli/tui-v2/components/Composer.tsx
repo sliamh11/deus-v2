@@ -6,13 +6,28 @@
  * raw keystrokes into a controlled buffer and call `submitTurn` on Enter.
  *
  * Deliberately does NOT reimplement `tui/components/InputLine.tsx`'s
- * `/`-opens-palette or local-command interpretation
- * (`/status`/`/plan`/`/exit`) — the command framework (build-sequence
- * step 9) owns that, and Gemini's own real `commands/` framework this ports
- * from doesn't exist in `tui-v2` yet either. Ctrl+C already exits via Ink's
- * own `exitOnCtrlC` default (see `AppContainer.tsx`'s `launchTuiApp` doc),
- * so this step has a real exit path without inventing local-command
- * handling ahead of its own step.
+ * `/`-opens-palette (the fuzzy command palette is design decision #4,
+ * explicitly deferred past this PR's MVP) — but DOES now own local-command
+ * (`/status`/`/plan`/`/exit`) submission and Ctrl+R reverse-history search,
+ * both added by build-sequence step 9:
+ *
+ * - Slash-command *interpretation* (parsing `/name args`, dispatching to a
+ *   `SlashCommand`) lives in `commands/registry.ts` and is NOT this file's
+ *   job — `onSubmit` still just hands the raw submitted line up to
+ *   `AppContainer.tsx`'s `submitTurn`, which is what now runs it through
+ *   `executeSlashCommand` before ever reaching the chat transport. This
+ *   file only needs to know that submitted lines get INTO `inputHistory`
+ *   (both prompts and `/commands` — bash's own reverse-i-search recalls
+ *   typed commands, not just its output, and `/plan on` is exactly as
+ *   worth recalling as any other line).
+ * - Ctrl+R reverse-history search IS this file's job: `search/history-search.ts`
+ *   (ported from `~/deus/tui/src/app.rs`'s real reverse-i-search — see that
+ *   module's header) is pure state; this component is the Ink
+ *   key-routing/rendering shell around it, same split as
+ *   `TranscriptSearchBar.tsx`/`search/transcript-search.ts`. While active,
+ *   typed characters extend the search query (not the composer's `value`
+ *   directly) and the live-matched history entry previews into `value` via
+ *   `onChange`, exactly mirroring bash's `(reverse-i-search)` UX.
  *
  * Carries forward the same stable-handler fix as `InputLine.tsx`
  * (`useCallback` with an empty dependency array, reading current props off a
@@ -21,14 +36,27 @@
  */
 
 import type React from 'react';
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
 
 import { themeManager } from '../themes/theme-manager.js';
+import {
+  backspaceHistorySearch,
+  cancelHistorySearch,
+  commitHistorySearch,
+  createHistorySearchState,
+  cycleHistorySearch,
+  previewForHistorySearch,
+  startHistorySearch,
+  typeHistorySearchChar,
+  type HistorySearchState,
+} from '../search/history-search.js';
 
 export interface ComposerProps {
   value: string;
   isActive: boolean;
+  /** Prior submitted lines, oldest-first (both chat prompts and `/commands`) — the reverse-search corpus. */
+  history: readonly string[];
   onChange: (value: string) => void;
   onSubmit: (line: string) => void;
 }
@@ -36,15 +64,62 @@ export interface ComposerProps {
 export function Composer({
   value,
   isActive,
+  history,
   onChange,
   onSubmit,
 }: ComposerProps): React.ReactNode {
   const semanticColors = themeManager.getSemanticColors();
-  const latest = useRef({ value, onChange, onSubmit });
-  latest.current = { value, onChange, onSubmit };
+  const [search, setSearch] = useState<HistorySearchState>(createHistorySearchState);
+  const latest = useRef({ value, history, search, onChange, onSubmit });
+  latest.current = { value, history, search, onChange, onSubmit };
 
   const handleInput = useCallback((input: string, key: Key) => {
-    const { value, onChange, onSubmit } = latest.current;
+    const { value, history, search, onChange, onSubmit } = latest.current;
+
+    if (search.active) {
+      if (key.ctrl && input === 'r') {
+        const next = cycleHistorySearch(history, search);
+        setSearch(next);
+        const preview = previewForHistorySearch(history, next);
+        if (preview !== undefined) onChange(preview);
+        return;
+      }
+      if (key.return) {
+        const committed = commitHistorySearch(history, search) ?? value;
+        onChange(committed);
+        setSearch(createHistorySearchState());
+        return;
+      }
+      if (key.escape) {
+        onChange(cancelHistorySearch(search));
+        setSearch(createHistorySearchState());
+        return;
+      }
+      if (key.backspace || key.delete) {
+        const next = backspaceHistorySearch(search);
+        setSearch(next);
+        const preview = previewForHistorySearch(history, next);
+        if (preview !== undefined) onChange(preview);
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        const next = typeHistorySearchChar(search, input);
+        setSearch(next);
+        const preview = previewForHistorySearch(history, next);
+        if (preview !== undefined) onChange(preview);
+        return;
+      }
+      // Any other key (e.g. an arrow) commits the current match and exits
+      // search, then falls through to normal handling below — mirrors
+      // ~/deus/tui/src/main.rs's `consumed = false` fallthrough case.
+      onChange(commitHistorySearch(history, search) ?? value);
+      setSearch(createHistorySearchState());
+    }
+
+    if (key.ctrl && input === 'r') {
+      setSearch(startHistorySearch(value));
+      return;
+    }
     if (key.return) {
       onSubmit(value);
       return;
@@ -64,14 +139,25 @@ export function Composer({
       key.escape ||
       key.meta
     ) {
-      // No cursor movement / history navigation / palette trigger yet — see
-      // module doc.
+      // No cursor movement / non-history palette trigger yet — see module doc.
       return;
     }
     if (input && !key.ctrl) onChange(value + input);
   }, []);
 
   useInput(handleInput, { isActive });
+
+  if (search.active) {
+    return (
+      <Box>
+        <Text color={semanticColors.ui.comment}>{"(reverse-i-search)'"}</Text>
+        <Text color={semanticColors.text.accent}>{search.query}</Text>
+        <Text color={semanticColors.ui.comment}>{"': "}</Text>
+        <Text color={semanticColors.text.primary}>{value}</Text>
+        {isActive ? <Text inverse> </Text> : null}
+      </Box>
+    );
+  }
 
   return (
     <Box>

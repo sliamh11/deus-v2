@@ -25,11 +25,28 @@
  * React re-render between them. `stateRef` is updated synchronously INSIDE
  * `setState` below (not just read after each render) specifically to close
  * that gap.
+ *
+ * Build-sequence step 9 additions, all funneled through `submitTurn` before
+ * a line ever reaches the chat transport:
+ * 1. `executeSlashCommand` (`commands/registry.ts`) — a recognized
+ *    `/command` runs locally and never reaches `bridge.submitTurn` at all
+ *    (`result.handled`short-circuits).
+ * 2. `resolveAtMentions`/`appendResolvedMentions`
+ *    (`at-mentions/at-mention-processor.ts`) — otherwise, any `@path`
+ *    mentions in the line are expanded against real Node `fs` (this file is
+ *    where the real, non-injected filesystem deps live; every other module
+ *    that touches `@path` resolution takes them as injectable params for
+ *    testability) before the (possibly-expanded) text reaches the bridge.
+ * 3. `createIdleNotifier` (`notifications/idle-notify.ts`) — `onBusyChange`
+ *    fires `notifyTurnComplete` on the false (turn-finished) transition;
+ *    every composer keystroke and submitted line calls `recordActivity`.
  */
 
 import type React from 'react';
 import { useRef, useState } from 'react';
 import { render as inkRender } from 'ink';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { resolve as resolvePath } from 'node:path';
 
 import {
   CHAT_UNAVAILABLE_MESSAGE,
@@ -48,6 +65,29 @@ import {
 } from './deus-chat-stream-bridge.js';
 import { AppStateContext, type AppStateValue } from './contexts/AppStateContext.js';
 import { App } from './App.js';
+import { themeManager } from './themes/theme-manager.js';
+import { createClipboardWriter } from './utils/clipboard.js';
+import {
+  ALL_COMMANDS,
+  createSlashCommandRegistry,
+  executeSlashCommand,
+  type SlashCommandContext,
+} from './commands/index.js';
+import {
+  appendResolvedMentions,
+  resolveAtMentions,
+  type AtMentionFsDeps,
+} from './at-mentions/at-mention-processor.js';
+import { createIdleNotifier } from './notifications/idle-notify.js';
+
+const clipboardWriter = createClipboardWriter();
+const commandRegistry = createSlashCommandRegistry(ALL_COMMANDS);
+const realAtMentionFsDeps: AtMentionFsDeps = {
+  readFile: (path) => readFile(path, 'utf-8'),
+  stat: (path) => stat(path),
+  readdir: (path) => readdir(path),
+  resolvePath: (cwd, name) => resolvePath(cwd, name),
+};
 
 /** Mirrors `tui/deus-tui-app.tsx`'s `buildInitialState` exactly. */
 function buildInitialState(initialStatus: NativeChatStatus): TuiState {
@@ -101,6 +141,12 @@ export function AppContainer({
   // guarantee to run exactly once) — the bridge owns internal mutable state
   // (busy flag, the pending-permission resolver) that must survive re-renders
   // as a single instance for this component's lifetime.
+  const idleNotifierRef = useRef<ReturnType<typeof createIdleNotifier> | null>(null);
+  if (idleNotifierRef.current === null) {
+    idleNotifierRef.current = createIdleNotifier();
+  }
+  const idleNotifier = idleNotifierRef.current;
+
   const bridgeRef = useRef<ChatStreamBridge | null>(null);
   if (bridgeRef.current === null) {
     bridgeRef.current = createChatStreamBridge({
@@ -108,10 +154,41 @@ export function AppContainer({
       cwd,
       getState,
       setState,
-      onBusyChange: setBusy,
+      onBusyChange: (next) => {
+        setBusy(next);
+        if (!next) idleNotifier.notifyTurnComplete('Turn complete');
+      },
     });
   }
   const bridge = bridgeRef.current;
+
+  function lastAssistantText(): string | undefined {
+    const transcript = getState().transcript;
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      if (transcript[i].kind === 'assistant') return transcript[i].text;
+    }
+    return undefined;
+  }
+
+  function buildSlashCommandContext(): SlashCommandContext {
+    return {
+      invocation: { raw: '', name: '', args: '' },
+      services: { transport, themeManager, clipboard: clipboardWriter },
+      ui: {
+        info: (text) =>
+          dispatchLocal({ type: 'display_event', event: { kind: 'progress', text } }),
+        error: (text) =>
+          dispatchLocal({
+            type: 'display_event',
+            event: { kind: 'chat_error', message: text },
+          }),
+        clear: () => setState({ ...getState(), transcript: [] }),
+        lastAssistantText,
+      },
+      cwd,
+      onExit,
+    };
+  }
 
   /**
    * Mirrors `tui/deus-tui-app.tsx`'s `handleSubmitLine` exactly: the busy
@@ -123,20 +200,67 @@ export function AppContainer({
    * exposes appends the line to the transcript and clears `state.input`
    * regardless of whether it's blank, and only a non-blank trimmed line
    * actually reaches the bridge/transport.
+   *
+   * Build-sequence step 9: a non-blank trimmed line now goes through
+   * `executeSlashCommand` first (see module doc); only an unhandled
+   * (non-`/command`) line falls through to `@path` mention expansion and
+   * the bridge, same as before this step.
    */
   function submitTurn(prompt: string): void {
     if (busy) return;
+    idleNotifier.recordActivity();
     dispatchLocal({ type: 'input_change', value: prompt });
     dispatchLocal({ type: 'submit_input' });
     const trimmed = prompt.trim();
     if (trimmed === '') return;
-    void bridge.submitTurn(trimmed);
+
+    // Command dispatch and `@path` resolution are both async (a command may
+    // call `transport.status()`; mention resolution does real file I/O), but
+    // the `busy` guard above only re-checks React state, which the bridge
+    // doesn't set true until `bridge.submitTurn` is actually reached below —
+    // without this, a fast second Enter during that async gap would sail
+    // past the guard and dispatch a second, overlapping submission. Setting
+    // `busy` true here, synchronously, before any `await`, closes that gap;
+    // `bridge.submitTurn` (when reached) redundantly sets it true again via
+    // its own `onBusyChange`, which is harmless, and reliably flips it back
+    // to false when the turn resolves. The one path that never reaches the
+    // bridge (a handled slash command) is responsible for flipping it back
+    // itself, in the `finally` below.
+    setBusy(true);
+    void (async () => {
+      try {
+        const commandContext = buildSlashCommandContext();
+        const result = await executeSlashCommand(commandRegistry, trimmed, commandContext);
+        if (result.handled) {
+          setBusy(false);
+          return;
+        }
+
+        const mentions = await resolveAtMentions(trimmed, cwd, realAtMentionFsDeps);
+        for (const error of mentions.errors) {
+          dispatchLocal({
+            type: 'display_event',
+            event: { kind: 'chat_error', message: error },
+          });
+        }
+        const expanded = appendResolvedMentions(trimmed, mentions);
+        await bridge.submitTurn(expanded);
+      } catch {
+        // bridge.submitTurn itself never rejects (see its own module doc);
+        // this only guards executeSlashCommand/resolveAtMentions, neither of
+        // which should throw either, but `busy` must never get stuck true.
+        setBusy(false);
+      }
+    })();
   }
 
   const value: AppStateValue = {
     state,
     busy,
-    setInput: (next) => dispatchLocal({ type: 'input_change', value: next }),
+    setInput: (next) => {
+      idleNotifier.recordActivity();
+      dispatchLocal({ type: 'input_change', value: next });
+    },
     submitTurn,
     respondPermission: (key) => bridge.respondPermission(key),
     onExit,
