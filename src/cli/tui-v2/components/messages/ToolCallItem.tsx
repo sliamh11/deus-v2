@@ -1,43 +1,38 @@
 /**
- * TODO(build-sequence step 7): placeholder tool-call rendering.
+ * Real tool-call rendering (build-sequence step 7 of
+ * `~/.claude/plans/deus-tui-gemini-fork.md`), replacing the prior step's
+ * flat-text placeholder. This is the tool-call mounting point
+ * `MessageList.tsx` routes every `TranscriptEntry` with `kind: 'tool'`
+ * through, one entry at a time (that file's per-entry `.map()` is
+ * deliberately unchanged by this step — see its own header) — so this
+ * component wraps its single `entry` in a one-element `ToolGroupDisplay`
+ * group rather than rendering `ToolMessage` directly, keeping the real
+ * multi-entry grouping component on the real render path (see
+ * `ToolGroupDisplay.tsx`'s header for why it has no >1-entry caller yet).
  *
- * This is the tool-call mounting point `MessageList.tsx` routes every
- * `TranscriptEntry` with `kind: 'tool'` through — a deliberately isolated
- * seam so step 7 (`DiffRenderer.tsx` port + `ToolMessage`/`ToolGroupDisplay`/
- * `ToolResultDisplay`, re-typed against Deus's real `ChatDisplayEvent`'s
- * `tool_use` shape) can replace this component's body without touching
- * `MessageItem.tsx`, `MessageList.tsx`, or anything upstream of it.
- *
- * Why this can't be the real thing yet: today's `TranscriptEntry` (produced
- * by `deus-tui-state.ts`'s `tuiReduce` from a `tool_use` `ChatDisplayEvent`)
- * is a flat, already-formatted `label` string — no structured tool name,
- * input, output, status, or diff payload survives past the reducer. Step 7's
- * real components need that structured shape, which is a `tuiReduce`/
- * `ChatDisplayEvent`-level change out of scope for this step (this step only
- * wires `App.tsx`/`AppContainer.tsx` to the existing bridge/reducer
- * contract, per the plan's build-sequence). Building real per-tool-call
- * visual formatting against a string that's already lost its structure would
- * be thrown away the moment step 7 lands the richer shape.
+ * `terminalWidth` comes from `ink`'s `useStdout().stdout.columns` — nothing
+ * upstream (`App.tsx`, `MessageList.tsx`) threads a width down yet, and
+ * `DiffRenderer.tsx`/`ToolResultDisplay.tsx`/`ToolMessage.tsx` all require
+ * one, so it is read locally here with a plain 80-column fallback for a
+ * non-TTY/undefined `columns` (matches this repo's existing
+ * `isNarrowWidth.ts` 80-column reference point).
  */
 
 import type React from 'react';
-import { Box, Text } from 'ink';
+import { useStdout } from 'ink';
 
 import type { TranscriptEntry } from '../../deus-tui-state.js';
-import { themeManager } from '../../themes/theme-manager.js';
+import { ToolGroupDisplay } from './ToolGroupDisplay.js';
 
 export interface ToolCallItemProps {
   entry: TranscriptEntry;
 }
 
+const FALLBACK_TERMINAL_WIDTH = 80;
+
 export function ToolCallItem({ entry }: ToolCallItemProps): React.ReactNode {
-  const semanticColors = themeManager.getSemanticColors();
-  return (
-    <Box>
-      <Text color={semanticColors.ui.comment}>
-        {'  '}
-        {entry.text}
-      </Text>
-    </Box>
-  );
+  const { stdout } = useStdout();
+  const terminalWidth = stdout?.columns ?? FALLBACK_TERMINAL_WIDTH;
+
+  return <ToolGroupDisplay entries={[entry]} terminalWidth={terminalWidth} />;
 }
