@@ -17,8 +17,11 @@
  * discovery record or constructing a transport that nothing will render
  * against. `deus chat` remains the scriptable/CI-safe path.
  *
- * The real Ink root component (`deus-tui-app.tsx`, Track B step 6) is the
- * default `launchApp` below (`launchTuiApp`) — `TuiEntryDeps.launchApp`
+ * The real Ink root component is `tui-v2/AppContainer.tsx`'s `<AppContainer>`
+ * (build-sequence step 10 of the `tui-v2` fork plan; formerly
+ * `deus-tui-app.tsx`'s `<App>`, which this file pointed at before the
+ * cutover). `launchTuiApp`, exported from `tui-v2/AppContainer.ts`, is the
+ * default `launchApp` below — `TuiEntryDeps.launchApp`
  * stays an injectable seam so this file's entry/transport/refusal logic is
  * independently testable with a fake, exactly as it already was before
  * step 6 landed.
@@ -36,14 +39,14 @@ import {
   parseDiscoveryRecord,
   type NativeChatDiscoveryRecord,
 } from '../deus-native-chat.js';
-import { launchTuiApp } from './deus-tui-app.js';
+import { launchTuiApp } from '../tui-v2/AppContainer.js';
 
 export const TUI_NON_TTY_MESSAGE =
   'deus tui requires an interactive terminal; use `deus chat` for scripted/CI usage.';
 
 /**
  * Launches the interactive Ink app and resolves the process exit code.
- * Defaults to `launchTuiApp` (`deus-tui-app.tsx`); overridden in tests with
+ * Defaults to `launchTuiApp` (`tui-v2/AppContainer.tsx`); overridden in tests with
  * a fake so `runTuiEntry`'s own logic is verifiable without a real TTY/Ink
  * render.
  */
