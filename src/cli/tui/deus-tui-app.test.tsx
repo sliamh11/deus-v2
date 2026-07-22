@@ -142,7 +142,12 @@ async function mountApp(
 async function waitFor(
   predicate: () => boolean,
   description: string,
-  timeoutMs = 1_000,
+  // 1s was tight enough to flake on shared CI runners (both ubuntu and
+  // windows test-windows jobs timed out identically on the permission-modal
+  // cases, which type multi-character input across several async ticks) —
+  // 5s gives real headroom without slowing local runs, where predicates
+  // resolve in single-digit ms.
+  timeoutMs = 5_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
