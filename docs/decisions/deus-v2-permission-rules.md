@@ -529,3 +529,103 @@ decisions, consequences, and reversibility/rollback provisions continue to
 stand as written
 (`docs/decisions/deus-v2-permission-rules.md:48-240`,
 `:303-377`).
+
+## Amendment (2026-07-22): Session-scoped `allow_always` persistence
+
+This amendment governs the Track A follow-up scoped per
+[LIA-470](https://linear.app/liams-private-workspace/issue/LIA-470/tui-session-scoped-allow-always-permission-grant-persistence).
+The 2026-07-21 Amendment above shipped the live interactive prompt and its
+three-way transport-level `PermissionDecision` (`'allow_once' | 'allow_always'
+| 'deny'`), but the resulting production code deliberately left `allow_once`
+and `allow_always` behaviorally identical, recorded in-line in
+`src/agent-runtimes/middleware-stack.ts` at the time this amendment was
+written:
+
+> // 'allow_once' | 'allow_always' — this ticket treats both as "allow just
+> this one call" (no persistence yet; see the plan's Non-goals).
+
+This amendment closes exactly that named gap. It does not reopen or alter any
+other decision in the 2026-07-21 Amendment or the original ADR.
+
+### Behavioral change
+
+`allow_once` and `allow_always` are now behaviorally distinct:
+
+- `allow_once` continues to allow exactly the one live call and nothing more
+  — unchanged.
+- `allow_always` additionally records a session-scoped grant, in
+  `SessionAlwaysAllowGrants` (`src/agent-runtimes/always-allow-grants.ts`),
+  BEFORE delegating to the handler. A subsequent call in the SAME session for
+  the SAME exact tool name short-circuits straight to the handler: no new
+  `permission_request` event is emitted and no `PendingPermissionRegistry`
+  entry is registered. The audit trail is not skipped — the short-circuit
+  path still appends a `ToolCallDecisionRecord` with the new
+  `source: 'always-allow-grant'` value before returning, so an
+  auto-approved-by-prior-grant call remains distinguishable in the log from a
+  freshly-asked-and-allowed one
+  (`ToolCallDecisionRecord.source` widened from `'rule' | 'default'` to
+  `'rule' | 'default' | 'always-allow-grant'`,
+  `src/agent-runtimes/middleware-stack.ts`).
+
+Matching is exact-tool-name only — no wildcard, prefix, or normalization
+logic. The always-allow surface is bounded to whatever tools the
+`'interactive'` profile already routes to `'ask'` (today: `web_search` and
+`web_fetch` only, per the 2026-07-21 Amendment's `interactive` profile
+definition), by construction, never wider.
+
+### Store shape and lifecycle
+
+`SessionAlwaysAllowGrants` wraps `Map<sessionId, Set<toolName>>` — keyed by
+session, not a bare `Set` — because `buildPermissionsMiddleware()` is rebuilt
+fresh every turn but the store itself is a process-wide singleton
+instantiated once in `src/index.ts` (alongside `PendingPermissionRegistry`)
+and threaded through `production-registry.ts` and `deus-native-backend.ts`
+using the exact same optional-dependency wiring pattern
+`PendingPermissionRegistry` already uses. A bare `Set` would leak grants
+across sessions/groups sharing one daemon process.
+
+The store is in-memory only, not SQLite-backed, and process-lifetime with no
+automatic clearing in this pass:
+
+- **In-memory, not restart-durable**: `PendingPermissionRegistry` — the one
+  existing comparable security-state object — is itself in-memory and
+  self-cleaning; nothing in this codebase requires restart-durability for a
+  permission grant, and adding SQLite persistence would force an unasked-for
+  policy decision about whether a resumed session should silently regain
+  grants nobody re-consented to in that resumed session. This is a deliberate
+  non-goal, not a silent gap.
+- **No auto-clear**: unlike `PendingPermissionRegistry`, which self-cleans
+  via a 120-second `setTimeout` per pending entry
+  (`src/agent-runtimes/permission-registry.ts`), `SessionAlwaysAllowGrants`
+  has no timer-based expiry. This is NOT justified by analogy to the
+  registry's self-cleaning behavior — that analogy does not actually support
+  "no cleanup" for a fundamentally different kind of state (a resolved grant,
+  not a pending request). The real justification is independent and
+  narrower: the always-allow surface is bounded to 2 tools today, so worst
+  case is `O(sessions × 2)` entries on a personal, low-session-count daemon —
+  genuinely small in practice, not "unbounded," but that is a distinct claim
+  from the registry analogy and is stated as such here.
+- A `clear(sessionId)` method ships now as a landing spot for a future revoke
+  command; nothing in this pass wires it to any automatic session-close
+  signal. `/v1/native-chat/close` has no session-scoped close signal to hook
+  today — wiring one is separate, more invasive work, out of scope here.
+
+### Non-goals (unchanged from the source plan)
+
+- SQLite-persisted (restart-durable) `allow_always` grants — deliberately
+  deferred.
+- Mid-session grant revocation UI or automatic expiry — `clear(sessionId)`
+  ships as an unwired landing spot only.
+- Any change to rule evaluation, profile definitions, or the `'ask'` policy
+  verdict itself — `permission-rules.ts` remains pure, with no mutable
+  runtime state, per its own file-header contract. All always-allow logic
+  lives in `middleware-stack.ts`'s `wrapToolCall`.
+
+### Continuing force of the 2026-07-21 Amendment and B7/LIA-407
+
+This amendment is additive only. The policy verdict rename/widening, the
+`interactive` profile definition, the narrowed interactive-prompt Non-Goal,
+the mutating-tool precondition, and every other provision of the 2026-07-21
+Amendment and the original ADR continue to stand as written
+(`docs/decisions/deus-v2-permission-rules.md:396-531`, `:48-240`,
+`:303-377`).

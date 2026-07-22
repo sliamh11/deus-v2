@@ -97,6 +97,7 @@ import {
   buildMiddlewareStack,
   resolveMiddlewareStackConfig,
 } from './middleware-stack.js';
+import type { SessionAlwaysAllowGrants } from './always-allow-grants.js';
 import type { PendingPermissionRegistry } from './permission-registry.js';
 import {
   buildPromptLifecycleHook,
@@ -259,6 +260,11 @@ export class DeusNativeRuntime implements AgentRuntime {
     // createProductionRuntimeRegistry. Optional — when absent, an 'ask'
     // policy verdict fails closed to deny in the permissions middleware.
     private permissionRegistry?: PendingPermissionRegistry,
+    // Session-scoped `allow_always` grants (2026-07-22 Amendment), threaded
+    // from the composition root the same way as `permissionRegistry` above.
+    // Optional — when absent, `allow_always` behaves identically to
+    // `allow_once` (no persistence), preserving pre-amendment behavior.
+    private alwaysAllowGrants?: SessionAlwaysAllowGrants,
   ) {
     this.wardenRoleModels = loadWardenRoleModels();
     this.agentSpecs = loadFilteredAgentSpecs();
@@ -756,6 +762,7 @@ export class DeusNativeRuntime implements AgentRuntime {
                   registry: this.permissionRegistry,
                   eventSink: usageEventSink,
                   sessionId: outgoingSessionId,
+                  alwaysAllowGrants: this.alwaysAllowGrants,
                 },
               }
             : {}),
@@ -1025,6 +1032,7 @@ export class DeusNativeRuntime implements AgentRuntime {
 export function createDeusNativeRuntime(
   deps: ContainerRuntimeDeps,
   permissionRegistry?: PendingPermissionRegistry,
+  alwaysAllowGrants?: SessionAlwaysAllowGrants,
 ): DeusNativeRuntime {
-  return new DeusNativeRuntime(deps, permissionRegistry);
+  return new DeusNativeRuntime(deps, permissionRegistry, alwaysAllowGrants);
 }

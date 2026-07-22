@@ -64,6 +64,7 @@ import {
   resolvePermissionProfile,
 } from './permission-rules.js';
 import { PendingPermissionRegistry } from './permission-registry.js';
+import type { SessionAlwaysAllowGrants } from './always-allow-grants.js';
 import type { RuntimeEventSink } from './types.js';
 import {
   retrieveMemoryContext,
@@ -125,10 +126,12 @@ export interface ToolCallDecisionRecord {
    *  (C1/LIA-409) record real allow/deny outcomes. */
   decision: 'allow' | 'deny';
   /** Evaluation provenance (AC1): 'rule' for an explicit rule match,
-   *  'default' for the policy fallback. Populated by the permissions layer
-   *  only; the wardens layer's decision comes from an external gate process,
-   *  not a rule/default distinction, so this stays absent there. */
-  source?: 'rule' | 'default';
+   *  'default' for the policy fallback, 'always-allow-grant' when a prior
+   *  session-scoped `allow_always` grant short-circuited the live prompt
+   *  (2026-07-22 Amendment). Populated by the permissions layer only; the
+   *  wardens layer's decision comes from an external gate process, not a
+   *  rule/default distinction, so this stays absent there. */
+  source?: 'rule' | 'default' | 'always-allow-grant';
   /** Model-safe evaluation reason — never includes tool-call arguments.
    *  Populated by the permissions layer (policy reason) and the wardens
    *  layer (the Python gate's exact `permissionDecisionReason`, or the
@@ -234,6 +237,10 @@ export interface InteractivePermissionDeps {
   registry: PendingPermissionRegistry;
   eventSink: RuntimeEventSink;
   sessionId: string;
+  /** Session-scoped `allow_always` grant store (2026-07-22 Amendment).
+   *  Omitted preserves the pre-amendment behavior exactly: `allow_always`
+   *  and `allow_once` both allow only the single live call. */
+  alwaysAllowGrants?: SessionAlwaysAllowGrants;
 }
 
 /** Bound on the model/human-visible tool-input preview in a
@@ -362,6 +369,23 @@ export function buildPermissionsMiddleware(
         return denialMessage(request, reason);
       }
 
+      // A prior `allow_always` grant for this exact (session, tool) pair
+      // short-circuits straight to the handler — no new `permission_request`
+      // event, no registry entry — but still logs an audit record before
+      // delegating, exactly like every other branch here (2026-07-22
+      // Amendment).
+      if (interactive.alwaysAllowGrants?.has(interactive.sessionId, toolName)) {
+        log.push({
+          toolName,
+          decision: 'allow',
+          source: 'always-allow-grant',
+          reason:
+            `${evaluation.reason}; a prior allow_always grant for this ` +
+            `session and tool short-circuits the live prompt`,
+        });
+        return handler(request);
+      }
+
       // Register BEFORE emitting the event so a response can never race an
       // unregistered requestId (same ordering the LIA-465 spike proved).
       const requestId = crypto.randomUUID();
@@ -391,8 +415,12 @@ export function buildPermissionsMiddleware(
         return denialMessage(request, reason);
       }
 
-      // 'allow_once' | 'allow_always' — this ticket treats both as "allow
-      // just this one call" (no persistence yet; see the plan's Non-goals).
+      // 'allow_once' delegates this one call only. 'allow_always' additionally
+      // records a session-scoped grant (2026-07-22 Amendment) BEFORE
+      // delegating, so a concurrent/nested handler call already observes it.
+      if (decision === 'allow_always') {
+        interactive.alwaysAllowGrants?.add(interactive.sessionId, toolName);
+      }
       log.push({
         toolName,
         decision: 'allow',
