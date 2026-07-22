@@ -138,7 +138,7 @@ export function AppContainer({
     busy,
     setInput: (next) => dispatchLocal({ type: 'input_change', value: next }),
     submitTurn,
-    respondPermission: (input, key) => bridge.respondPermission(input, key),
+    respondPermission: (key) => bridge.respondPermission(key),
     onExit,
   };
 

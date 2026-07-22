@@ -12,9 +12,10 @@
  * - Message list (`components/messages/MessageList.tsx`) — the scrolling
  *   transcript, itself split into a message seam and a tool-call seam (see
  *   that file's header).
- * - Permission modal (`components/PermissionModal.tsx`) — TEMPORARY
- *   typed-letter chrome, restyled to arrow-key `RadioButtonSelect` in
- *   build-sequence step 8 per design decision #3.
+ * - Permission modal (`components/PermissionModal.tsx`) — arrow-key
+ *   `RadioButtonSelect`-style chrome (build-sequence step 8, design
+ *   decision #3), driving Deus's real 3-way decision contract via
+ *   `deus-tui-permission-decision-v2.ts`.
  * - Composer (`components/Composer.tsx`) — minimal text input; command
  *   palette / local-command interpretation intentionally NOT wired here,
  *   deferred to build-sequence step 9's command framework.
@@ -49,6 +50,7 @@ export function App(): React.ReactNode {
           key={state.permission.requestId}
           toolName={state.permission.toolName}
           toolInputPreview={state.permission.toolInputPreview}
+          cursorIndex={state.permission.cursorIndex}
           onKeypress={respondPermission}
         />
       ) : (

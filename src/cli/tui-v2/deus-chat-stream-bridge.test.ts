@@ -163,11 +163,13 @@ describe('createChatStreamBridge — permission_request blocking', () => {
       requestId: 'req-1',
       toolName: 'web_search',
       toolInputPreview: '{"query":"x"}',
+      cursorIndex: 0,
     });
     expect(order).toEqual([]); // genuinely paused — nothing past the permission event yet
     expect(respondPermissionSpy).not.toHaveBeenCalled();
 
-    bridge.respondPermission('y', {});
+    // Cursor opens at index 0 ("Allow once"); Enter resolves it directly.
+    bridge.respondPermission({ return: true });
 
     // Stream resumes immediately, before the fake network call settles.
     await wait();
@@ -179,7 +181,7 @@ describe('createChatStreamBridge — permission_request blocking', () => {
     await turnPromise;
   });
 
-  it('leaves the modal open and the stream paused when a keypress does not yet resolve to a decision', async () => {
+  it('leaves the modal open and the stream paused when a keypress only moves the cursor rather than resolving a decision', async () => {
     const harness = createHarness();
     const order: string[] = [];
     const transport: ChatTransport = {
@@ -207,15 +209,17 @@ describe('createChatStreamBridge — permission_request blocking', () => {
     const turnPromise = bridge.submitTurn('edit it');
     await wait();
 
-    // 'al' is a partial word for allow_always: does not resolve.
-    bridge.respondPermission('al', {});
+    // Down arrow just moves the cursor to index 1 ("Always allow"): does not resolve.
+    bridge.respondPermission({ downArrow: true });
     await wait();
     expect(order).toEqual([]);
-    expect(harness.currentState().permission).toBeDefined();
+    expect(harness.currentState().permission).toEqual(
+      expect.objectContaining({ cursorIndex: 1 }),
+    );
     expect(transport.respondPermission).not.toHaveBeenCalled();
 
-    // Now a full, resolving decision.
-    bridge.respondPermission('always', {});
+    // Now Enter resolves whatever's currently highlighted (index 1 == allow_always).
+    bridge.respondPermission({ return: true });
     await wait();
     expect(order).toEqual(['resumed']);
     expect(transport.respondPermission).toHaveBeenCalledWith(
@@ -254,7 +258,10 @@ describe('createChatStreamBridge — permission_request blocking', () => {
 
     const turnPromise = bridge.submitTurn('fetch it');
     await wait();
-    bridge.respondPermission('n', {});
+    // Move to index 2 ("Deny") and confirm.
+    bridge.respondPermission({ downArrow: true });
+    bridge.respondPermission({ downArrow: true });
+    bridge.respondPermission({ return: true });
     await turnPromise;
     await wait();
 
@@ -282,7 +289,7 @@ describe('createChatStreamBridge — permission_request blocking', () => {
       setState: harness.setState,
     });
 
-    bridge.respondPermission('y', {});
+    bridge.respondPermission({ return: true });
     expect(transport.respondPermission).not.toHaveBeenCalled();
   });
 });

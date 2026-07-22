@@ -43,7 +43,7 @@ import type { ChatTransport } from '../deus-native-chat-client.js';
 import type { ChatDisplayEvent } from '../deus-native-chat.js';
 import { DENY_TIMEOUT_MS } from '../../agent-runtimes/permission-registry.js';
 import { tuiReduce, type TuiAction, type TuiState } from './deus-tui-state.js';
-import type { PermissionKeypress } from './deus-tui-permission-decision.js';
+import type { PermissionListKeypress } from './deus-tui-permission-decision-v2.js';
 
 export interface ChatStreamBridgeDeps {
   transport: ChatTransport;
@@ -67,11 +67,12 @@ export interface ChatStreamBridge {
   submitTurn(prompt: string): Promise<void>;
   /**
    * Resolve the currently open permission modal for one keypress, per
-   * `deus-tui-permission-decision.ts`'s existing typed-letter contract.
-   * No-ops if no permission modal is open, or if the keypress doesn't yet
-   * resolve to a decision (the modal stays open, the stream stays paused).
+   * `deus-tui-permission-decision-v2.ts`'s arrow-key list-select contract
+   * (build-sequence step 8). No-ops if no permission modal is open, or if
+   * the keypress only moves the cursor / is inert (the modal stays open,
+   * the stream stays paused) rather than resolving a decision.
    */
-  respondPermission(input: string, key: PermissionKeypress): void;
+  respondPermission(key: PermissionListKeypress): void;
   /** True while a `submitTurn` call has not yet resolved. */
   isBusy(): boolean;
 }
@@ -125,14 +126,13 @@ export function createChatStreamBridge(
     }
   }
 
-  function respondPermission(input: string, key: PermissionKeypress): void {
+  function respondPermission(key: PermissionListKeypress): void {
     const state = getState();
     if (!state.permission) return;
     const requestId = state.permission.requestId;
 
     const result = tuiReduce(state, {
       type: 'permission_keypress',
-      input,
       key,
     });
     setState(result.state);

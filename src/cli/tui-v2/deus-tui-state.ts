@@ -18,9 +18,9 @@ import type {
   NativeChatStatus,
 } from '../deus-native-chat.js';
 import {
-  keyToPermissionDecision,
-  type PermissionKeypress,
-} from './deus-tui-permission-decision.js';
+  permissionListKeyToResult,
+  type PermissionListKeypress,
+} from './deus-tui-permission-decision-v2.js';
 
 export type TranscriptEntryKind =
   'user' | 'assistant' | 'tool' | 'progress' | 'error';
@@ -35,6 +35,8 @@ export interface PermissionModalState {
   requestId: string;
   toolName: string;
   toolInputPreview: string;
+  /** Index into `PERMISSION_LIST_OPTIONS` — the arrow-key modal's highlighted row. Always opens at 0 ("Allow once"). */
+  cursorIndex: number;
 }
 
 export interface CommandPaletteState {
@@ -56,7 +58,7 @@ export type TuiAction =
   | { type: 'status_updated'; status: NativeChatStatus }
   | { type: 'open_palette' }
   | { type: 'close_palette' }
-  | { type: 'permission_keypress'; input: string; key: PermissionKeypress };
+  | { type: 'permission_keypress'; key: PermissionListKeypress };
 
 export interface TuiReduceResult {
   state: TuiState;
@@ -114,6 +116,7 @@ function reduceDisplayEvent(
           requestId: event.requestId,
           toolName: event.toolName,
           toolInputPreview: event.toolInputPreview,
+          cursorIndex: 0,
         },
       };
     case 'assistant_done':
@@ -155,12 +158,30 @@ export function tuiReduce(state: TuiState, action: TuiAction): TuiReduceResult {
       return { state: { ...state, palette: { open: false } } };
     case 'permission_keypress': {
       if (!state.permission) return { state };
-      const decision = keyToPermissionDecision(action.input, action.key);
-      if (decision === undefined) return { state };
-      return {
-        state: { ...state, permission: undefined },
-        permissionDecision: decision,
-      };
+      const result = permissionListKeyToResult(
+        state.permission.cursorIndex,
+        action.key,
+      );
+      switch (result.type) {
+        case 'noop':
+          return { state };
+        case 'move':
+          return {
+            state: {
+              ...state,
+              permission: { ...state.permission, cursorIndex: result.index },
+            },
+          };
+        case 'resolve':
+          return {
+            state: { ...state, permission: undefined },
+            permissionDecision: result.decision,
+          };
+        default: {
+          const unhandled: never = result;
+          return unhandled;
+        }
+      }
     }
     default: {
       const unhandled: never = action;

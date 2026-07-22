@@ -26,7 +26,7 @@
 
 import { createContext, useContext } from 'react';
 import type { TuiState } from '../deus-tui-state.js';
-import type { PermissionKeypress } from '../deus-tui-permission-decision.js';
+import type { PermissionListKeypress } from '../deus-tui-permission-decision-v2.js';
 
 export interface AppStateValue {
   /** Current `tuiReduce` state — transcript, input, permission modal, command palette, status. */
@@ -48,15 +48,14 @@ export interface AppStateValue {
    */
   submitTurn: (prompt: string) => void;
   /**
-   * Forward one permission-modal keystroke. Per
-   * `deus-tui-permission-decision.ts`'s typed-letter contract for now — the
-   * plan's design decision #3 restyles this to an arrow-key
-   * `RadioButtonSelect` model with a freshly oracle-authored decision
-   * mapping in build-sequence step 8; this context's shape does not need to
-   * change for that, only the caller's `key` values and the component that
-   * calls it.
+   * Forward one permission-modal keystroke, per
+   * `deus-tui-permission-decision-v2.ts`'s arrow-key list-select contract
+   * (build-sequence step 8, design decision #3): Up/Down move
+   * `state.permission.cursorIndex`, Enter resolves the highlighted option.
+   * The cursor index itself lives in `TuiState`, not here — this is just the
+   * one action entry point every keystroke funnels through.
    */
-  respondPermission: (input: string, key: PermissionKeypress) => void;
+  respondPermission: (key: PermissionListKeypress) => void;
   /** Requests app shutdown (mirrors `deus-tui-app.tsx`'s `onExit` prop). */
   onExit: () => void;
 }
