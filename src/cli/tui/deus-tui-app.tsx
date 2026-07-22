@@ -99,7 +99,7 @@ export function App({
   cwd,
   initialStatus,
   onExit,
-}: AppProps): JSX.Element {
+}: AppProps): React.ReactNode {
   const [state, setState] = useState<TuiState>(() =>
     buildInitialState(initialStatus),
   );

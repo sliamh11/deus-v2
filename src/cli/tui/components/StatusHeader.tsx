@@ -19,7 +19,7 @@ export interface StatusHeaderProps {
   status: NativeChatStatus | undefined;
 }
 
-export function StatusHeader({ status }: StatusHeaderProps): JSX.Element {
+export function StatusHeader({ status }: StatusHeaderProps): React.ReactNode {
   if (!status) {
     return (
       <Box borderStyle="round" borderColor="gray" paddingX={1}>

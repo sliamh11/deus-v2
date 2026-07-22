@@ -61,7 +61,7 @@ export function PermissionModal({
   toolName,
   toolInputPreview,
   onKeypress,
-}: PermissionModalProps): JSX.Element {
+}: PermissionModalProps): React.ReactNode {
   const [answer, setAnswer] = useState('');
   const [deadline] = useState(() => Date.now() + DENY_TIMEOUT_MS);
   const [remainingMs, setRemainingMs] = useState(DENY_TIMEOUT_MS);

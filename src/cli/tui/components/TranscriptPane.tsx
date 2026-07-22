@@ -33,7 +33,7 @@ export interface TranscriptPaneProps {
 
 const DEFAULT_MAX_VISIBLE = 200;
 
-function rowFor(entry: TranscriptEntry): JSX.Element {
+function rowFor(entry: TranscriptEntry): React.ReactNode {
   switch (entry.kind) {
     case 'user':
       return (
@@ -70,7 +70,7 @@ function rowFor(entry: TranscriptEntry): JSX.Element {
 export function TranscriptPane({
   entries,
   maxVisible = DEFAULT_MAX_VISIBLE,
-}: TranscriptPaneProps): JSX.Element {
+}: TranscriptPaneProps): React.ReactNode {
   const visible =
     entries.length > maxVisible ? entries.slice(-maxVisible) : entries;
 
