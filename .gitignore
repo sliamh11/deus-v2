@@ -54,6 +54,7 @@ groups/*
 !groups/main/
 !groups/global/
 !groups/linear-dispatch/
+!groups/deus-native-cli/
 groups/main/*
 groups/global/*
 groups/linear-dispatch/*
@@ -64,6 +65,13 @@ groups/linear-dispatch/*
 # Generated group CLAUDE.md files (local customizations, like .env)
 groups/*/CLAUDE.md
 !groups/*/CLAUDE.md.template
+# deus-native-cli is the exception: it's not a user-registered channel
+# (deus-native-chat.ts's CLI_CHAT_GROUP_FOLDER is a fixed, code-owned
+# synthetic group, deliberately never passed through setup/register.ts's
+# interactive flow), so it has no per-install ASSISTANT_NAME to template
+# and no CLAUDE.md.template + registration-time-instantiation step ever
+# generates it. Its identity content is committed literally instead.
+!groups/deus-native-cli/CLAUDE.md
 
 # Secrets — never commit credentials, tokens, or keys
 # RULE: this project is designed to be public — treat every commit as if it will be public
