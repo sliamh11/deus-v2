@@ -192,6 +192,29 @@ describe('host context registry', () => {
     ]);
   });
 
+  it('the deus-native CLI/TUI synthetic group loads its own identity once its folder exists (regression: it silently loaded nothing before groups/deus-native-cli/ existed)', () => {
+    // Reproduces the exact shape of `CLI_CHAT_GROUP_FOLDER` (deus-native-chat.ts):
+    // a real, non-control, unregistered group folder — `resolveGroupFolder`
+    // always returns a resolved path string regardless of whether the
+    // directory exists on disk, so the historical bug was silent (zero
+    // entries, not a thrown error) until `groups/deus-native-cli/CLAUDE.md`
+    // was created for real in production.
+    const cliContext = makeContext({ groupFolder: 'deus-native-cli' });
+
+    // Before the fix: the directory never existed, so this returned [].
+    expect(labels(cliContext, undefined)).toEqual([]);
+
+    // After the fix: writing the real identity file (mirroring
+    // groups/deus-native-cli/CLAUDE.md) makes it load like any other group.
+    const cliRoot = mkdir('groups/deus-native-cli');
+    writeFile(cliRoot, 'CLAUDE.md', 'You are Deus...');
+
+    expect(labels(cliContext, undefined)).toEqual(['GROUP RULES: CLAUDE.md']);
+    expect(blocks(cliContext, undefined)).toEqual([
+      '=== GROUP RULES: CLAUDE.md ===\nYou are Deus...',
+    ]);
+  });
+
   it('loads all control-group scopes except global and formats every block exactly', () => {
     writeAll(groupRoot, 'group');
     writeAll(globalRoot, 'global');
