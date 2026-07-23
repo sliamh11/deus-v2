@@ -41,7 +41,7 @@
     "truecourse:list-diff": "truecourse list --diff"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.103.0",
+    "@anthropic-ai/sdk": "^0.113.0",
     "@langchain/anthropic": "^1.5.1",
     "@langchain/core": "^1.2.2",
     "@langchain/langgraph-checkpoint-sqlite": "^1.0.3",
