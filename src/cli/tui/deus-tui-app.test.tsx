@@ -166,11 +166,42 @@ async function waitFor(
   }
 }
 
-function typeText(
+/**
+ * Writes `text` one character at a time with a settle `tick()` between each
+ * `stdin.write` — required for the SAME reason `mountApp`'s own tick is
+ * (see this file's module doc): `InputLine`'s stable `useInput` handler
+ * (`InputLine.tsx`) reads the controlled `value` off a `latest` ref that is
+ * only refreshed on the NEXT render, so a second keystroke fired in the
+ * same synchronous burst as the first reads that same stale, pre-first-
+ * keystroke ref — not "value so far", just whatever `value` was before
+ * typing started — and the resulting `onChange(value + input)` call
+ * OVERWRITES rather than appends. Confirmed directly: typing a 2-character
+ * string with zero ticks between the writes drops the ENTIRE string (both
+ * `latest.current.value` reads during the burst see the pristine `''`, so
+ * the trailing `\r`'s `onSubmit(value)` — itself also reading the same
+ * stale ref — submits an empty line and `transport.turn()` is never
+ * called), not just a dropped tail character; every one of this file's 10
+ * Windows-CI-only `waitFor` timeouts traced back to exactly this pattern
+ * (multi-character `typeText` calls followed immediately by a `stdin.write`
+ * for Enter/`/`, all in the same synchronous burst, with no tick to let
+ * `InputLine`'s render commit and refresh the ref in between). Real
+ * terminal input is never actually synchronous like this — physical
+ * keystrokes always have real elapsed time (and therefore event-loop
+ * ticks) between them — so, like `mountApp`'s tick, this is a test-harness
+ * timing fact, not a bug in the component under test. Matches the same
+ * fix `tui-v2/AppContainer.integration.test.tsx`'s own `typeText` already
+ * documents and applies for `Composer`/`PermissionModal` (LIA-471);
+ * `tui/deus-tui-app.test.tsx`'s copy of this helper predates that fix and
+ * has been carrying this gap since Track B step 14.
+ */
+async function typeText(
   stdin: { write: (data: string) => void },
   text: string,
-): void {
-  for (const char of text) stdin.write(char);
+): Promise<void> {
+  for (const char of text) {
+    stdin.write(char);
+    await tick();
+  }
 }
 
 describe('<App> — startup', () => {
@@ -213,7 +244,7 @@ describe('<App> — chat turns', () => {
       />,
     );
 
-    typeText(instance.stdin, 'hi');
+    await typeText(instance.stdin, 'hi');
     instance.stdin.write('\r');
 
     await waitFor(
@@ -237,7 +268,7 @@ describe('<App> — local commands', () => {
       />,
     );
 
-    typeText(instance.stdin, '/status');
+    await typeText(instance.stdin, '/status');
     instance.stdin.write('\r');
 
     await waitFor(
@@ -258,7 +289,7 @@ describe('<App> — local commands', () => {
       />,
     );
 
-    typeText(instance.stdin, '/plan on');
+    await typeText(instance.stdin, '/plan on');
     instance.stdin.write('\r');
 
     await waitFor(
@@ -282,7 +313,7 @@ describe('<App> — local commands', () => {
       />,
     );
 
-    typeText(instance.stdin, '/exit');
+    await typeText(instance.stdin, '/exit');
     instance.stdin.write('\r');
 
     await waitFor(() => exited, 'onExit invoked');
@@ -310,7 +341,7 @@ describe('<App> — command palette', () => {
     // '/' must have opened the palette, not been inserted into the input line.
     expect(instance.lastFrame()).not.toContain('> /');
 
-    typeText(instance.stdin, 'stat'); // fuzzy-isolates "/status" among LOCAL_COMMANDS
+    await typeText(instance.stdin, 'stat'); // fuzzy-isolates "/status" among LOCAL_COMMANDS
     await waitFor(
       () => (instance.lastFrame() ?? '').includes('/status'),
       'palette filtered to /status',
@@ -350,7 +381,7 @@ describe('<App> — permission modal', () => {
       />,
     );
 
-    typeText(instance.stdin, 'search please');
+    await typeText(instance.stdin, 'search please');
     instance.stdin.write('\r');
 
     await waitFor(
@@ -410,7 +441,7 @@ describe('<App> — permission modal', () => {
       />,
     );
 
-    typeText(instance.stdin, 'fetch please');
+    await typeText(instance.stdin, 'fetch please');
     instance.stdin.write('\r');
     await waitFor(
       () => (instance.lastFrame() ?? '').includes('Permission requested'),
@@ -459,7 +490,7 @@ describe('<App> — permission modal', () => {
       />,
     );
 
-    typeText(instance.stdin, 'search please');
+    await typeText(instance.stdin, 'search please');
     instance.stdin.write('\r');
     await waitFor(
       () => (instance.lastFrame() ?? '').includes('Permission requested'),
@@ -514,7 +545,7 @@ describe('<App> — permission modal', () => {
       />,
     );
 
-    typeText(instance.stdin, 'fetch please');
+    await typeText(instance.stdin, 'fetch please');
     instance.stdin.write('\r');
     await waitFor(
       () => (instance.lastFrame() ?? '').includes('Permission requested'),
@@ -571,7 +602,7 @@ describe('<App> — busy gating', () => {
       />,
     );
 
-    typeText(instance.stdin, 'first');
+    await typeText(instance.stdin, 'first');
     instance.stdin.write('\r');
     await waitFor(() => turnCalls === 1, 'first turn started');
 
@@ -579,7 +610,7 @@ describe('<App> — busy gating', () => {
     // flight — InputLine's useInput is inactive (isActive=false) during
     // `busy`, so this must have zero effect on the input line and must
     // NEVER trigger a second transport.turn() call.
-    typeText(instance.stdin, 'second');
+    await typeText(instance.stdin, 'second');
     instance.stdin.write('\r');
     expect(instance.lastFrame()).not.toContain('> second');
     expect(turnCalls).toBe(1);

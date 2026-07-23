@@ -47,7 +47,7 @@ export function InputLine({
   onChange,
   onSubmit,
   onOpenPalette,
-}: InputLineProps): JSX.Element {
+}: InputLineProps): React.ReactNode {
   const latest = useRef({ value, onChange, onSubmit, onOpenPalette });
   latest.current = { value, onChange, onSubmit, onOpenPalette };
 

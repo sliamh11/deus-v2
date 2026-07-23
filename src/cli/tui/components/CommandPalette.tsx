@@ -50,7 +50,7 @@ function fuzzyMatches(query: string, candidate: string): boolean {
 export function CommandPalette({
   onSelect,
   onClose,
-}: CommandPaletteProps): JSX.Element {
+}: CommandPaletteProps): React.ReactNode {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
   const matches = LOCAL_COMMANDS.filter((command) =>
