@@ -45,7 +45,7 @@
     "@langchain/anthropic": "^1.5.1",
     "@langchain/core": "^1.2.2",
     "@langchain/langgraph-checkpoint-sqlite": "^1.0.3",
-    "@linear/sdk": "^88.0.0",
+    "@linear/sdk": "^88.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.11.1",
     "cron-parser": "^5.6.1",
