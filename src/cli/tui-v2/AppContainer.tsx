@@ -40,10 +40,22 @@
  * 3. `createIdleNotifier` (`notifications/idle-notify.ts`) — `onBusyChange`
  *    fires `notifyTurnComplete` on the false (turn-finished) transition;
  *    every composer keystroke and submitted line calls `recordActivity`.
+ *
+ * LIA-475 addition: `listMentionDirectory`, a real `fs.readdir`-backed,
+ * cwd-relative, one-level directory listing adapter exposed through
+ * `AppStateContext`'s `listMentionDirectory` for `Composer.tsx`'s `@`-mention
+ * autocomplete. Deliberately separate from `realAtMentionFsDeps` above (that
+ * one resolves/reads FULL mention content for a SUBMITTED prompt; this one
+ * only lists directory ENTRY NAMES for a still-being-typed suggestion list)
+ * — different callers, different shapes, no value in forcing them through
+ * one interface. Caps returned entries the same defensive way
+ * `at-mention-processor.ts`'s `resolveOnePath` caps directory listings
+ * (`MAX_DIR_ENTRIES`), so a huge directory (e.g. an unfiltered
+ * `node_modules`) can't blow up the dropdown's render.
  */
 
 import type React from 'react';
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { render as inkRender } from 'ink';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
@@ -88,6 +100,41 @@ const realAtMentionFsDeps: AtMentionFsDeps = {
   readdir: (path) => readdir(path),
   resolvePath: (cwd, name) => resolvePath(cwd, name),
 };
+
+/** Mirrors `at-mention-processor.ts`'s own directory-listing cap — see this file's module doc. */
+const MAX_MENTION_DIR_ENTRIES = 200;
+
+/**
+ * Real `@`-mention directory-listing adapter (LIA-475): resolves `dirPart`
+ * against `cwd`, lists it non-recursively, and appends a trailing `/` to
+ * every subdirectory name so `Composer.tsx`'s autocomplete never needs its
+ * own `fs.stat` to decide that. Never rejects — any `readdir` failure
+ * (missing path, not a directory, permission error) resolves to `[]`.
+ *
+ * Sorts BEFORE capping (not after): `fs.readdir`'s raw order is
+ * filesystem/inode-dependent, not alphabetical, so slicing first would make
+ * the 200-entry cutoff drop an arbitrary, OS-order-dependent subset — a
+ * `segmentPrefix` filter downstream in `autocomplete.ts` could then miss a
+ * real entry that exists but happened to land past the cut. Sorting first
+ * makes the cap deterministic: always the alphabetically-last entries, the
+ * same trade-off a user would expect from any prefix-completing UI.
+ */
+async function listMentionDirectoryReal(
+  cwd: string,
+  dirPart: string,
+): Promise<string[]> {
+  const absoluteDir = resolvePath(cwd, dirPart === '' ? '.' : dirPart);
+  let dirents;
+  try {
+    dirents = await readdir(absoluteDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return dirents
+    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, MAX_MENTION_DIR_ENTRIES);
+}
 
 /** Mirrors `tui/deus-tui-app.tsx`'s `buildInitialState` exactly. */
 function buildInitialState(initialStatus: NativeChatStatus): TuiState {
@@ -254,6 +301,11 @@ export function AppContainer({
     })();
   }
 
+  const listMentionDirectory = useCallback(
+    (dirPart: string) => listMentionDirectoryReal(cwd, dirPart),
+    [cwd],
+  );
+
   const value: AppStateValue = {
     state,
     busy,
@@ -264,6 +316,7 @@ export function AppContainer({
     submitTurn,
     respondPermission: (key) => bridge.respondPermission(key),
     onExit,
+    listMentionDirectory,
   };
 
   return (

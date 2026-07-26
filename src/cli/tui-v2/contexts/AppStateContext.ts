@@ -58,6 +58,22 @@ export interface AppStateValue {
   respondPermission: (key: PermissionListKeypress) => void;
   /** Requests app shutdown (mirrors `deus-tui-app.tsx`'s `onExit` prop). */
   onExit: () => void;
+  /**
+   * Real cwd-relative, one-level directory listing for `Composer.tsx`'s
+   * `@`-mention autocomplete (LIA-475): given a directory portion of a
+   * typed path (relative to `AppContainer.tsx`'s `cwd`, `""` meaning `cwd`
+   * itself), resolves to that directory's entry names with a trailing `/`
+   * already appended to any subdirectory name. Never rejects — resolves to
+   * `[]` on any real `fs.readdir` failure (missing/unreadable path, not a
+   * directory, etc.) so a bad path never crashes the composer, only
+   * produces an empty suggestion list. Threaded through this context
+   * (rather than a prop `App.tsx` would otherwise have no way to receive,
+   * since it renders `<App />` with no props of its own — see that file's
+   * header) specifically because it needs `AppContainer.tsx`'s real `cwd`
+   * and real `fs`, unlike the static `commands/index.ts` `ALL_COMMANDS`
+   * list `App.tsx` imports directly for the sibling `/`-autocomplete case.
+   */
+  listMentionDirectory: (dirPart: string) => Promise<string[]>;
 }
 
 export const AppStateContext = createContext<AppStateValue | undefined>(

@@ -26,7 +26,11 @@
  *   Ctrl+R reverse-history search (see its own header) and receives
  *   `submitTurn` as-is — slash-command interpretation and `@path` mention
  *   expansion both happen inside `AppContainer.tsx`'s `submitTurn`, not
- *   here (see that file's header).
+ *   here (see that file's header). LIA-475 adds two more props: `commands`
+ *   is the static `ALL_COMMANDS` registry imported directly (no context
+ *   needed — it's a fixed list, not runtime state), and `listDirectory` is
+ *   `useAppState()`'s `listMentionDirectory` (which DOES need context,
+ *   since it closes over `AppContainer.tsx`'s real `cwd`/`fs`).
  *
  * Exactly one of PermissionModal / search bar / Composer renders at a time
  * (mirroring `tui/deus-tui-app.tsx`'s mutual-exclusion invariant for
@@ -45,6 +49,7 @@ import { MessageList } from './components/messages/MessageList.js';
 import { PermissionModal } from './components/PermissionModal.js';
 import { Composer } from './components/Composer.js';
 import { TranscriptSearchBar } from './components/TranscriptSearchBar.js';
+import { ALL_COMMANDS } from './commands/index.js';
 import {
   createTranscriptSearchState,
   currentTranscriptMatch,
@@ -54,7 +59,7 @@ import {
 } from './search/transcript-search.js';
 
 export function App(): React.ReactNode {
-  const { state, busy, submitTurn, setInput, respondPermission } =
+  const { state, busy, submitTurn, setInput, respondPermission, listMentionDirectory } =
     useAppState();
   const [search, setSearch] = useState<TranscriptSearchState>(
     createTranscriptSearchState,
@@ -101,6 +106,8 @@ export function App(): React.ReactNode {
           history={history}
           onChange={setInput}
           onSubmit={submitTurn}
+          commands={ALL_COMMANDS}
+          listDirectory={listMentionDirectory}
         />
       )}
     </Box>
