@@ -1,0 +1,24 @@
+{
+  "name": "ai-sdk-tui-demo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Throwaway LIA-494 prototype: @ai-sdk/tui evaluation for tui-v2's permission-prompt + diff-rendering screens. NOT wired into the real app's dependency tree.",
+  "type": "module",
+  "scripts": {
+    "screen1": "tsx src/screen1-permission.tsx",
+    "screen2": "tsx src/screen2-tool-diff.tsx"
+  },
+  "dependencies": {
+    "@ai-sdk/tui": "1.0.38",
+    "ai": "7.0.37",
+    "react": "^18.3.1",
+    "ink": "^5.0.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "@types/react": "^18.3.12",
+    "@types/node": "^22.10.2"
+  }
+}
