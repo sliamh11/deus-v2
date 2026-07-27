@@ -1,0 +1,24 @@
+{
+  "name": "assistant-ui-ink-proto",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Throwaway prototype for LIA-493 (wayfinder map LIA-492) — evaluating @assistant-ui/react-ink as a base for tui-v2's hand-rolled Ink screens. Self-contained scratch package, deliberately NOT wired into the real app's dependency tree. Two screens to be built by a later stage: (1) three-way permission prompt (allow-once/allow-always/deny), (2) tool-call result with structured diff + status glyph (success/error/unknown, never a false-positive green check on failure).",
+  "type": "module",
+  "scripts": {
+    "permission": "tsx src/permission-screen.tsx",
+    "diff": "tsx src/diff-screen.tsx"
+  },
+  "dependencies": {
+    "@assistant-ui/react-ink": "0.0.33",
+    "ink": "^6.0.0",
+    "react": "^19.0.0",
+    "diff": "^9.0.0",
+    "parse-diff": "^0.12.0",
+    "ink-spinner": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
