@@ -286,3 +286,173 @@ it as-is requires absorbing one real upstream packaging bug immediately
 versus the fully hand-rolled `tui-v2` status quo is real but partial,
 concentrated in the data-model and diff-rendering primitives rather than in
 ready-to-use interactive screens.
+
+## Round 3 — Claude Code design mimicry + feature exploration
+
+Comparison round for LIA-493 (wayfinder map LIA-492): re-skin both screens to
+the shared "Claude Code Design Language" spec (`cc-design-spec.md`'s Color
+system / canonical `⏺` line-shape / OSC 8 file-path hyperlink / "do not box
+every transcript line" rules), and answer one additional feature-exploration
+question about a third `@assistant-ui/react-ink` surface
+(`useRemoteThreadListRuntime`) this comparison hadn't touched yet. Built by
+three parallel agents (permission screen, diff screen, spike), captured by a
+fourth, reviewed by GPT-5.6-Sol (codex exec, read-only), and brought to SHIP
+by this reconcile stage — which independently re-verified every claim below
+against the actual code and re-ran everything rather than trusting the prior
+stages' self-reports.
+
+### What was redesigned, and why
+
+**`src/permission-screen.tsx`** — replaced the round-2 bordered box with
+generic `"yellow"`/`"cyan"`/`"green"`/`"red"` Ink color names and a `✓`/`✗`
+glyph pair with: an explicit hex `tokens` object matching the spec verbatim;
+a single stateful `⏺` bullet whose *color* (never a different glyph) carries
+allow/deny state; a hand-rolled OSC 8 hyperlink for the file path (no
+`terminal-link`-style package is installed and this prototype may not run
+`npm install`, so `oscHyperlink()`/`pathHyperlink()` implement the same
+`ESC ]8;;URL BEL label ESC ]8;; BEL` contract directly); numbered `1./2./3.`
+options with a `›` cursor marker and an `accent.info` "(persists until
+revoked)" note on "Always allow"; and collapsing the panel into a single
+concise row once resolved, per the spec's "collapse the panel into a
+concise tool-call row" rule. The library-owned data model (`approval` /
+`ToolApprovalOption[]` / `respondToApproval` / the message-level
+`requires-action` status) was preserved verbatim — only presentation moved.
+
+**`src/diff-screen.tsx`** — replaced the round-2 `✓`/`✗`/`?` `statusGlyph()`
+(an explicitly prohibited pattern per the spec: "do not switch between
+unrelated success/error glyph families") with the same canonical `⏺`
+bullet-carries-color convention; added the hex `tokens` object; split the
+fixture's pre-formatted `"Edit(path)"` string into separate
+`toolName`/`path`/`argsPreview` fields so the header and the path hyperlink
+each get a real field instead of parsing a display string; and stopped
+boxing every transcript line, reserving the rounded panel for the diff
+itself (`DiffPanel`) while plain text results render unboxed
+(`TextResult`).
+
+**`src/thread-runtime-spike.tsx`** — new file, not a redesign. Answers the
+spec's named feature-exploration target: `useRemoteThreadListRuntime` +
+`RemoteThreadListAdapter` + per-thread `ThreadHistoryAdapter`, mounted for
+real under Ink against a fixture reproducing Deus's actual daemon-side
+shapes (cited by file:line in the file's header, verified first-hand this
+session — see "Spike verification" below).
+
+### Code-review outcome: REVISE → fixed → SHIP
+
+GPT-5.6-Sol (codex exec, read-only, ran real commands — `git diff --check`,
+`npm ls`, inspected `FINDINGS.md`/`package.json` — rather than reasoning
+from the diff text alone) returned **REVISE** with 10 findings. This
+reconcile stage independently re-read every flagged line before treating
+the finding as real, then fixed what was fixable without violating this
+repo's own data-privacy rules. Verified outcomes:
+
+| # | Finding | Outcome |
+|---|---|---|
+| 1 | `permission-screen.tsx`: approval alone colored the row `semantic.success` even though the scripted adapter never executed `delete_file` | **FIXED.** The screen now performs a REAL `fs` deletion of a real scratch file (`/tmp/deus-scratch.log`) the instant a decision is approved, and colors the row from the actually-observed outcome (`executionOutcomes` map, keyed by `approval.id`) — `semantic.warning` if approved but no outcome is observed yet, never `semantic.success` from the decision alone. Verified live: `ls /tmp/deus-scratch.log` confirms the file is genuinely gone after approving, and the row's raw ANSI color is `38;2;120;140;93` (`semantic.success`) only in that case. |
+| 2 | `diff-screen.tsx`: every diff routed through the same neutral panel regardless of `entry.status`, so a denied/error diff could render green additions with no "not applied" label | **FIXED.** `DiffPanel` now takes `status` and renders a bold "Proposed changes — not applied" label plus a `semantic.error`/`semantic.warning` border for any non-`success` status, guarded by a new `assertDiffPanelNeverImpliesSuccess()` regression check (mirrors the existing bullet-color guard). A new 4th fixture entry (a denied `Edit` carrying a real proposed patch) exercises this path — confirmed live in `captures/diff-screen-final.png`: red border, "Proposed changes — not applied" label, no implied success. |
+| 3 | `thread-runtime-spike.tsx` scenario 4: a reconnect attempt that only ever gets a `"chat turn is already in progress"` error was graded and colored `PASS` | **FIXED.** Split into two independently-verdicted scenarios: **4a** ("original pending approval survives a disconnect") stays `PASS` — that fact is real and daemon-held. **4b** ("reconnect-to-in-flight-turn capability") is now graded `FAIL` — resuming an in-flight turn after reconnect genuinely does not exist in the transport, and is no longer rendered green. |
+| 4 | Spec's Per-Candidate Application Plan asks to "test one real conversation group"; the spike uses a fully in-memory, synthetic fixture (`wa-family-group`) | **NOT FIXED — deliberately, after checking.** `store/messages.db` in this host's `deus-v2-mvp` checkout does contain real conversation groups with real personal message content. Seeding the fixture from that data (or driving the spike against a live daemon serving it) would put real personal chat content into a file this reconcile step commits and pushes to a shared branch — a direct violation of this repo's own rule ("Public repo changes must be user-agnostic. Personal fixtures/IDs stay in local paths.") and of PII-conservative defaults. The spike file now says this explicitly in a `RECONCILE note` instead of silently overclaiming realism it doesn't have; the underlying spec instruction remains genuinely unmet. |
+| 5 | Several `PASS` results are fixture-only, not real library/runtime behavior, and don't say so | **FIXED (labeling).** Scenario names for #2 and #6 (and the new #4a) now say explicitly in-line what they exercise: "(fixture persists CLI turns; production does not yet)" for #2, "(fixture-level, mirrors PendingPermissionRegistry)" for #4a, "(fixture-level: exercises Deus's storeMessage/getMessagesSince semantics, not assistant-ui)" for #6. The underlying caveat text was already present in most `detail` strings; the fix makes it visible at the verdict-row level too, not just in the prose. |
+| 6 | `permission-screen.tsx`: "Always allow" ends after one approval with no persisted-grant + auto-approved-second-request demonstration | **FIXED.** A second real user turn now triggers a SECOND `delete_file` request for a second scratch file that arrives already resolved (`approval.isAutomatic: true` — the library's own field for exactly this case, confirmed in `@assistant-ui/core`'s `message.d.ts`), with no interactive prompt. Verified live via tmux: after selecting "Always allow" and sending a second message, the resolved row reads `⏺ delete_file(/tmp/deus-scratch-2.log) — Always allow (deleted) — auto-approved: grant persists from earlier decision`, and `/tmp/deus-scratch-2.log` is genuinely deleted. |
+| 7 | Resolved row reconstructed the path as plain text, losing the OSC 8 hyperlink | **FIXED.** `ResolvedRow` now renders the path through the same `<ToolPath/>` component as the unresolved panel. Verified live: the resolved row's raw terminal bytes still contain the `\x1b]8;;file://...\x07` OSC 8 sequence. |
+| 8 | `diff-screen.tsx` still deep-imports an internal `dist` path instead of a pinned `assistant-cloud` dependency + public-barrel import | **Correctly graded lower severity by the reviewer** (the spec frames this as a preference, "prefer... over", not a requirement) — left as-is; `package.json`/`package-lock.json` changes are out of scope for a file-level redesign and the existing workaround still runs correctly. |
+| 9 | `thread-runtime-spike.tsx:849`: `npx tsc --noEmit` genuinely fails (TS2345) — a literal string not in the `Verdict` union was used as a verdict value | **FIXED.** The literal is now the plain `"FAIL"` union member; the extra nuance ("spec's exact phrase does not hold end-to-end") already lived verbatim in the `detail` string and is unchanged. `npx tsc --noEmit -p .` is clean across all three files after this reconcile pass (re-verified, see below). |
+| 10 | `FINDINGS.md` still described the obsolete round-2 glyph implementation and didn't document round-3's visuals or the spike | **FIXED** — this section. |
+
+Verified after fixes: `npx tsc --noEmit -p .` exits clean with **zero
+errors** across `permission-screen.tsx`, `diff-screen.tsx`, and
+`thread-runtime-spike.tsx` (re-run by this reconcile stage, not assumed from
+the build stage's self-report — the build/capture stages had in fact
+disagreed with each other on this exact point, which is why it needed
+re-checking rather than trusting either).
+
+### Captures (re-recorded after the fixes above, all live-verified)
+
+The round-2 build stage's original captures were recorded against the
+pre-fix code and are no longer an accurate record of current behavior, so
+this reconcile stage re-recorded all of them (same tmux + `asciinema
+--headless --window-size` + `agg` + `PIL.Image.seek()` method as the
+capture stage, `ffmpeg` still untouched):
+
+- `captures/permission-unresolved.png`, `captures/permission-allow-once.{cast,gif}`,
+  `captures/permission-resolved-allow-once.png` — "Allow once" scenario, now showing
+  `(deleted)` from a real filesystem deletion.
+- `captures/permission-always-allow.{cast,gif}`, `captures/permission-resolved-always-allow.png`
+  — extended to a full two-turn recording: first approval, then a second user message
+  triggering the new auto-approved persisted-grant request (finding #6).
+- `captures/permission-deny.{cast,gif}`, `captures/permission-resolved-deny.png` —
+  unchanged in substance (deny never executes) but re-recorded for consistency.
+- `captures/diff-screen.{cast,gif}`, `captures/diff-screen-final.png` — now shows
+  all 4 fixture entries including the new denied-diff "Proposed changes — not
+  applied" panel (finding #2).
+- `captures/thread-runtime-spike.{cast,gif}`, `captures/thread-runtime-spike-final.png`
+  — shows the split 4a/4b scenarios and the corrected #5/#6 verdicts/labels.
+
+The pre-round-3 files (`frame-check.png`, `frame-last.png`, `frame-mid.png`,
+`permission-flow.cast`, `permission-flow.gif`) are untouched, already
+git-tracked from an earlier round, and were correctly left alone (per the
+capture stage's own note) rather than mistaken for current evidence.
+
+### Spike: verified answer to the feature-exploration question
+
+The spec's question, verbatim: *"Can assistant-ui's thread/history runtime
+serve as a client-side projection over Deus's daemon-owned sessions without
+becoming a second source of truth?"*
+
+This reconcile stage re-read `src/thread-runtime-spike.tsx` end to end
+(not just the build agent's self-report) and re-ran it (`npx tsx
+src/thread-runtime-spike.tsx`, exit 0, clean stderr, no
+`Unhandled`/`Cannot`/`TypeError` output) after applying the fixes above.
+The scored scenarios now come out **5/7 PASS** (was reported as "5/6" before
+the finding-#3 fix split scenario 4 into 4a+4b): scenarios 1, 2, 3, 4a, and 6
+PASS; 4b and 5 FAIL.
+
+**Verified answer: PARTIALLY, and more narrowly than the build agent's own
+self-report implied before this reconcile pass.** The mechanism, confirmed
+by re-reading the code (not just the prose):
+
+- **Real win (scenario 3, unconditionally verified):** a message written
+  directly to the daemon's `messages` table by a channel bridge (WhatsApp/
+  Telegram) while no TUI is attached at all is picked up cleanly on the next
+  `ThreadHistoryAdapter.load()`, with zero client involvement. This is
+  the one scenario that depends *only* on data the daemon already owns and
+  writes independently — it genuinely satisfies "no second source of truth"
+  for that slice.
+- **Conditional win, now labeled as such (scenario 2):** CLI-turn restart
+  recovery only works because this spike's *own* fixture writes CLI-turn
+  messages into the messages-shaped store — production `deus-native-chat.ts`
+  (read end-to-end) never does this; only an opaque `resume_cursor`
+  persists today. A real integration would need to add that write path.
+- **Two confirmed, unconditional gaps (scenarios 4b and 5, now correctly
+  graded FAIL rather than PASS/ambiguous):** there is no "reattach to an
+  in-flight stream" API anywhere in `deus-native-chat-server.ts` — a
+  reconnecting client only ever gets an "already in progress" error — so
+  "approval resolution followed by resumed streaming" does not hold for a
+  genuinely disconnected+reconnected client; the daemon-side approval
+  resolves and the operation completes internally, but the reply is
+  unrecoverable through this transport shape (confirmed by a follow-up
+  restart: the reply never makes it into persisted history either, because
+  the `ChatModelAdapter` generator that would append it is permanently
+  stuck).
+- **Fixture caveat that limits how much scenario 1/2/6 prove (see finding
+  #4/#5 above):** the daemon side is a structurally-faithful but synthetic,
+  in-memory stand-in, not a live daemon or a real conversation group — real
+  personal message data exists on this host (`store/messages.db`) but using
+  it here would violate this repo's own data-privacy rules for a pushed
+  branch, so it was deliberately not used. The spec's literal "test one real
+  group" instruction is genuinely unmet, not silently satisfied.
+
+**Net for the adoption gate:** the runtime can cleanly ingest daemon state
+and out-of-band channel updates (the one unconditionally-verified win) —
+but it does *not* clear the gate for the CLI-native-chat turn/approval
+slice specifically, both because today's Deus has no durable store for CLI
+turns to project (a gap in Deus, not the library) and because the transport
+has no reconnect-to-in-flight-stream capability (also a gap in Deus, not
+the library) — `assistant-ui`'s runtime does what it's asked to with
+whatever data it's given; it cannot manufacture durability or
+resumability Deus's own transport doesn't provide. Recommendation
+unchanged from the build stage's original conclusion, now on firmer
+footing: adopt `useRemoteThreadListRuntime` only as a projection over
+already-durable, already-multi-writer-safe daemon state (the WhatsApp/
+Telegram `messages` table), not as the vehicle for CLI-turn history or
+approval-resume, unless Deus first adds its own durable CLI-turn transcript
+and a stream-reattach mechanism.
