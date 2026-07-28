@@ -391,3 +391,96 @@ agent's file/artifact/spike claims themselves; all paths, LOC-adjacent
 claims, and the spike's exit code, scenario outcomes, and cited
 production-file line contents were independently confirmed against the
 actual files in this worktree.
+
+## Round 4 — full Claude Code app-shell mimicry (`src/full-shell.tsx`)
+
+Rounds 1-3 evaluated `@ai-sdk/tui` through isolated pieces: two standalone
+screens (permission prompt, tool-diff result) and a headless runner spike.
+This round composes an entire shell into one runnable Ink app —
+header/status bar, rotating-gerund spinner, multi-turn transcript with
+genuinely streamed assistant text, an in-flow tool call resolving to a
+diff, an inline permission prompt that interrupts and then resumes a live
+session, a footer Tasks pill, and a composer — driven by one
+scripted-but-live fixture conversation, so the recording shows the whole
+experience flow rather than a gallery of disconnected clips.
+
+`npx tsc --noEmit` is clean (exit 0) for `src/full-shell.tsx`.
+
+### Capture (verified live, not assumed from the build report)
+
+Captured with the same proven pattern as prior rounds: a 120x40 tmux
+session (wider/taller than the usual 100x30 because the full shell's
+header-to-footer height needs the extra rows to avoid clipping) running
+`asciinema rec --window-size 120x40 captures/full-shell.cast -c 'npx tsx
+src/full-shell.tsx'`, then converted with `agg`. The recording is one
+continuous 18.74s session (confirmed by summing the cast file's own
+relative timestamps), not a stitch of separate clips — including a real,
+live keypress: the permission prompt was allowed to sit and count down
+genuinely (confirmed via direct tmux `capture-pane` mid-countdown, e.g.
+"auto-denies in 14s"/"12s"), then `tmux send-keys -t fullshell "1"` was
+sent to press **1 (Allow once)**, and the flow visibly continued into the
+diff, test run, and completion — not a hardcoded single path. Frame
+timestamps for the diff/test/footer content were independently confirmed
+against the cast file's own text stream (`grep`-equivalent search over the
+decoded JSON lines), not guessed from wall-clock sleep durations, because
+those two clocks diverge (tool-call reasoning time between `tmux
+send-keys` calls elapses in the recording too) — an initial naive
+timestamp guess for the "diff shown" still-frame in fact landed on an
+earlier still-pending-permission frame and was caught and corrected this
+way before being saved.
+
+Artifacts (all verified present on disk with `ls`):
+
+- `captures/full-shell.cast` (613 KB, 568 events, 18.74s)
+- `captures/full-shell.gif` (426 KB, 150 frames)
+- `captures/full-shell-frame-user-message.png` — composer mid-type, status
+  "working", spinner "Pondering…"
+- `captures/full-shell-frame-spinner-working.png` — user message landed in
+  transcript, spinner "Percolating…", Tasks 0/3
+- `captures/full-shell-frame-permission-prompt.png` — inline permission
+  panel interrupting the transcript flow, live countdown ("auto-denies in
+  14s"), cursor on option 1
+- `captures/full-shell-frame-diff-shown.png` — permission resolved via the
+  real "1" keypress, diff panel rendered (reusing screen2's
+  parseDiff/DiffRenderer pipeline), Bash(npm test) tool firing, Tasks 1/3
+- `captures/full-shell-frame-tests-passed.png` — test result panel ("42
+  passed, 0 failed"), pre-final-summary
+- `captures/full-shell-frame-footer-done.png` — final assistant summary
+  streamed in full, Tasks 3/3 in `semantic.success` green, composer back
+  at its idle placeholder
+
+### Honest assessment: full-shell composition vs. isolated pieces
+
+This is the useful signal distinct from the individual-screen findings
+above. Composing the full shell did not surface any new `@ai-sdk/tui`
+capability worth adopting, and it did surface one real cost isolated
+screens hid:
+
+- **No composition primitive existed to reuse.** Because
+  `screen1-permission.tsx` and `screen2-tool-diff.tsx` each end in a
+  top-level `render(<App/>)` with no exports, building the combined shell
+  meant re-deriving (not importing) both pieces' logic into one file —
+  the permission decision state machine and the diff pipeline were
+  copied, not composed. `@ai-sdk/tui` offers no shell-level primitive
+  (layout region, screen router, or session-transcript container) that
+  would have made stitching these pieces together cheaper than plain Ink
+  + custom state; the library's contribution to this file is identical to
+  its contribution to rounds 1-2 (Ink as a transitive dependency only).
+- **State coordination across pieces is where the real cost lives, and
+  it's all hand-rolled.** The interesting engineering in this round —
+  pausing the spinner during the permission pause and during streaming
+  (per the spec's own display rule), threading one `ScriptCtx` through a
+  linear async script so the transcript, tool calls, permission decision,
+  and footer pill all stay consistent with a single source of truth, and
+  branching the whole downstream flow on a genuinely-resolved decision
+  rather than a hardcoded path — is ordinary React/Ink state management
+  that `@ai-sdk/tui` neither helps nor hinders. Nothing about assembling
+  the full shell surfaced a gap or a win specific to the library; it
+  reconfirms rounds 1-3's conclusion (stop at custom Ink rendering for
+  tui-v2) from the composition angle rather than changing it.
+- **Positive note:** Ink itself (the library `@ai-sdk/tui` sits on top of)
+  composed the full shell without friction — real chunked React state
+  updates for streaming text, independent interval timers for the
+  spinner's frame and word rotation, and a `useInput`-driven interrupt
+  panel mid-flow all worked exactly as they did in isolation, with no
+  full-shell-specific Ink limitation encountered.
