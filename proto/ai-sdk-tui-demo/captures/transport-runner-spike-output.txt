@@ -1,0 +1,151 @@
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: No such fi
+le or directory
+job-working-directory: error retrieving current directory: getcwd: cannot access parent directories:
+ No such file or directory
+cd /Users/liam10play/deus-v2-mvp/.claude/worktrees/proto-lia494-ai-sdk-tui/proto/ai-sdk-tui-demo &&
+asciinema rec --window-size 100x220 --overwrite captures/transport-runner-spike.cast -c 'npx tsx src
+/transport-runner-spike.tsx; echo EXIT_CODE=$?' 2>&1 | tee captures/transport-runner-spike-output.tx
+t
+liam10play@unknow . % cd /Users/liam10play/deus-v2-mvp/.claude/worktrees/proto-lia494-ai-sdk-tui/pro
+to/ai-sdk-tui-demo && asciinema rec --window-size 100x220 --overwrite captures/transport-runner-spik
+e.cast -c 'npx tsx src/transport-runner-spike.tsx; echo EXIT_CODE=$?' 2>&1 | tee captures/transport-
+runner-spike-output.txt
+::: asciinema session started
+::: Recording to captures/transport-runner-spike.cast
+==============================================================================
+LIA-494 round-3 spike — runAgentTUI({ transport }) over a Deus-shaped fixture
+==============================================================================
+[PASS] 1. One streamed turn, ChatDisplayEvent -> UIMessageChunk
+    - CONFIRMED: the unexported renderer escape hatch DOES work at runtime via a type-cast — runAgen
+tTUI ran our scripted renderer, not the default TerminalRenderer, even though the public .d.ts has n
+o `renderer` field.
+    - renderStream: assembled UIMessage with 3 part(s); text="Checking the ticket status... found LI
+A-494, in progress."
+    - daemon.turnsStarted=1 (expected 1)
+    - adapter.eventKindsSeen=[assistant_text, tool_use, assistant_done]
+    - tool part reached 'input-available': true; reached an 'output-*' state: false (expected false
+— see Scenario 3)
+[PARTIAL] 2. Cancellation / abort
+    - abortSignal.abort() called after reading only the first chunk
+    - daemon.turnsStarted=1 (daemon still ran its full turn() to completion server-side)
+    - chunks observed by the reader after abort: 10, post-abort assistant text leaked through: true
+    - OBSERVED (not just theorized): this fixture has no artificial network/model latency, so daemon
+.turn() ran to completion via microtask hops faster than the abort() call landed — the 'aborted' gua
+rd in translateEvent's caller never got a chance to drop anything, and the reader saw the full post-
+abort text anyway. A real network-backed transport would have more of a window, but the structural p
+oint stands regardless of timing: the guard can only ever suppress chunks the ADAPTER hasn't yet for
+warded — it has zero effect on daemon.turn() itself, which has no cancellation parameter at all.
+    - PARTIAL, not PASS: the adapter can stop RENDERING further output (what AI SDK's contract techn
+ically requires), but cannot cancel the underlying Deus work, which is what a user pressing Ctrl-C a
+lmost certainly expects. A production adapter would misrepresent cancellation as complete when it is
+ only cosmetic.
+[PARTIAL] 3. Tool progress and final results
+    - tool-input-available chunks emitted: 1
+    - tool-output-available / tool-output-error chunks emitted: 0 (structurally always 0 — see trans
+lateEvent's switch)
+    - CONFIRMED BY READING SOURCE (deus-native-chat.ts:26-29 module doc + the ChatDisplayEvent union
+ at lines 87-98): Deus's wire protocol has 'tool_use' (a progress label fired when a tool STARTS) bu
+t NO tool-result/tool-output event of any kind. 'tool progress' translates (lossily — see Scenario 1
+'s note on toolName/input being fabricated); 'final results' cannot be represented AT ALL by this tr
+ansport today, not because the adapter failed to implement it, but because the protocol it is adapti
+ng has nothing to translate.
+    - PARTIAL: progress half works (lossily); final-results half is a genuine protocol gap, not an a
+dapter gap.
+[PARTIAL] 4. Three-way permission + separate respondPermission endpoint
+    - continueAfterApproval: toolCallId=perm-req-true requestId=req-true approved=true -> Permission
+Decision='allow_once' (allow_always UNREACHABLE from this call site)
+    - daemon.authoritativeLog tail: [permission] req-true -> allow_once | [assistant] Done.
+    - continueAfterApproval: toolCallId=perm-req-false requestId=req-false approved=false -> Permiss
+ionDecision='deny' (allow_always UNREACHABLE from this call site)
+    - daemon.authoritativeLog tail: [assistant] About to run a risky command | [permission] req-fals
+e -> deny
+    - Separately: even if a scripted renderer WANTS to express 'allow_always', AgentTUIToolApprovalR
+esponse = { approved: boolean; reason?: string } (agent-tui-runner.ts:65-68) has no field for it, an
+d applyToolApprovalResponse() (lines 650-669) only ever writes `approval.approved: boolean` onto the
+ message part. 'allow_always' is UNREACHABLE through runAgentTUI's transport path — not just through
+ TerminalRenderer's y/n keys (as the round-1/2 FINDINGS.md already established), but through the wir
+e format itself, one layer deeper.
+    - The separate respondPermission endpoint (deus-native-chat-server.ts PERMISSION_RESPONSE_PATH)
+IS successfully reachable from this transport path — the adapter calls daemon.respondPermission() di
+rectly, distinct from the message-resend call. That part of the bridge works.
+[PARTIAL] 5. TUI restart and reconnection to the same daemon-owned group
+    - process-1 chatId=JG9Z8qVuMlURmDxP, daemon session after run 1: {"sessionId":"sess-deus-native-
+cli-001","state":"resumed"}
+    - appended an out-of-band WhatsApp-style message directly to the daemon while no TUI is attached
+    - process-2 chatId=R7XrxMB5wsHRzVZD (fresh, independent of chatId1: true)
+    - daemon session after run 2: {"sessionId":"sess-deus-native-cli-001","state":"resumed"} — sessi
+onId unchanged, turns incremented: daemon retained real continuity
+    - daemon.authoritativeLog now has 5 entries, including the out-of-band message: ["[user] hello",
+"[assistant] First run reply.","[out-of-band] (WhatsApp) hey, any update?","[user] still there?","[a
+ssistant] First run reply."]
+    - CONFIRMED (grepped agent-tui-runner.ts for 'reconnectToStream': zero matches; RunAgentTUIOptio
+ns/AgentTUISessionOptions have no messages/history/resume field at all — run-agent-tui.ts:42-98, age
+nt-tui-runner.ts:42-52): `runAgentTUI` gives adapter2 NO way to learn what daemon.authoritativeLog a
+lready contains. `AgentTUIRunner.run()` always starts a brand-new in-memory `messages: UIMessage[] =
+ []` (agent-tui-runner.ts:115) and a brand-new `chatId` (agent-tui-runner.ts:91) on every constructi
+on — there is no injection point.
+    - This is a DOUBLE gap, not just a library gap: even Deus's OWN real client-transport protocol h
+as no history/transcript-read route today either (route table: deus-native-chat-server.ts:63-67 — on
+ly turn/status/close/plan/permission-response). So neither `@ai-sdk/tui` nor Deus's current wire pro
+tocol alone can satisfy "TUI restart and reconnect with full context" — this spike surfaces a genuin
+e Deus-side gap, independent of the library-adoption question.
+==============================================================================
+ANSWER to: "Can the runner act as a thin terminal harness over Deus's
+existing HTTP ChatTransport without taking ownership of session history,
+permissions, or tool execution?"
+==============================================================================
+NO, not as a thin harness — it can be MADE to work, but only by the adapter
+absorbing real, non-trivial ownership the spec explicitly says must stay with
+Deus's daemon:
+1. It does not take ownership of tool EXECUTION. That claim holds: nothing in
+   this adapter or in @ai-sdk/tui executes a tool; the daemon fixture is the
+   only thing that ever "does" anything. (PASS on this specific sub-claim.)
+2. It DOES end up needing partial, structural ownership of SESSION/TURN
+   STATE, not by choice but because the two transport models are shaped
+   differently: AI SDK expects each sendMessages() call to be an independent
+   request; Deus's real turn() is one long-lived call unblocked by a
+   side-channel respondPermission() POST. Bridging them forced this adapter
+   to keep a chatId-keyed map of in-flight turns (activeTurns) purely so the
+   runner's mandatory second sendMessages() call (after every approval) has
+   something to attach to. That map is exactly the kind of "second source of
+   truth" the spec warns against for the sibling assistant-ui spike -- it is
+   client-side, ephemeral, and would silently diverge from the daemon's own
+   state on any crash/restart between the two calls.
+3. It does NOT take ownership of PERMISSIONS in the sense of deciding
+   anything -- respondPermission() is still called, and Deus's registry is
+   still the real gate. But the adapter is a lossy pass-through: it can only
+   ever forward 'allow_once' or 'deny'. 'allow_always' is structurally
+   unreachable through this path (AgentTUIToolApprovalResponse has no field
+   for it), which silently narrows Deus's real three-way permission model
+   whenever driven through this runner.
+4. Two capabilities in the spec's test list are not just awkward but
+   currently IMPOSSIBLE through this transport, for reasons that trace back
+   to Deus's OWN wire protocol having gaps, not just @ai-sdk/tui's:
+     - "final results" for a tool call: ChatDisplayEvent has no
+       tool-result/tool-output variant at all today.
+     - "restart and reconnect" with continuity: neither runAgentTUI (no
+       resume/injection point) NOR Deus's real client-transport (no
+       history-read route) support it end to end.
+   Adopting @ai-sdk/tui would not unlock either of these; they need a Deus
+   protocol change regardless of which rendering library sits on top.
+5. "Cancellation/abort" is honest but weaker than it looks: the adapter can
+   stop RENDERING, but Deus's real turn() has no cancellation hook, so the
+   daemon keeps working regardless. A consumer would need to build real
+   server-side cancellation into Deus first; @ai-sdk/tui neither causes nor
+   solves this gap.
+VERDICT relative to the spec's own adoption bar ("Adopt the runner only if
+the adapter can treat its generated chatId and in-memory messages as
+disposable client correlation state, preserve the daemon's group session
+across restarts, and represent allow_once/allow_always/deny without lossy or
+duplicate approval handling. If not, stop at custom Ink rendering."):
+NOT MET. The chatId/in-memory-messages correlation state is NOT cleanly
+disposable (Scenario 5: the runner has no restart/resume path at all, so
+"preserve the daemon's group session across restarts" fails outright), and
+approval handling IS lossy (Scenario 4: allow_always is unreachable). Per the
+spec's own stated rule, this means: stop at custom Ink rendering for tui-v2,
+consistent with rounds 1-2's screens. There is no further @ai-sdk/tui
+capability worth exploring for this decision.
+EXIT_CODE=0
+::: asciinema session ended
+::: Recorded to captures/transport-runner-spike.cast
+liam10play@unknow ai-sdk-tui-demo %
