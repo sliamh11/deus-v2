@@ -1,0 +1,23 @@
+{
+  "name": "migrated-ink-demo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "LIA-495 MIGRATE stage — the Ink port of proto/web-first-demo, validating @assistant-ui's documented migration pattern (assistant-ui.com/docs/ink/migration): the shared runtime (src/runtime/*.ts) is copied from web-first-demo with as close to zero modification as genuinely possible; only the UI/presentational layer (src/components/*.tsx, src/App.tsx) is reimplemented against @assistant-ui/react-ink's terminal primitives. Fresh package, not a copy of proto-lia493-assistant-ui-ink/proto/assistant-ui-demo — dependency set follows that worktree's proven-working versions as a reference only.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@assistant-ui/core": "0.2.22",
+    "@assistant-ui/react-ink": "0.0.33",
+    "ink": "^6.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "~6.0.2"
+  }
+}

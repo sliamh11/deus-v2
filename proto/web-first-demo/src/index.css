@@ -1,0 +1,81 @@
+/* LIA-495 — Claude Code design-language tokens (cc-design-spec.md § Color
+   system), reconstructed as CSS custom properties. Values are copied
+   verbatim from full-shell.tsx's `tokens` object (which itself copied them
+   from permission-screen.tsx/diff-screen.tsx) — same terracotta/muted
+   palette, same hex values, just expressed as CSS vars instead of an inline
+   ink `color` prop string.
+
+   This demo intentionally renders as a single dark "terminal-like" surface
+   rather than following the visitor's OS light/dark preference: the ported
+   palette (accentPrimary #D97757 etc.) was designed against a dark
+   terminal background in the Ink version, and re-deriving a genuinely
+   readable light variant of a terminal color language is out of scope for
+   this port — the brief asks to reuse the SAME tokens, not redesign them.
+   `--cc-bg-app`/`--cc-bg-surface`/`--cc-bg-panel` have no ink equivalent
+   (a terminal has no "background" token of its own — it's whatever the
+   user's terminal profile is) and are new, minimal additions needed only
+   because a DOM page must actually paint a background. */
+:root {
+  --cc-text-muted: #b0aea5;
+  --cc-text-primary: #faf9f5;
+  --cc-accent-primary: #d97757;
+  --cc-accent-info: #6a9bcc;
+  --cc-semantic-success: #788c5d;
+  --cc-semantic-warning: #c49a52;
+  --cc-semantic-error: #b95c50;
+  --cc-border-neutral: #b0aea5;
+
+  --cc-bg-app: #1c1b19;
+  --cc-bg-surface: #232220;
+
+  --cc-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+  color: var(--cc-text-primary);
+  background: var(--cc-bg-app);
+  font-family: var(--cc-mono);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  justify-content: center;
+  padding: 24px 16px 40px;
+}
+
+a {
+  color: inherit;
+}
+
+/* ---------------------------------------------------------------------
+   Rotating-dots spinner glyph — the DOM equivalent of Ink's
+   LoadingPrimitive.Spinner (ink-spinner "dots" preset), which does not
+   exist in the web package (confirmed: zero matches for
+   "LoadingPrimitive" anywhere under @assistant-ui/ node_modules other than
+   react-ink). A CSS keyframe animation over the same braille-dot glyph
+   sequence ink-spinner's "dots" preset cycles through reproduces the same
+   visual read without any extra runtime dependency.
+   ------------------------------------------------------------------- */
+@keyframes cc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cc-spinner-dot {
+  display: inline-block;
+  animation: cc-spin 0.8s linear infinite;
+}
