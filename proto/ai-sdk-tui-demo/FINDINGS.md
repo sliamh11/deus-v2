@@ -484,3 +484,284 @@ screens hid:
   spinner's frame and word rotation, and a `useInput`-driven interrupt
   panel mid-flow all worked exactly as they did in isolation, with no
   full-shell-specific Ink limitation encountered.
+
+## Round 5 — pushing `src/full-shell.tsx` to Ink's actual engineering ceiling
+
+Round 4 already confirmed `@ai-sdk/tui`'s entire public export surface is
+just `runAgentTUI` + option types (re-verified this round by reading
+`node_modules/@ai-sdk/tui/dist/index.d.ts` directly), so there is no
+additional *library* API left to evaluate — "take it to its limits" for
+this library means pure Ink engineering. Three specific Ink capabilities
+were added to the same `full-shell.tsx`, each verified for real rather
+than assumed:
+
+`npx tsc --noEmit` is clean (exit 0) after all changes below.
+
+### 1. `<Static>`-backed scrollback (genuine, not cosmetic)
+
+Settled transcript entries (a finished user turn, a completed assistant
+message, a resolved tool call) now move into a `<Static>` list once they
+can never mutate again (`isEntrySettled`); only the still-changing tail
+(spinner, an in-flight tool call, the permission countdown, the composer)
+re-renders in the live Ink tree below it.
+
+**A real correctness bug was found and fixed during verification, not
+just a cosmetic pass.** An early version tracked "is this assistant entry
+still streaming" via a *separate* `streamingEntryId` App-level state,
+updated with its own `setState` call alongside (but not atomically with)
+the `setEntries` call that added the entry. A direct render-log
+instrumentation test (temporarily logging `STATIC`/`LIVE` + entry
+kind/id on every render, then `sort | uniq -c`) caught the entry
+graduating into `<Static>` **twice** — once prematurely (for one render,
+with empty streamed text, because `entries` already contained the new
+entry but `streamingEntryId` hadn't committed yet) and once correctly
+after streaming finished. Because `<Static>` can never un-print something
+once it's graduated an item, the premature graduation would have baked a
+blank/wrong line permanently into real terminal scrollback, followed
+later by the correct line — a genuine visible defect, not a theoretical
+one. Fix: moved the `streaming: boolean` flag onto the `Entry` object
+itself, flipped in the exact same `setEntries` call as the text update,
+so there is no cross-state race. Re-ran the same instrumentation after
+the fix: every entry (`user`, `assistant` ×N, `tool` ×N) now appears in
+`STATIC` exactly once, with `LIVE` occurrences only while genuinely
+unsettled.
+
+**Verified the actual scrollback effect**, not just the render count,
+using `tmux pipe-pane -o 'cat >> file'` (captures the real bytes Ink
+writes to a real interactive pty — the same rendering path
+`asciinema`+tmux capture uses, confirmed distinct from running under
+`script(1)`, which forces Ink into a full-screen-clear-every-frame
+fallback path with zero incremental `ESC[nA` cursor-up sequences and was
+discarded as a non-representative test environment after finding it gave
+misleading counts for *both* the old and new code):
+
+| | pre-round-5 (no `<Static>`) | round-5 (with `<Static>`, bug fixed) |
+|---|---|---|
+| `"Found it"` (settled Read-tool text) occurrences in ~7s | **31** | **1** |
+| incremental live-region redraws (`ESC[<n>A` cursor-up) in the same window | 1210 | 1158 |
+
+Same order of magnitude of live redraw activity in both (spinner ticks,
+composer blink, permission countdown all still firing), but the settled
+tool result is written once and never touched again only in the
+round-5/`<Static>` version — direct, reproducible evidence the feature
+does what it claims, not just that it compiles.
+
+### 2. Real raw-mode composer
+
+`Composer`'s `text` is now internal component state mutated *only* inside
+its own `useInput` handler (character append, backspace/delete, Enter to
+submit) — the same shape as the existing real `PermissionPrompt`. There
+is exactly one code path that changes the text, whether a character comes
+from a real key or the unattended-capture auto-fill fallback (a timer
+advancing the identical `setText` call, structurally parallel to
+`PermissionPrompt`'s auto-deny countdown).
+
+**Verified with real keystrokes**, not a scripted string: inside a tmux
+pane (`COMPOSER_AUTOFILL_DELAY_MS=30000` env override so the fallback
+couldn't fire first), `tmux send-keys -l` sent literal characters one at a
+time and a real `BSpace`, with `tmux capture-pane` after each:
+`h` → `hello` → (backspace) `hell` → (backspace) `hel` → `hello real
+keys`, then `Enter` submitted it and the scripted flow continued using
+that actual typed text (echoed into the transcript verbatim, "hello real
+keys" / "fix the date bug please" across separate runs) — genuine
+character-by-character, backspace-capable, real-key-driven input, not a
+prop injection.
+
+**A real bug was found and fixed here too**: the auto-fill fallback never
+fired in the `script(1)`-captured test environment, because
+`realKeyReceivedRef.current = true` was set unconditionally at the top of
+the `useInput` handler for *any* input — including stray control/escape
+bytes the harness's pty apparently delivers before real keystrokes — which
+permanently disabled the unattended fallback. Fixed by only marking "a
+real key landed" inside the branches that actually act on input (return
+with non-empty text, backspace/delete, escape, printable character),
+never for ignored modifier/navigation combos. Re-verified unattended
+playback still works end-to-end afterward (auto-typed fixture message,
+full script run to completion, both the approve and the 15s-auto-deny
+branches).
+
+### 3. Real reactive terminal resize
+
+`useTerminalSize()` (`useStdout()` + its own `'resize'` event) feeds a
+`TerminalSizeContext` read by `Header` (a live `{columns}×{rows}`
+readout) and `DiffRenderer` (live-width-aware content truncation with an
+ellipsis, instead of `wrap="wrap"`, which would break the diff's
+fixed-width gutter alignment on a wrapped continuation line).
+
+**Verified by actually resizing a real tmux pane mid-session** (not
+claimed): `tmux resize-window` from 100→60→130 columns while the
+permission prompt was live showed the header readout change
+(`100×34`→`60×34`→`130×40`) and every live-region bordered panel
+(permission box, Tasks pill, composer) reflow to the new width in the
+same frame — while the *already-settled* scrollback content above (the
+Read tool's result, printed before the resize) visibly kept its original
+width, exactly as real terminal scrollback must (already-printed rows
+can't retroactively rewrap) — incidental further confirmation that item
+1's settled/live split is real. Separately, a fresh run pinned at 40
+columns for its entire lifetime showed the diff panel's lines genuinely
+truncated with `…` (e.g. `const day = input.getDate(…`) and the box
+border shrunk to fit — confirming the width-aware truncation logic
+actually engages, not just that the prop is wired.
+
+### Everything requested was completed — nothing skipped
+
+All three items from the round-5 brief were implemented and verified
+working for real (render-log instrumentation, `tmux send-keys`,
+`tmux pipe-pane` byte capture, and `tmux resize-window`, as detailed
+above), including two genuine bugs the verification process itself
+surfaced and fixed before shipping. No item was found impractical for
+this fixture.
+
+## Round 6 — independent re-verification + one real recording of round 5's work
+
+Round 5's self-report was re-verified firsthand rather than trusted, a
+real `asciinema` recording was captured of the enhanced shell, and one
+genuine methodology bug in the *capture pipeline itself* (not the app)
+was found and worked around.
+
+### Re-verification of round 5's claims
+
+- `npx tsc --noEmit` re-run clean (exit 0, zero output) against the
+  worktree as handed off.
+- Read `full-shell.tsx` directly and confirmed `Static`, `useInput`,
+  `useStdout`, `isEntrySettled`, `TerminalSizeContext`, and
+  `realKeyReceivedRef` are all genuinely wired into the render tree and
+  the `Composer`/`PermissionPrompt` input handlers — not vestigial
+  imports (`grep -n` line numbers checked against the actual JSX:
+  `<Static items={historyEntries}>` at line 1168, `useInput(...,
+  { isActive: isListening })` in `Composer` at line 851,
+  `stdout.on('resize', ...)` in `useTerminalSize` at line 139).
+- Independently re-drove the composer with real `tmux send-keys -l`
+  keystrokes (not the ones round 5 already ran) — typed `hello real
+  keys`, sent 5 individual `BSpace` presses, confirmed each intermediate
+  state via `tmux capture-pane` (`hello real keys` → `hello real`,
+  exactly 5 chars removed), then `Escape` to clear (confirmed empty),
+  then typed the real fixture message and submitted with `Enter`. All
+  matches round 5's claimed mechanism.
+- Independently drove a live `tmux resize-window` (100×34 mid-session,
+  then narrower) against the actual running process and watched the
+  header readout and every live-region panel (permission box, Tasks
+  pill, composer) reflow in the same frame, while already-settled
+  `Static` scrollback above kept its original width — same effect round
+  5 reported, reproduced independently.
+
+### A real capture-pipeline bug found and worked around: `asciinema --window-size` silently blocks resize propagation
+
+While producing this round's recording, the very first take used
+`asciinema rec --window-size 120x40 ...` (the flag this repo's own
+capture convention has used since round 1, and what this round's
+instructions suggested). Under that flag, **`tmux resize-window` on the
+recording pane had no effect on the recorded process at all** — the
+app's header stayed pinned at `120×40` no matter how many times or how
+long after the resize command was given (confirmed: repeated
+`resize-window` calls with up to 2s settle time, both with and without
+`asciinema` in the loop).
+
+Root-caused by isolating the layers: a bare `node -e` script listening
+for `stdout`'s `'resize'` event, run directly in the same tmux pane with
+no `asciinema` involved, **did** receive `resize` events from
+`tmux resize-window` after a short settle delay. The same script run
+under `asciinema rec --window-size 100x30 --command '...'` **never**
+received a single `resize` event, no matter what the outer tmux pane was
+resized to — confirmed by grepping the produced `.cast` file: zero
+`"resize"`-carrying output, vs. the terminal's own live pane visibly
+reflowing (proving the *outer* tmux layer did resize; the *inner* pty
+`asciinema` hands its child never got the update). This matches
+`asciinema rec --help`'s own description of `--window-size`: it
+"override[s] the terminal window size **used for the recording
+session**" — i.e. it pins the recording's pty to a fixed size and does
+not forward subsequent live resizes to the child process at all. This is
+a real, verified limitation of the *capture tool*, not of `full-shell.tsx`
+or Ink — round 5's resize claim is genuine when watched directly in a
+live pty (as round 5 did, and as this round re-verified), but it cannot
+be captured live in an `asciinema` recording that uses
+`--window-size`.
+
+**Workaround**: omit `--window-size` entirely and let `asciinema`
+inherit the tmux pane's actual (dynamic) size. Re-tested the same
+bare-`node` resize probe under `asciinema rec` with no `--window-size`
+flag: the `resize` event fired and its output (`RZ 70 25`) was captured
+into the live pane text asciinema records, confirming the child process
+genuinely receives live resizes this way. `captures/limits-push.cast`
+was produced with this fix (`asciinema rec captures/limits-push.cast
+--overwrite --command '...'`, no `--window-size`), and directly grepping
+the resulting `.cast` file confirms both resized states appear in the
+recorded byte stream (`90×34` appears 11 times, `60×30` appears 43
+times, across the post-resize portion of the session) — the resize is
+genuinely on tape, not just observed live.
+
+Flagging this because every prior round's captures in this directory
+used `--window-size`, which means **none of the earlier `.cast`/`.gif`
+files in this directory can show a live resize even if one had been
+attempted during their recording** — this wasn't a problem before
+because no earlier round exercised live resize on tape. Future rounds
+that want to record a resize should drop `--window-size` (or resize
+before starting the recording and pick a single fixed size, if a
+deterministic frame size matters more than showing the live transition).
+
+### This round's recording
+
+`captures/limits-push.cast` / `captures/limits-push.gif` — one
+continuous take, real `tmux send-keys` throughout, no scripted/injected
+props:
+
+1. Composer starts empty at 120×40 (`COMPOSER_AUTOFILL_DELAY_MS=120000`
+   so the unattended fallback can't preempt real typing).
+2. Real character-by-character typing (`hello real keys`), 5 real
+   `BSpace` presses removing exactly 5 characters
+   (`captures/limits-push-frame-typing.png` shows the mid-typing state,
+   caught with a partial word), `Escape` to clear, then the real fixture
+   message typed and submitted with `Enter` — moves into `Static`
+   scrollback immediately after submission
+   (`captures/limits-push-frame-static-scrollback.png`).
+3. Live resize mid-flow: `tmux resize-window` to 90×34 while the
+   permission prompt's countdown is live — header and permission panel
+   visibly reflow in the same frame the countdown continues in.
+4. A second live resize to 60×30 —
+   `captures/limits-push-frame-resized-60x30.png` shows the header
+   reading `60×30`, the permission-denied result panel, and the
+   composer's now-two-line wrapped text, all at the narrower width,
+   with `Tasks 3/3` and `idle` status confirming the session ran to
+   completion.
+5. The countdown won the race against my keypress this take (auto-deny
+   fired a beat before my `1` landed) — this round captured the
+   auto-deny branch rather than the approve branch. Round 4's captures
+   already cover the approve branch
+   (`captures/full-shell-frame-tests-passed.png`,
+   `captures/screen1-autodeny-fix.gif` covers deny), so this is not a
+   gap in what's on record overall, just which branch this particular
+   take landed on.
+
+### Honest final take, after two rounds of pushing this library to its real limits
+
+`@ai-sdk/tui`'s own contribution to this evaluation topped out after
+round 2 (it's a thin `runAgentTUI(options)` wrapper — permission +
+diff-view screens, nothing else in its public API, re-confirmed this
+round by re-reading its `.d.ts`). Everything since round 3 has been pure
+Ink engineering *around* that thin wrapper, using Ink's lower-level
+primitives (`Static`, `useInput`, `useStdout`) to reconstruct the pieces
+a real terminal coding-agent UI needs that the library itself doesn't
+provide: persistent scrollback that stops repainting once settled, a
+genuinely interactive text composer, and live-reflowing layout on
+terminal resize. All three of those are now real and independently
+re-verified in this round, not just claimed — and all three are
+Ink-level capabilities, unrelated to anything `@ai-sdk/tui` itself
+supplies.
+
+That is the honest ceiling: this prototype gets visually and
+mechanically close to a genuine Claude-Code-style terminal experience —
+close enough that, watched live, the settle-into-scrollback behavior,
+real backspace-capable typing, and live resize reflow are difficult to
+tell apart from the real thing in short clips. But `@ai-sdk/tui` gets no
+credit for any of round 3 through 6's work; it supplied two screens'
+worth of scaffolding and nothing since. If the goal is "evaluate
+`@ai-sdk/tui`," the verdict was already final after round 2. If the goal
+was "how close can Ink itself get to a Claude-Code-shaped terminal UI,"
+this round's answer is: close, on the specific dimensions tested here,
+with the caveat that a from-scratch reimplementation of an agent
+transport, multi-line editing, real streaming markdown rendering, and
+much more of Claude Code's actual surface area was never in scope and
+remains untested. And separately, this round surfaced that the
+*recording tooling* (`asciinema --window-size`) has its own real
+limitation unrelated to Ink or the library — worth remembering for
+whoever records the next one.
