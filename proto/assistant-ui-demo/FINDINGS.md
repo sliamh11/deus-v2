@@ -540,3 +540,143 @@ type/API level, but a production integration must own the same
 resolved-state bookkeeping this file had to add by hand (a small `Map`,
 not a novel abstraction) — that cost is real but bounded, and is now
 demonstrated rather than assumed.
+
+## Round 5 — pushed to the library's real limits (`src/full-shell.tsx`)
+
+Round 4 composed the pieces already built in rounds 1–3 into one coherent
+shell. This round went the other direction: it deliberately reached for
+`@assistant-ui/react-ink` export-surface that no earlier round had touched
+at all — `LiveChecklist`/`ChecklistPrimitive`, `MessagePrimitive.Parts` +
+`ReasoningGroupComponent`, and `useNotification` — to see whether the
+library's *unused* surface holds up as well as the parts already proven,
+and whether a hand-rolled fixture piece (the footer's `Tasks x/3` string)
+can be swapped for the library's real equivalent without losing fidelity.
+The sibling build agent's self-report was verified firsthand in this
+session, independently of its claims, before any of it was trusted:
+
+- **Package surface — verified real, not guessed.** `grep`ing
+  `node_modules/@assistant-ui/react-ink/dist/index.d.ts` confirms
+  `LiveChecklist`, `ChecklistItemData`, `ChecklistItemStatus`,
+  `ReasoningGroupComponent`, `ReasoningMessagePartProps`, `useNotification`,
+  `ringBell`, and `sendOSCNotification` are all genuine named exports of the
+  installed `0.0.33` package, not fixture-local shims. Reading the compiled
+  source under `dist/primitives/checklist/{LiveChecklist,ChecklistItem,
+  ChecklistProgress}.js` confirms `ChecklistItem` renders through a real
+  `ink-spinner` while `status:"running"`, real `□`/`■`/`x` glyphs otherwise,
+  and `ChecklistProgress` computes a genuine `n/total done` line by counting
+  `complete`/`error` items — none of this is fixture-drawn text. Reading
+  `dist/hooks/useNotification.js` confirms the documented zero-config
+  default (`ringBell()` + `sendOSCNotification()` on a `task-complete`
+  transition) is exactly what fires with no options passed, matching the
+  claim.
+- **`tsc --noEmit`: clean, exit 0** — re-run directly in this session, not
+  taken on the sibling's word.
+- **Diff scope: matches self-report.** `git diff --stat` on
+  `src/full-shell.tsx` alone (`213 insertions(+), 24 deletions(-)`); no other
+  file touched.
+- **Live capture — driven with real keystrokes, not scripted props.** A
+  fresh `120x40` tmux pane ran `asciinema rec -c 'npx tsx src/full-shell.tsx'
+  captures/limits-push.cast`. Both user turns were sent via literal
+  `tmux send-keys -l "<text>"` + a separate `Enter`, and the permission
+  choice was sent the same way (`-l "1"` + `Enter` for "Allow once") — the
+  same mechanism a human typing at the keyboard would produce, not a
+  programmatic `thread.append()`/prop injection. Observed directly in the
+  live pane, in order: a bordered "✻ Thinking…" reasoning block streamed in
+  before any tool call, correctly flipping to "✻ Thought" once settled; a
+  real `Bash` existence check; the inline permission panel (`Permission
+  required` / `1. Allow once` / `2. Always allow` / `3. Deny`) with the
+  composer genuinely swapped for the muted "Resolve the permission prompt
+  above to continue…" placeholder; after sending `"1"` + Enter, the
+  `delete_file` row collapsed to a resolved `⏺ delete_file(...) — Allow once
+  (deleted)` and the turn auto-resumed into a real `Edit` diff panel — with
+  **no second user message needed**, confirming round 4's `reason:
+  "tool-calls"` resume mechanism still holds under round 5's changes. The
+  `Tasks` footer, now a genuine `<LiveChecklist>`, advanced `0/3 done` → (a
+  live spinner glyph on "Clean up scratch file" while pending) → `2/3 done`
+  (real green `■` glyphs) after the first turn, and `3/3 done` after typing
+  a second real message ("Now verify /tmp is clean") that triggered a real
+  second `Bash` check. `tmux list-windows -F "bell=#{window_bell_flag}"`
+  read `bell=1` immediately after the first turn's completion, confirming a
+  genuine terminal BEL byte reached the pane — not merely that
+  `useNotification()` was called, that its effect actually landed on the
+  terminal.
+- **No resize claim in this round** — round 5's diff adds no resize
+  handling and none was claimed in the self-report, so step 4's "resize
+  mid-recording" check (used in round 4) does not apply here; skipped
+  correctly rather than fabricated.
+- **One discrepancy from the self-report, worth naming precisely:** the
+  self-report's item 2 (`ComposerPrimitive.Input`/`TextInput`) describes a
+  *negative* finding — it says round 4 already wired real live typing and
+  round 5 found nothing left to change there. That is accurate (confirmed
+  independently by reading `ComposerInput.js` and by the fact that both
+  user turns in this session's capture were driven by literal
+  `tmux send-keys`, landing correctly), but it means round 5 shipped only
+  three *new* library surfaces (`LiveChecklist`, the reasoning group, and
+  `useNotification`), not four — the fourth "item" is a verified absence of
+  work needed, not a new capability demoed. Framing this as a discrepancy
+  rather than silently accepting the self-report's four-item count matters
+  for an honest tally of what this round actually added.
+
+**Capture.** `captures/limits-push.cast` (real asciinema recording, `120x40`,
+~19.6s, 1,321 recorded events — not a static render) and
+`captures/limits-push.gif` (agg-rendered, 217 frames). Four still frames
+pulled via Python PIL with proper RGBA frame compositing (a first naive
+attempt using `ImageSequence.Iterator` without per-frame compositing
+silently produced four byte-identical stills — agg's animated-gif frames
+are partial deltas, not fully redrawn each time, so pasting each decoded
+frame onto a persistent canvas is required or every "different" index pick
+collapses to the same image; caught by `md5`-comparing the four intended
+stills and finding them identical before trusting any of them, then fixed
+by re-extracting all 217 frames properly-composited and hand-picking exact
+indices off a labeled contact sheet rather than guessing proportional
+offsets):
+`limits-push-reasoning.png` (frame 15 — bordered "Thinking…" block
+streaming, `Tasks 0/3 done`), `limits-push-permission.png` (frame 60 — the
+full inline "Permission required" panel with all three options, composer
+swapped for the placeholder, a live `\` spinner glyph on the pending
+"Clean up scratch file" row), `limits-push-checklist2of3.png` (frame 190 —
+resolved `delete_file` row, resumed turn's `Edit` diff panel, `Tasks 2/3
+done` with two real green `■` items, and the second user message
+"Now verify /tmp is clean" already visible as genuinely-typed composer
+text, captured mid-keystroke), and `limits-push-final3of3.png` (frame
+214 — second turn's `Bash` verify result, closing message, `Tasks 3/3
+done` with all three items green `■`). Each frame was individually
+viewed and its content matched against its filename before being kept.
+
+**Honest final take, after five rounds pushing this library as far as it
+reasonably goes for a Claude-Code-shaped TUI.** `@assistant-ui/react-ink`
+gets closer to a genuine Claude Code experience than any hand-rolled Ink
+approach would justify building from scratch, and round 5 strengthens that
+conclusion rather than complicating it: three previously-unused, real
+library primitives (`LiveChecklist`, message-part grouping for reasoning,
+`useNotification`) dropped into an already-composed shell with no structural
+rework — swapping a hand-drawn `Tasks 2/3` string for `<LiveChecklist>` was
+a ~15-line diff, not a redesign, and it bought a real progress line, real
+status glyphs, and a real spinner for free. The reasoning-group swap
+required understanding one non-obvious distinction (`.Content` has no
+grouping concept, `.Parts` does) but did not require touching how
+Bash/Edit/delete_file already rendered — confirmed, not assumed, by reading
+the shared `useAssistantToolUI` registry both primitives resolve through.
+`useNotification`'s zero-config default produced a real terminal BEL,
+observed via `tmux`'s own bell-flag, not inferred from the hook being
+called. None of this is packaged as fake polish: every glyph, spinner,
+progress count, and BEL traced back to genuine, observed state — the same
+bar every earlier round held itself to.
+
+What this round does *not* change about the adoption picture: the library
+still gives you compositional building blocks for a chat-shaped TUI, not a
+finished Claude Code clone — every visual convention specific to Claude
+Code itself (the `⏺` bullet vocabulary, the exact header/footer layout, the
+inline-interrupt-then-resume approval flow) was fixture code written by
+this prototype, not something `@assistant-ui/react-ink` ships out of the
+box. Round 4's two real state-management bugs (the `addResult`/
+`respondToApproval` double-satisfy race, the `delete_file` task-status gap)
+remain the standing evidence that a production integration owns real
+bookkeeping the library does not do for you. Pushed all the way to its
+current real limits — five rounds, every claim independently verified
+against source and against a live terminal, not against documentation or
+self-report — this library is a genuinely strong foundation to build a
+Claude-Code-shaped shell *on top of*, not a drop-in replacement for one.
+That was true after round 4 and remains true after deliberately trying to
+find where it breaks in round 5; nothing in this round's verification
+surfaced a reason to revise it.

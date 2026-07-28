@@ -73,6 +73,82 @@
 // importing DiffView from the bare `@assistant-ui/react-ink` specifier
 // successfully, so this file (unlike diff-screen.tsx) does not need the
 // internal `dist/primitives/diff/DiffView.js` deep-import workaround.
+//
+// ---------------------------------------------------------------------------
+// ROUND 5 (LIA-493 wayfinder round 5) — pushes this same file further into
+// the library's still-unused export surface, confirmed against the real
+// `.d.ts`/`.js` under node_modules/@assistant-ui/react-ink/dist (never
+// guessed) before use:
+//
+//   1. LiveChecklist / ChecklistItemData / ChecklistItemStatus — the footer
+//      below no longer hand-draws a "Tasks 2/3" pill string. It builds a
+//      real `ChecklistItemData[]` from the SAME observed task-status hooks
+//      round 4 already had (`useApprovalTaskStatus`/`useToolTaskStatus`) and
+//      hands it to `<LiveChecklist items={...} />`, which renders through
+//      the actual `ChecklistPrimitive.{Root,Item,Progress}` components
+//      (confirmed by reading LiveChecklist.js/ChecklistItem.js/
+//      ChecklistProgress.js: □/■/x indicators + a live spinner while
+//      running, "n/total done" progress line). Deliberately uses the
+//      `items` prop, not the library's OWN `useToolCallChecklist` auto-mode
+//      (`AutoChecklist`, wired when `items` is omitted) — that hook derives
+//      its list from `s.message.parts` of the CURRENT message only (one
+//      turn's tool calls), whereas this footer's three tasks span BOTH
+//      scripted turns, so the auto mode would under-report. The underlying
+//      `ChecklistItemData` objects are still real, not fabricated: their
+//      `status` field is computed from the same live thread state as before.
+//
+//   2. ComposerPrimitive.Input / TextInput — checked for a "scripted user
+//      input" to replace and found none: round 4's `ComposerRow` already
+//      renders `<ComposerPrimitive.Input autoFocus />`, and reading
+//      `ComposerInput.js` confirms it already wires a REAL `TextInput`
+//      (ink's own per-keystroke `useInput` reducer) to
+//      `aui.composer().setText()` on every keystroke and
+//      `aui.composer().send()` on Enter — nothing in this file ever
+//      programmatically injects a user turn (`thread.append(...)` is used
+//      only in the separate, unrelated `thread-runtime-spike.tsx` fixture).
+//      Genuine live typing was already the only path to a user turn here;
+//      left unchanged.
+//
+//   3. ReasoningGroupComponent / ReasoningMessagePartProps — turn 1 now
+//      opens with a real `{ type: "reasoning", text: "..." }` part
+//      (streamed chunk-by-chunk exactly like the text parts, verified by
+//      reading `local-thread-runtime-core.js`'s content-concatenation
+//      contract already documented above), rendered via
+//      `<MessagePrimitive.Parts components={{ Reasoning, ReasoningGroup }}>`
+//      instead of the old `<MessagePrimitive.Content />` — `.Content`
+//      (`MessageContent.js`) has no grouping concept at all, only
+//      `.Parts` (`MessageParts.js`, core) groups consecutive reasoning
+//      parts into a single `ReasoningGroupComponent` per
+//      `groupMessageParts`'s `reasoningGroup` range. Confirmed by reading
+//      `MessagePartComponent`'s tool-call branch (`ToolUIDisplay` /
+//      `resolveToolRender` → `s.tools.toolUIs[toolName]`) that this swap
+//      does NOT change how Bash/Edit/delete_file render: they're still
+//      found via the same `useAssistantToolUI` registry `.Content` used,
+//      just through a differently-named store field
+//      (`toolUIs` vs. `.Content`'s own `tools`) populated by the identical
+//      registration call (`react/client/Tools.js`: `state.tools = {
+//      toolUIs, tools: derived-from-toolUIs }`). `unstable_showEmptyOnNonTextEnd`
+//      is explicitly set to `false` to keep the tool-call rows' appearance
+//      byte-for-byte identical to round 4 — `.Parts`'s default `true` would
+//      otherwise interleave a synthetic empty-text/`InProgress` node
+//      whenever a tool-call part is message-final while running, a visual
+//      change round 4 never had and this round isn't asking for.
+//
+//   4. useNotification — a `NotificationBridge` child (mounted inside
+//      `AssistantRuntimeProvider`, since the hook reads `useAuiState`) calls
+//      `useNotification()` with no args, i.e. the library's own documented
+//      default (`ringBell()` + `sendOSCNotification()` on every
+//      `task-complete` transition — confirmed by reading
+//      `useNotification.js`'s `DEFAULTS`/`dispatch`). This is real terminal
+//      integration (a BEL byte + an OSC 9 escape sequence written to
+//      `process.stdout`, confirmed in `notification-channels.js`), not a
+//      color change — it fires once per scripted turn's `status:
+//      {type:"complete"}` yield (both `turn1Continue` and `turn2`).
+//      `onNeedsInput`'s "interrupt" case never fires here (this file
+//      deliberately uses `reason:"tool-calls"` for its permission prompt,
+//      per the finding above), which is expected and does not need
+//      suppressing — it's simply a no-op path for this fixture's shape.
+// ---------------------------------------------------------------------------
 import { render, Box, Text, useInput } from "ink";
 import React, { useEffect, useState } from "react";
 import { isAbsolute, resolve as resolvePath } from "node:path";
@@ -84,12 +160,18 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   LoadingPrimitive,
+  LiveChecklist,
   useAssistantToolUI,
   useAuiState,
+  useNotification,
   DiffView,
   type ChatModelAdapter,
   type ChatModelRunResult,
   type ToolCallMessagePartProps,
+  type ChecklistItemData,
+  type ChecklistItemStatus,
+  type ReasoningGroupComponent,
+  type ReasoningMessagePartProps,
 } from "@assistant-ui/react-ink";
 import type {
   ToolApprovalOption,
@@ -309,6 +391,50 @@ function DiffPanel({
     </Box>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Reasoning — a genuine "thinking" display block, distinct from
+// ActiveStatusRow's rotating-gerund spinner (that's a THREAD-level
+// "something is happening" indicator; this is a MESSAGE-PART-level render of
+// actual reasoning content the assistant produced). Two real library pieces:
+//
+//   - ReasoningPartUI (a ReasoningMessagePartComponent): renders one
+//     `{ type: "reasoning", text }` part's live text directly from props
+//     (MessagePartComponent spreads the part onto this component — no
+//     context read needed, unlike the library's own MessagePartPrimitive.
+//     Reasoning, which instead pulls `s.part` from context; either works,
+//     this one reads props for parity with BashToolUI/EditToolUI below).
+//   - ReasoningGroupUI (a real ReasoningGroupComponent): wraps whichever
+//     consecutive reasoning parts `groupMessageParts` grouped together in a
+//     single labeled block — "✻ Thinking…" while the group's tail part is
+//     still streaming, "✻ Thought" once it's settled — never reusing the
+//     accentPrimary spinner color/treatment so it can't be mistaken for the
+//     thread-level spinner.
+// ---------------------------------------------------------------------------
+const ReasoningPartUI: React.FC<ReasoningMessagePartProps> = (props) => (
+  <Text color={tokens.textMuted} italic>
+    {props.text}
+  </Text>
+);
+
+const ReasoningGroupUI: ReasoningGroupComponent = ({ startIndex, endIndex, children }) => {
+  // Read the group's LAST reasoning part's real per-part status (PartState.
+  // status, confirmed in @assistant-ui/core's store/scopes/part.d.ts) so the
+  // label genuinely reflects "still streaming" vs. "settled" instead of a
+  // constant string — real state driving the label, not a fake toggle.
+  const stillStreaming = useAuiState((s) => s.message.parts[endIndex]?.status?.type === "running");
+  void startIndex;
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={tokens.textMuted} paddingX={1} marginBottom={1}>
+      <Text bold color={tokens.accentInfo}>
+        {BULLET} {stillStreaming ? "Thinking…" : "Thought"}
+      </Text>
+      <Box flexDirection="column" marginTop={0}>
+        {children}
+      </Box>
+    </Box>
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Generic tool-call renderers (Bash, Edit) — canonical
@@ -599,16 +725,20 @@ function useApprovalTaskStatus(toolName: string): TaskStatus {
   });
 }
 
-function taskPillColor(status: TaskStatus): string {
+// Maps this fixture's own TaskStatus (unchanged from round 4 — still
+// computed from real, observed thread/approval state above) onto the
+// library's real ChecklistItemStatus vocabulary, so LiveChecklist below is
+// driven by genuine checklist item state instead of a hand-rolled string.
+function checklistStatus(status: TaskStatus): ChecklistItemStatus {
   switch (status) {
     case "done":
-      return tokens.semanticSuccess;
+      return "complete";
     case "blocked":
-      return tokens.semanticError;
+      return "error";
     case "active":
-      return tokens.accentPrimary;
+      return "running";
     case "pending":
-      return tokens.textMuted;
+      return "pending";
     default: {
       const _exhaustive: never = status;
       throw new Error(`unhandled TaskStatus: ${_exhaustive}`);
@@ -616,17 +746,31 @@ function taskPillColor(status: TaskStatus): string {
   }
 }
 
+// Footer — real LiveChecklist (checklist.ChecklistPrimitive family),
+// confirmed by reading primitives/checklist/{LiveChecklist,ChecklistItem,
+// ChecklistRoot,ChecklistProgress}.js: renders through the actual
+// ChecklistPrimitive.{Root,Item,Progress} components (□ pending/dim, a live
+// spinner while running, ■ green on complete, x red on error, plus a real
+// "n/total done" ChecklistPrimitive.Progress line) — no more hand-drawn
+// "Tasks 2/3" pill string. Deliberately passes an explicit `items` array
+// rather than relying on LiveChecklist's own auto-derivation
+// (`useToolCallChecklist`/`AutoChecklist`, used when `items` is omitted):
+// that hook reads only `s.message.parts` of the CURRENT message, i.e. one
+// turn's tool calls, whereas this footer's three tasks span BOTH scripted
+// turns — the explicit-items path is the one LiveChecklist itself offers
+// for exactly that case (LiveChecklistProps.items is optional for this
+// reason), and the items are still real: their `status` comes from the same
+// live, observed thread/approval state useApprovalTaskStatus/
+// useToolTaskStatus have always computed.
 const TasksFooter: React.FC = () => {
   const cleanup = useApprovalTaskStatus("delete_file");
   const glyphEdit = useToolTaskStatus("Edit");
   const verify = useToolTaskStatus("Bash", VERIFY_COMMAND);
-  const statuses: readonly [TaskStatus, string][] = [
-    [cleanup, "Clean up scratch file"],
-    [glyphEdit, "Tighten glyph comment"],
-    [verify, "Verify /tmp is clean"],
+  const items: ChecklistItemData[] = [
+    { id: "cleanup", text: "Clean up scratch file", status: checklistStatus(cleanup) },
+    { id: "glyph-edit", text: "Tighten glyph comment", status: checklistStatus(glyphEdit) },
+    { id: "verify", text: "Verify /tmp is clean", status: checklistStatus(verify) },
   ];
-  const done = statuses.filter(([s]) => s === "done").length;
-  const anyBlocked = statuses.some(([s]) => s === "blocked");
   return (
     <Box
       borderStyle="single"
@@ -637,16 +781,7 @@ const TasksFooter: React.FC = () => {
       marginTop={1}
       paddingTop={0}
     >
-      <Text bold color={anyBlocked ? tokens.semanticWarning : tokens.accentPrimary}>
-        Tasks {done}/{statuses.length}
-      </Text>
-      {statuses.map(([status, label], i) => (
-        <Text key={label} color={taskPillColor(status)}>
-          {"  ["}
-          {label}
-          {"]"}
-        </Text>
-      ))}
+      <LiveChecklist items={items} title="Tasks" showProgress />
     </Box>
   );
 };
@@ -689,9 +824,15 @@ const STATUS_GLYPH_PATCH = `--- a/src/cli/tui-v2/components/messages/ToolMessage
 // started with (not the previous yield's), so every yield here must
 // re-supply the FULL set of parts produced so far in THIS run() call.
 // ---------------------------------------------------------------------------
+// `partType` defaults to "text" (every existing call site passes exactly two
+// args, so this stays source-compatible); pass "reasoning" to stream into a
+// real `{ type: "reasoning", text }` part instead — same chunk-by-chunk
+// growing-snapshot contract either way, so a genuine reasoning part streams
+// on screen exactly like a genuine text part does.
 async function* streamTextPart(
   parts: ThreadAssistantMessagePart[],
   full: string,
+  partType: "text" | "reasoning" = "text",
   opts?: { chunkSize?: number; delayMs?: number },
 ): AsyncGenerator<readonly ThreadAssistantMessagePart[]> {
   const chunkSize = opts?.chunkSize ?? 3;
@@ -699,7 +840,7 @@ async function* streamTextPart(
   let acc = "";
   for (let i = 0; i < full.length; i += chunkSize) {
     acc += full.slice(i, i + chunkSize);
-    parts[parts.length - 1] = { type: "text", text: acc };
+    parts[parts.length - 1] = partType === "reasoning" ? { type: "reasoning", text: acc } : { type: "text", text: acc };
     yield [...parts];
     await sleep(delayMs);
   }
@@ -720,8 +861,22 @@ async function* streamTextPart(
 let turnIndex = 0;
 
 async function* turn1Start(): AsyncGenerator<ChatModelRunResult> {
-  const parts: ThreadAssistantMessagePart[] = [{ type: "text", text: "" }];
+  // A real `reasoning` part, streamed first — genuine deliberation before
+  // acting, rendered via ReasoningGroupComponent/MessagePartPrimitive.Reasoning
+  // below, not the plain spinner (ActiveStatusRow) and not a fake styled
+  // text block.
+  const parts: ThreadAssistantMessagePart[] = [{ type: "reasoning", text: "" }];
 
+  for await (const snap of streamTextPart(
+    parts,
+    "Two asks here: clean up a stale scratch file, and tighten a status-glyph comment. Deleting a file is destructive, so I should confirm it actually exists before proposing anything — and either way I'll need explicit permission before removing it.",
+    "reasoning",
+  )) {
+    yield { content: snap };
+  }
+  await sleep(180);
+
+  parts.push({ type: "text", text: "" });
   for await (const snap of streamTextPart(
     parts,
     "I'll handle both of those. Let me first check on that scratch file.",
@@ -886,7 +1041,23 @@ const AssistantMessage: React.FC = () => {
   useAssistantToolUI({ toolName: "Bash", render: BashToolUI, display: "standalone" });
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <MessagePrimitive.Content />
+      {/* MessagePrimitive.Parts (not .Content, used through round 4) is the
+          primitive that actually GROUPS consecutive reasoning parts into a
+          single ReasoningGroupComponent (MessageParts.js's groupMessageParts
+          → "reasoningGroup" ranges) — .Content has no grouping concept.
+          Bash/Edit/delete_file keep rendering exactly as before: .Parts's
+          tool-call branch resolves the SAME useAssistantToolUI registry
+          (`s.tools.toolUIs`, populated by react/client/Tools.js), just under
+          a differently-named store field than .Content used. Text/Image/
+          etc. fall back to react-ink's own ink-flavored defaults
+          (mergeWithInkDefaults in MessageParts.js), so plain text turns are
+          unaffected too. unstable_showEmptyOnNonTextEnd={false} keeps the
+          tool-call rows' appearance byte-for-byte identical to round 4 (see
+          the round-5 header note for why). */}
+      <MessagePrimitive.Parts
+        components={{ Reasoning: ReasoningPartUI, ReasoningGroup: ReasoningGroupUI }}
+        unstable_showEmptyOnNonTextEnd={false}
+      />
     </Box>
   );
 };
@@ -923,6 +1094,23 @@ const ComposerRow: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------
+// NotificationBridge — real terminal notification on turn completion via
+// useNotification (confirmed in useNotification.js: with no config it fires
+// its own DEFAULTS — `ringBell()` + `sendOSCNotification()`, both genuine
+// terminal escape sequences written to process.stdout per
+// notification-channels.js, not a color/text change) once per scripted
+// turn's `status: {type:"complete"}` yield. Rendered as its own child
+// (rather than called inside `App`) because `useAuiState` (which
+// `useNotification` uses internally) requires being inside
+// AssistantRuntimeProvider's subtree — `App`'s own body runs BEFORE that
+// provider mounts.
+// ---------------------------------------------------------------------------
+const NotificationBridge: React.FC = () => {
+  useNotification();
+  return null;
+};
+
+// ---------------------------------------------------------------------------
 // App — the composed shell: header, transcript, in-progress spinner row,
 // tasks footer, composer.
 // ---------------------------------------------------------------------------
@@ -941,6 +1129,7 @@ const App: React.FC = () => {
           <ComposerRow />
         </ThreadPrimitive.Root>
       </Box>
+      <NotificationBridge />
     </AssistantRuntimeProvider>
   );
 };
