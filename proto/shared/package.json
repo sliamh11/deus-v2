@@ -1,0 +1,24 @@
+{
+  "name": "@lia496/shared",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Target-neutral shared runtime for LIA-496: adapter, thread-list, permissions, status keys, shiki highlighting. Zero DOM/Ink presentation dependencies — see check-shared-purity.sh.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@assistant-ui/core": "^0.3.0",
+    "@assistant-ui/store": "^0.3.0",
+    "assistant-stream": "^0.3.29",
+    "shiki": "^4.3.1",
+    "react": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.17",
+    "typescript": "~6.0.2"
+  }
+}

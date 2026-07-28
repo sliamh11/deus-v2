@@ -1,0 +1,790 @@
+/* LIA-496 — "Reading Room" theme. Token values copied verbatim from the
+   design source (proto/design-source/taste-pass-fable.html, the `.v2 .app`
+   rule block and its neighbors) — not re-derived or approximated. This file
+   is where those values are allowed to live; shared/src/status.ts only ever
+   exports semantic StatusKeys ("accent" | "ok" | "warn" | "err" | "dim"),
+   which the STATUS_COLOR map below resolves to real colors, target-local.
+
+   Single-themed, deliberately: the design source specs "Reading Room" as a
+   warm-light editorial look (porcelain green-gray ground, deep pine
+   accent), not a light/dark pair — same reasoning LIA-495's tokens.ts
+   comment gave for staying single-theme rather than inventing an
+   unspecified dark variant of a palette that was only ever designed once. */
+:root {
+  --s-bg: #f7f8f4;
+  --s-side: #eff2ea;
+  --s-ink: #23281f;
+  --s-dim: #6e7568;
+  --s-faint: #a2a99b;
+  --s-line: #dfe3d8;
+  --s-pine: #3e6b4f;
+  --s-chip: #e6ecdf;
+  --s-code: #23281f;
+  --s-code-ink: #d9dfd2;
+  --s-field: #fdfdfb;
+
+  /* Diff colors, verbatim from the design source's .s-code-h .plus/.minus
+     and .s-add/.s-del rules. */
+  --s-diff-add: #93c989;
+  --s-diff-del: #d98d82;
+  --s-diff-hunk: #77816d;
+  --s-diff-ctx: #9aa491;
+
+  --s-err: #b6503f;
+  --s-err-bg: #fbf1ef;
+  --s-warn: #a97a2e;
+
+  --s-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --s-serif: ui-serif, "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --s-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  color-scheme: light;
+  font-family: var(--s-sans);
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100svh;
+  background: var(--s-bg);
+  color: var(--s-ink);
+}
+
+#root {
+  min-height: 100svh;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+}
+
+/* ---------------------------------------------------------------------
+   App shell
+   ------------------------------------------------------------------- */
+.rr-app {
+  display: flex;
+  min-height: 100svh;
+  background: var(--s-bg);
+  color: var(--s-ink);
+}
+
+/* ---------------------------------------------------------------------
+   Sidebar (Sidebar.tsx)
+   ------------------------------------------------------------------- */
+.s-side {
+  width: 256px;
+  flex: none;
+  background: var(--s-side);
+  border-right: 1px solid var(--s-line);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 14px 0;
+}
+.s-brand {
+  font-family: var(--s-serif);
+  font-size: 17px;
+  padding: 0 6px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.s-drawer-close {
+  display: none;
+  border: none;
+  background: transparent;
+  color: var(--s-dim);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+.s-new {
+  border: 1px solid var(--s-pine);
+  color: var(--s-pine);
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+.s-new .pl {
+  font-size: 15px;
+  line-height: 1;
+}
+.s-sec {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--s-faint);
+  padding: 0 6px 6px;
+}
+.s-item-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 1px;
+  border-radius: 7px;
+}
+.s-item-row:hover {
+  background: rgba(35, 40, 31, 0.04);
+}
+.s-item-row.on {
+  background: var(--s-chip);
+}
+.s-item {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--s-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: transparent;
+  border: none;
+  text-align: left;
+}
+.s-item-row.on .s-item {
+  color: var(--s-ink);
+  font-weight: 600;
+}
+.s-item-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 13px;
+  border-radius: 7px;
+  border: 1px solid var(--s-pine);
+  background: #fff;
+  color: var(--s-ink);
+}
+.s-item-actions {
+  display: none;
+  gap: 2px;
+  padding-right: 4px;
+  flex: none;
+}
+.s-item-row:hover .s-item-actions,
+.s-item-row.on .s-item-actions {
+  display: flex;
+}
+.s-item-action {
+  border: none;
+  background: transparent;
+  color: var(--s-faint);
+  font-size: 11px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.s-item-action:hover {
+  color: var(--s-err);
+  background: rgba(182, 80, 63, 0.1);
+}
+.s-gap {
+  height: 18px;
+}
+.s-empty-list {
+  color: var(--s-faint);
+  font-size: 12.5px;
+  padding: 4px 8px 12px;
+}
+.s-side-loading {
+  color: var(--s-faint);
+  font-size: 12.5px;
+  padding: 4px 8px 12px;
+}
+.s-side-error {
+  color: var(--s-err);
+  background: var(--s-err-bg);
+  font-size: 12.5px;
+  padding: 8px;
+  border-radius: 6px;
+  margin: 4px 0 12px;
+}
+.s-side-error button {
+  display: block;
+  margin-top: 6px;
+  background: none;
+  border: 1px solid var(--s-err);
+  color: var(--s-err);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.s-me {
+  margin-top: auto;
+  border-top: 1px solid var(--s-line);
+  margin-left: -14px;
+  margin-right: -14px;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.s-ava {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--s-pine);
+  color: #f3f6ee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  flex: none;
+}
+
+/* ---------------------------------------------------------------------
+   Main column (Thread.tsx / App.tsx)
+   ------------------------------------------------------------------- */
+.s-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 100svh;
+}
+.s-top {
+  padding: 14px 26px;
+  border-bottom: 1px solid var(--s-line);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.s-top-left {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.s-drawer-open {
+  display: none;
+  border: 1px solid var(--s-line);
+  background: var(--s-field);
+  color: var(--s-dim);
+  border-radius: 7px;
+  padding: 4px 8px;
+  font-size: 13px;
+  flex: none;
+}
+.s-top h2 {
+  margin: 0;
+  font-size: 16.5px;
+  font-weight: 500;
+  font-family: var(--s-serif);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.s-model {
+  font-size: 11.5px;
+  color: var(--s-dim);
+  border: 1px solid var(--s-line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: var(--s-bg);
+  white-space: nowrap;
+  flex: none;
+}
+.s-thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 30px 26px 10px;
+}
+.s-col {
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+/* ---------------------------------------------------------------------
+   Messages
+   ------------------------------------------------------------------- */
+.s-user {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 26px;
+}
+.s-user .chip {
+  background: var(--s-chip);
+  border-radius: 16px 16px 4px 16px;
+  padding: 10px 16px;
+  max-width: 34rem;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.s-msg-group {
+  margin-bottom: 8px;
+}
+.s-ast {
+  font-family: var(--s-serif);
+  font-size: 16px;
+  line-height: 1.68;
+}
+.s-ast p {
+  margin: 0 0 14px;
+}
+.s-ast code {
+  font-family: var(--s-mono);
+  font-size: 0.82em;
+  background: var(--s-chip);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.s-ast pre {
+  font-family: var(--s-mono);
+}
+.s-ast ul,
+.s-ast ol {
+  margin: 0 0 14px;
+  padding-left: 1.4em;
+}
+.s-ast li {
+  margin-bottom: 4px;
+}
+.s-ast h1,
+.s-ast h2,
+.s-ast h3 {
+  font-family: var(--s-serif);
+  font-weight: 600;
+  margin: 20px 0 10px;
+}
+.s-reasoning {
+  font-family: var(--s-sans);
+  font-size: 12.5px;
+  color: var(--s-faint);
+  font-style: italic;
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+.s-toolline {
+  font-family: var(--s-mono);
+  font-size: 12px;
+  color: var(--s-dim);
+  margin: 0 0 12px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.s-toolline .dot {
+  color: var(--s-faint);
+}
+
+/* ---------------------------------------------------------------------
+   Permission decision card (PermissionCard.tsx)
+   ------------------------------------------------------------------- */
+.s-perm {
+  border: 1px solid var(--s-line);
+  background: var(--s-field);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 0 0 16px;
+  font-family: var(--s-sans);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.s-perm .h {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.s-perm .d {
+  color: var(--s-dim);
+  margin-bottom: 11px;
+}
+.s-perm .d code {
+  font-family: var(--s-mono);
+  font-size: 0.95em;
+}
+.s-perm-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.s-btn {
+  display: inline-block;
+  border-radius: 7px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+}
+.s-btn.go {
+  background: var(--s-pine);
+  color: #f3f6ee;
+}
+.s-btn.ghost {
+  border: 1px solid var(--s-line);
+  background: transparent;
+  color: var(--s-dim);
+}
+.s-always {
+  border: none;
+  background: transparent;
+  color: var(--s-pine);
+  font-size: 12.5px;
+  text-decoration: underline;
+  padding: 6px 4px;
+}
+.s-perm-resolved {
+  font-size: 13px;
+  color: var(--s-dim);
+}
+.s-perm-resolved.granted {
+  color: var(--s-pine);
+}
+.s-perm-resolved.denied {
+  color: var(--s-err);
+}
+
+/* ---------------------------------------------------------------------
+   Diff card (DiffPanel.tsx)
+   ------------------------------------------------------------------- */
+.s-diff-wrap {
+  margin: 0 0 16px;
+}
+.s-diff-flag {
+  font-weight: 700;
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+.s-diff-flag.notapplied {
+  color: var(--s-warn);
+}
+.s-diff-flag.error {
+  color: var(--s-err);
+}
+.s-code {
+  background: var(--s-code);
+  color: var(--s-code-ink);
+  border-radius: 10px;
+  overflow-x: auto;
+  font-family: var(--s-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.s-code-h {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(217, 223, 210, 0.16);
+  color: #9aa491;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.s-code-h .plus {
+  color: var(--s-diff-add);
+}
+.s-code-h .minus {
+  color: var(--s-diff-del);
+}
+.s-code pre {
+  margin: 0;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.s-hunk {
+  color: var(--s-diff-hunk);
+}
+.s-del {
+  color: var(--s-diff-del);
+}
+.s-add {
+  color: var(--s-diff-add);
+}
+.s-ctx {
+  color: var(--s-diff-ctx);
+}
+
+/* ---------------------------------------------------------------------
+   Fenced markdown code block (CodeBlock.tsx) — same dark-card family as
+   .s-code (diff panel), distinct class prefix since it's a different
+   consuming component (MarkdownText's `code` override, not the Edit
+   tool's ToolCallMessagePart renderer).
+   ------------------------------------------------------------------- */
+.cb-card {
+  background: var(--s-code);
+  color: var(--s-code-ink);
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 0 0 16px;
+  font-family: var(--s-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.cb-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  border-bottom: 1px solid rgba(217, 223, 210, 0.16);
+  color: #9aa491;
+  font-size: 11.5px;
+}
+.cb-copy {
+  border: none;
+  background: transparent;
+  color: #9aa491;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.cb-copy:hover {
+  background: rgba(217, 223, 210, 0.12);
+  color: var(--s-code-ink);
+}
+.cb-copy.copied {
+  color: var(--s-diff-add);
+}
+.cb-body {
+  overflow-x: auto;
+  padding: 12px 14px;
+}
+.cb-body pre {
+  margin: 0;
+}
+.cb-body pre,
+.cb-body code {
+  font-family: var(--s-mono) !important;
+  font-size: 12.5px !important;
+  background: transparent !important;
+}
+.s-ast .cb-inline-fallback {
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------
+   Composer.tsx
+   ------------------------------------------------------------------- */
+.s-composer {
+  padding: 14px 26px 20px;
+}
+.s-field {
+  max-width: 44rem;
+  margin: 0 auto;
+  border: 1px solid var(--s-line);
+  background: var(--s-field);
+  border-radius: 999px;
+  padding: 10px 10px 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 2px 10px rgba(35, 40, 31, 0.05);
+}
+.s-field textarea {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  resize: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--s-ink);
+  max-height: 160px;
+  font-family: var(--s-sans);
+}
+.s-field textarea::placeholder {
+  color: var(--s-faint);
+}
+.s-send {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--s-pine);
+  color: #f3f6ee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  border: none;
+}
+.s-send:disabled {
+  background: var(--s-faint);
+  cursor: default;
+}
+.s-composer-waiting {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 10px 20px;
+  color: var(--s-warn);
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------------
+   ActionBar.tsx / BranchPicker.tsx (assistant message footer)
+   ------------------------------------------------------------------- */
+.s-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 22px;
+  min-height: 22px;
+}
+.s-actionbar {
+  display: flex;
+  gap: 2px;
+}
+.s-abtn {
+  border: none;
+  background: transparent;
+  color: var(--s-faint);
+  font-size: 12px;
+  padding: 3px 7px;
+  border-radius: 6px;
+}
+.s-abtn:hover {
+  background: var(--s-chip);
+  color: var(--s-dim);
+}
+.s-abtn.copied {
+  color: var(--s-pine);
+}
+.s-branchpicker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--s-faint);
+  font-size: 12px;
+}
+.s-branchpicker button {
+  border: none;
+  background: transparent;
+  color: var(--s-dim);
+  padding: 2px 5px;
+  border-radius: 5px;
+}
+.s-branchpicker button:hover {
+  background: var(--s-chip);
+}
+.s-branchpicker button:disabled {
+  color: var(--s-faint);
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------------
+   EmptyState.tsx
+   ------------------------------------------------------------------- */
+.s-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 30px 26px;
+  gap: 18px;
+}
+.s-empty h1 {
+  font-family: var(--s-serif);
+  font-weight: 500;
+  font-size: 26px;
+  margin: 0;
+  color: var(--s-ink);
+}
+.s-empty p {
+  margin: 0;
+  color: var(--s-dim);
+  font-size: 14px;
+  max-width: 30rem;
+}
+.s-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: 40rem;
+}
+.s-chip-btn {
+  border: 1px solid var(--s-line);
+  background: var(--s-field);
+  color: var(--s-dim);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+}
+.s-chip-btn:hover {
+  border-color: var(--s-pine);
+  color: var(--s-pine);
+}
+
+/* ---------------------------------------------------------------------
+   ErrorState.tsx
+   ------------------------------------------------------------------- */
+.s-error {
+  border: 1px solid #e7c3bb;
+  background: var(--s-err-bg);
+  color: var(--s-err);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 0 0 16px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.s-error .h {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+/* ---------------------------------------------------------------------
+   Responsive: sidebar collapses to an overlay drawer below ~860px
+   ------------------------------------------------------------------- */
+@media (max-width: 860px) {
+  .s-drawer-open {
+    display: inline-flex;
+  }
+  .s-side {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 20;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: 2px 0 24px rgba(35, 40, 31, 0.18);
+  }
+  .s-side.open {
+    transform: translateX(0);
+  }
+  .s-drawer-close {
+    display: inline-flex;
+  }
+  .rr-scrim {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(35, 40, 31, 0.28);
+    z-index: 19;
+  }
+  .rr-scrim.open {
+    display: block;
+  }
+  .s-col {
+    max-width: 100%;
+  }
+}

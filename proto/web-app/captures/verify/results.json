@@ -1,0 +1,147 @@
+{
+  "rows": [
+    {
+      "feature": "Sidebar seeded threads, grouped Today/Yesterday",
+      "expected": "7 seeded threads grouped under Today (3) / Yesterday (4) headers per shared/src/fixtures/threads.ts",
+      "observed": "Today header present=true, Yesterday header present=true, total thread rows=7, titles=[\"Status-glyph rendering fix\",\"Composer keyboard shortcuts\",\"Shiki theme swap crash\",\"LIA-495 migration spike\",\"Sidebar layout pass\",\"Diff panel polish\",\"Streaming markdown flicker\"]",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/01-sidebar-seeded-grouped.png",
+      "pass": true
+    },
+    {
+      "feature": "Sidebar loading state (real 250ms list() latency)",
+      "expected": "A genuine loading indicator renders while list() is pending (not the empty-thread message), and clears once real threads render",
+      "observed": "loading text during window=\"Loading threads…\", wrong empty-state message shown during load=false (must be false), loading indicator gone after real content renders=true",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/02-sidebar-loading.png , /Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/03-sidebar-loaded-after-loading-state.png",
+      "pass": true
+    },
+    {
+      "feature": "Sidebar error state (forced real list() rejection) + Retry recovery",
+      "expected": "A genuine list()-load failure renders a real error state with a Retry affordance; Retry re-calls reload() and recovers to the normal 7-thread list",
+      "observed": "error banner text=\"Couldn't load threads.\nRetry\", recovered after Retry (error banner gone)=true, thread rows after recovery=7",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/04-sidebar-error-state.png , /Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/05-sidebar-error-recovered-via-retry.png",
+      "pass": true
+    },
+    {
+      "feature": "Empty state + suggestion chips on new/fresh thread",
+      "expected": "New-chat greeting heading + 3 real ThreadPrimitive.Suggestion chips render",
+      "observed": "heading present=true (\"What are we working on?\"), suggestion chip count=3",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/06-empty-state-suggestions.png",
+      "pass": true
+    },
+    {
+      "feature": "Composer textarea rendered inside ComposerPrimitive.Root <form>",
+      "expected": "ComposerPrimitive.Input IS rendered inside ComposerPrimitive.Root, textarea.closest('form') !== null (the LIA-495 regression check)",
+      "observed": "formAncestor=true",
+      "artifact": "(no screenshot — DOM assertion)",
+      "pass": true
+    },
+    {
+      "feature": "Streaming mid-turn: partial serif prose visible while streaming",
+      "expected": "assistant prose renders mid-stream in ui-serif/Iowan Old Style/Georgia (.s-ast) with partial text visible before completion",
+      "observed": ".s-ast element count=1, partial text sample=\"I'll handle both o\"",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/07-streaming-mid-turn.png",
+      "pass": true
+    },
+    {
+      "feature": "Permission card pending state",
+      "expected": "Permission-needed decision card renders with Allow / Not now / Always allow before any decision",
+      "observed": "card heading=\"Permission needed — delete file\", Allow button present=true, Always allow button present=true",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/08-permission-pending.png",
+      "pass": true
+    },
+    {
+      "feature": "Permission card resolved (Always allow)",
+      "expected": "After clicking Always allow, the card shows a resolved state (label + deletion outcome), no pending buttons, and the delete_file permission class is granted for the rest of the session",
+      "observed": "resolved text=\"Always allow — deleted\"",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/09-permission-resolved-always-allow.png",
+      "pass": true
+    },
+    {
+      "feature": "Diff card (Edit tool result) renders with colored +/- lines",
+      "expected": "DiffPanel renders a dark code card with filename header, +N/-N badge, colored diff lines (--s-diff-add #93C989 / --s-diff-del #D98D82)",
+      "observed": "header=\"src/cli/tui-v2/components/messages/ToolMessage.tsx\n+3 −3\", .s-add lines=3, .s-del lines=3",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/10-diff-card.png",
+      "pass": true
+    },
+    {
+      "feature": "Turn 2 follow-up ('anything else stale?') completes with no permission gate",
+      "expected": "turn2() runs a plain verify command (no delete_file tool-call) and completes on its own — this is NOT the grant-store proof, just the setup turn that must finish before turn 3 can be sent",
+      "observed": "narration includes turn-2 closing text=true",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/11-turn2-followup-complete.png",
+      "pass": true
+    },
+    {
+      "feature": "Second permission-requiring action auto-approved (grant-store proof)",
+      "expected": "Turn 3's second delete_file request renders NO NEW .s-perm prompt UI at all (Always-allow granted in turn 1) — a prompt rendering here is the FAIL, not a partial pass",
+      "observed": ".s-perm count before turn 3 send=1, after turn 3 completes=1 (expect unchanged — still only turn 1's resolved Always-allow card, zero new cards for turn 3), turn-3 narration present (mentions granted deletion without asking)=true",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/12-turn3-second-permission-grant-proof.png",
+      "pass": true
+    },
+    {
+      "feature": "Thread switch away + return preserves live-created messages",
+      "expected": "Switching to another thread and back preserves messages created live during this session (turn 3's user message still present)",
+      "observed": "live turn-3 message still present after switch-back=true",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/13-switched-away.png , /Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/14-switched-back.png",
+      "pass": true
+    },
+    {
+      "feature": "Markdown code block highlighted from FIRST rendered frame (shiki)",
+      "expected": "Fenced code block shows shiki-highlighted syntax colors from the FIRST rendered frame — a plain-text still is a FAIL (highlighter pre-warmed to avoid the race)",
+      "observed": "40ms-polled 164 samples across the streaming window: 3 sample(s) hit the transient 'plain-fallback' DOM state, but bodyTextLen was 0 in every one of them (i.e. no VISIBLE unhighlighted text was ever on screen — it goes empty -> shiki-highlighted directly); final state has 1 .shiki element(s). everVisiblePlainText=false",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/15-markdown-shiki-codeblock.png",
+      "pass": true
+    },
+    {
+      "feature": "Copy button copies real code text, shows 'Copied' state",
+      "expected": "Clicking Copy writes the real fenced code text to the clipboard and the button shows a 'Copied' state (then reverts after 2s)",
+      "observed": "button label after click=\"Copied\", clipboard length=166 (full rendered code length=166, matches=true), clipboard sample=\"export function highlightToHtml(\\n  code: string,\\n  lang: BundledLanguage,\\n  them\"",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/16-codeblock-copied-state.png",
+      "pass": true
+    },
+    {
+      "feature": "Copy 'Copied' state reverts after 2 seconds",
+      "expected": "copy action shows a 2-second 'Copied' state then reverts",
+      "observed": "button label ~2.2s later=\"Copy\"",
+      "artifact": "(no screenshot — timed DOM assertion)",
+      "pass": true
+    },
+    {
+      "feature": "Edit a user message, branch picker shows 2/2",
+      "expected": "Editing a sent user message and resubmitting creates a sibling branch; BranchPickerPrimitive.Root (hideWhenSingleBranch) shows Number/Count as 2 / 2",
+      "observed": "double-click on user chip produced editable field=false, .s-branchpicker elements found anywhere=0. No edit button/handler exists on UserMessage in Thread.tsx — BranchPicker.tsx's own header comment references \"ComposerPrimitive's per-message edit affordance\" but Thread.tsx's UserMessage renders only static MessagePrimitive.Content with no edit trigger wired.",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/17-edit-message-attempt.png",
+      "pass": false
+    },
+    {
+      "feature": "Regenerate (Reload) produces a genuinely different scripted variant",
+      "expected": "ActionBarPrimitive.Reload re-invokes the real adapter; per the plan's Feature scope this returns a scripted VARIANT on re-run, not an empty response",
+      "observed": "before=\"\n+\n   return (\n \n\nDone — Cmd+Enter submits, Escape blurs the pill composer. Try it out.\n\nCopy\nReload\" | after=\"submits, Escape blurs the pill composer. Try it out. (regenerated — same result on a fresh pass, nothing new to add.)\n\nCopy\nReload\n‹\n2 / 2\n›\" | non-empty=true, different from before=true, contains 'regenerated' variant marker=true",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/18-regenerate-mid.png , /Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/19-regenerate-variant.png",
+      "pass": true
+    },
+    {
+      "feature": "Responsive at 768px",
+      "expected": "Sidebar collapses to an overlay drawer below ~860px (per theme.css's @media(max-width:860px) rule)",
+      "observed": "sidebar off-canvas (translated out of the visible viewport)=true (bbox={\"x\":-256,\"y\":0,\"width\":256,\"height\":1024}), hamburger drawer-open button visible=true",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/20-responsive-768.png",
+      "pass": true
+    },
+    {
+      "feature": "Responsive at 390px: sidebar becomes overlay drawer",
+      "expected": "At 390px the sidebar is an off-canvas drawer; opening it via the hamburger shows the drawer + scrim overlay",
+      "observed": ".s-side.open present=true, .rr-scrim.open present=true",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/21-responsive-390-closed.png , /Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/22-responsive-390-drawer-open.png",
+      "pass": true
+    },
+    {
+      "feature": "Error state thread renders real thrown-error UI",
+      "expected": "'theme-swap-crash' thread's real thrown Error (inside run()) propagates to message.status={error} and ErrorState.tsx renders ErrorPrimitive.Root/.Message with the real error text",
+      "observed": "heading=\"Something went wrong\", full card text=\"Something went wrong\nshiki: unbundled theme \"solarized-dusk\" is not part of the loaded bundle — call highlighter.loadTheme() with a name from bundledThemes first\"",
+      "artifact": "/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/web-app/captures/verify/23-error-state.png",
+      "pass": true
+    }
+  ],
+  "consoleErrors": [
+    "[assistant-ui] thread list load failed: Error: fixtureThreadListAdapter.list: simulated failure (loading/error-state verification)\n    at Object.list (http://localhost:5190/@fs/Users/liam10play/deus-v2-mvp/.claude/worktrees/lia496-production-ui-spike/proto/shared/src/threadList.tsx:98:10)\n    at async OptimisticState.optimisticUpdate (http://localhost:5190/node_modules/.vite/deps/react-Cs1LMCFY.js?v=5d9a71b3:9061:19)"
+  ]
+}

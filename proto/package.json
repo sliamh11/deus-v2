@@ -1,0 +1,11 @@
+{
+  "name": "lia496-production-ui-spike",
+  "private": true,
+  "version": "0.0.0",
+  "description": "LIA-496 — production-fidelity UI spike: 'Reading Room' (web) + 'Transcript' (Ink). Scripted/fixture data only, not wired to Deus's real backend.",
+  "workspaces": [
+    "shared",
+    "web-app",
+    "ink-app"
+  ]
+}

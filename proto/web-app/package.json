@@ -1,0 +1,30 @@
+{
+  "name": "web-app",
+  "private": true,
+  "version": "0.0.0",
+  "description": "LIA-496 web target — 'Reading Room': warm-light editorial chat UI built on @assistant-ui/react.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@lia496/shared": "*",
+    "@assistant-ui/react": "0.15.0",
+    "@assistant-ui/react-markdown": "^0.14.8",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "playwright": "^1.62.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}
