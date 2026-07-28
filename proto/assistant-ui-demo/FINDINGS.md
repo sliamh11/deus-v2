@@ -456,3 +456,87 @@ already-durable, already-multi-writer-safe daemon state (the WhatsApp/
 Telegram `messages` table), not as the vehicle for CLI-turn history or
 approval-resume, unless Deus first adds its own durable CLI-turn transcript
 and a stream-reattach mechanism.
+
+## Round 4 — full Claude Code app-shell mimicry (`src/full-shell.tsx`)
+
+Every previous round exercised one screen or one mechanism in isolation
+(permission prompt alone, diff rendering alone, the runtime/history spike
+alone). This round composes all of it into a single cohesive, runnable Ink
+app that hosts one real, scripted-but-live multi-turn session — the point
+being to see whether the pieces actually cohere into a believable Claude
+Code-shaped shell, not just whether each piece works on its own.
+
+**What was composed** (`src/full-shell.tsx`, 948 lines): header/status bar
+(project id + idle/working/awaiting-approval indicator via `useAuiState`) →
+rotating-gerund spinner (`ink-spinner`, only while `thread.isRunning`) →
+multi-turn transcript with canonical `⏺ ToolName(args)` bullets and real
+chunk-by-chunk streamed assistant text → a real read-only `Bash` tool call
+with a genuine result → a `delete_file` tool-call that genuinely interrupts
+the live flow mid-conversation via the library's real approval data model
+(`ToolCallMessagePart.approval` / `respondToApproval`), rendering an inline
+permission panel inside the live transcript (not a standalone screen) →
+resolving it (approve or deny) collapses it into a resolved `⏺` row and
+auto-resumes the **same** turn (no fake second user message), using message
+status `reason:"tool-calls"` so `respondToToolApproval`'s `shouldContinue`
+check re-invokes the adapter — a mechanism found only by reading
+`@assistant-ui/core`'s actual runtime source, not the docs → the resumed
+step runs an `Edit` tool-call rendering a real diff (`DiffView`, reused from
+`diff-screen.tsx`'s `DiffPanel` pattern) → a second user turn that runs a
+second real `Bash` check whose result genuinely reflects the outcome of the
+earlier delete/deny decision → footer `Tasks x/3` pills that progress from
+observed fixture state, closing at 3/3.
+
+Two real bugs were found only by running the app live in tmux, not by
+reading or typechecking it: (1) calling `props.addResult` both before and
+after `respondToApproval` on a still-pending approval double-satisfies the
+library's `shouldContinue` gate and crashes with a synchronous re-entrant
+"run already in progress" error — fixed by tracking the real deletion
+outcome in a plain `Map` instead, mirroring `permission-screen.tsx`'s
+already-proven approach; (2) the footer's "Clean up scratch file" task pill
+never reached "done" because `delete_file` deliberately never receives a
+`result` — fixed with a dedicated approval-based task-status check. A
+third, UX-only bug was also found live: the composer's own `useInput`
+stayed active during the permission chooser (the library does no focus
+management), so keystrokes meant for the chooser leaked into the composer
+text buffer — fixed by swapping the real composer for a muted placeholder
+while a decision is pending.
+
+**Capture.** One continuous `asciinema rec` inside a `120x40` tmux pane
+(wider than the usual `100x30` — this shell's diff panel and permission
+panel need the extra columns/rows to render without clipping), rendered to
+gif via `agg`. Saved at
+`proto/assistant-ui-demo/captures/full-shell.cast` /
+`captures/full-shell.gif` (~55s, 547 recorded events, 112 gif frames),
+with four still frames pulled via Python PIL (ffmpeg remains broken on
+this host, confirmed again this round) at the moments that matter:
+`full-shell-turn1-streaming.png` (spinner + streaming reply + `Tasks 0/3`),
+`full-shell-permission.png` (inline permission panel mid-interrupt,
+composer swapped for the muted placeholder, header reading "Awaiting
+approval"), `full-shell-diff.png` (resolved `delete_file` row, resumed
+turn, `Edit` diff panel, `Tasks 2/3`), and `full-shell-final.png` (second
+user turn, second `Bash` check confirming the cleanup, `Tasks 3/3`, session
+closed). The recording was verified in place — same session, same file — no
+separate "capture attempt" was discarded.
+
+**Honest note on full-shell composition vs. isolated pieces.** The library
+supported composing these elements *structurally* without friction: each
+screen built in earlier rounds (permission panel, diff panel, spinner,
+footer pills) dropped into one shared `AssistantRuntimeProvider` /
+`ThreadPrimitive` tree with no redesign needed, and the one genuinely
+non-obvious integration point — resuming a tool-call turn after an inline
+approval without faking a second user message — is exposed by the library's
+own primitives (`reason:"tool-calls"` message status) once you go read the
+runtime source, not a workaround bolted on top. That is a real point in the
+library's favor: it does not fight you when you try to make the pieces
+share one flow. What full composition adds that isolated screens hide,
+though, is exactly the two state-management bugs above — both are races
+between "who owns marking a tool call as resolved" (`addResult` vs.
+`respondToApproval`) that only manifest once a real interrupt-then-resume
+sequence runs inside a live multi-turn thread; neither bug was visible, or
+even possible to hit, in the single-screen permission/diff demos, because
+those never resumed a turn programmatically after approval. Net for the
+adoption decision: the library's primitives compose cleanly at the
+type/API level, but a production integration must own the same
+resolved-state bookkeeping this file had to add by hand (a small `Map`,
+not a novel abstraction) — that cost is real but bounded, and is now
+demonstrated rather than assumed.
