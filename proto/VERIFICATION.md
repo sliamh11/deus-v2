@@ -679,3 +679,38 @@ regenerate these WB1 artifacts after that fix lands or consciously accept
 them as an interim, disclosed leak; this note exists so that decision is
 made deliberately, not by silently shipping a public-repo PNG with a real
 name baked into it.
+
+## Orchestrating-session independent re-verification (`verified-by: user-spot-check`)
+
+Per the plan's own execution model — WB1's one named highest-risk claim is
+row 2 (stop-generating control genuinely halts token output mid-stream, not
+just that the button renders) — re-run firsthand via a live browser session
+against the real dev server, independent of any batch-agent dispatch,
+before trusting the SHIP verdict above.
+
+**Method:** started `vite` (web-app) fresh, opened the app in a real Chrome
+tab, selected the same "Status-glyph rendering fix" seeded thread the
+capture stage used, typed and sent "continue with the fix", waited for
+streaming to begin, and clicked Stop (`.s-send-stop`) once the in-flight
+text was genuinely non-trivial (`"Two asks here: clean up a stale scratch
+file, an"`, well past the first-token window). Captured the thread's
+rendered text immediately after the click, then again after a 2-second
+wait.
+
+**Result:** the text captured immediately after the click and the text
+captured 2 seconds later are identical, character-for-character: `"Two
+asks here: clean up a stale scratch file, an"` both times. The composer
+had already flipped from Stop back to Send, and the action bar showed the
+settled Copy/Reload state with a timing caption (`14.5s · 1 tok/s`) — not a
+still-generating state. **Zero further tokens appended after the click** —
+the literal scoped claim WB1's row 2 exists to prove.
+
+This independently confirms the stop-generating control genuinely halts
+generation, matching the batch's own capture-stage claim (which reported
+587/587 and 584/584 identical-length reproductions across its own
+re-runs) — the orchestrating session's own live run is a fourth,
+independent reproduction of the same result via a different mechanism
+(manual browser interaction, not the Playwright driver script).
+
+**verified-by: user-spot-check — PASS (stop-mid-stream genuinely halts
+output; reproduced independently outside the batch's own driver script).**
