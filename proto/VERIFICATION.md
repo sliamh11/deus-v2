@@ -1113,3 +1113,144 @@ own from-scratch capture-stage claim.
 **verified-by: user-spot-check — PASS (edit-to-branch genuinely forks
 into a navigable "2/2" sibling with distinct content per branch;
 reproduced independently outside the batch's own driver script).**
+## LIA-496 IB4 — Permission overhaul + polish (I14 D1, I15 note, I16 verification)
+
+`expected` values below are frozen from `proto/design-source/lia496-fix-plan.md`'s
+`## Full fix inventory` § G (I14/I15/I16's own entries) and `## Verification &
+capture strategy (per batch)` section ("IB4: full approval keyboard walk
+(arrows, enter, esc-deny, y/a/n accelerators) as asciinema"), plus D1's
+coexistence resolution (`## Three reviewer disagreements — resolved` § D1).
+All rows run for real against the live `tsx src/main.tsx` process under
+`tmux` (`tmux send-keys -l`/named keys, never a scripted prop injection) +
+`asciinema rec` for the visual artifacts, same established pattern as every
+prior Ink capture stage. `env USER=you LOGNAME=you` on every launch (see
+`captures/verify-ib4-arrow-nav-esc.sh`'s own header comment for the
+mechanism — `identity.ts`'s `getUserLabel()` checks these env vars before
+falling through to the real OS account name); all three `.cast` files and
+all nine still images byte-swept afterward for the three personal-value
+patterns this repo's own mechanical sweep instruction names — zero
+occurrences.
+
+`verified-by: batch-agent` on every row below (this dispatch's own capture
++ two rounds of live, unscripted `tmux` smoke-testing performed BEFORE
+writing the final capture scripts, not just after — see the I16 finding
+below for what that pre-capture testing caught). Per the plan's own
+execution model, the orchestrating session still independently re-runs
+IB4's one named claim (the full keyboard walk) itself before trusting it —
+this file records `batch-agent` as this dispatch's own claim, not a
+`user-spot-check` it has no authority to declare.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | Visible default + arrow navigation + Enter confirms the highlighted option | A default option is visibly indicated on first render; ↑/↓ or ←/→ moves the highlight through all three options and wraps; Enter resolves whichever option is CURRENTLY highlighted (not a hardcoded key) | Default (`▸ y allow once`, bold+underline, hint row shows "enter confirm (default)") visible immediately on prompt render. Live `tmux` smoke-test (pre-capture, not in the final recording): `Right` moved the caret to `a always allow` (hint row's "(default)" text correctly disappeared, confirming the label is state-driven, not static); a second `Right`/`Left`/`Left` sequence in the final capture returned the caret to index 0 before Enter — resolved as `Allow once`, matching the highlighted (not the original-default) option at confirm time. Separately, `Right` once + immediate `Enter` (live smoke-test) resolved as `Always allow` — proving Enter follows the CURRENT selection generically, not special-cased to index 0 | `ink-app/captures/verify/ib4-proof1-arrow-nav-esc-deny.cast`, stills `ib4-01-prompt-default-highlighted-allow-once.png`, `ib4-02-resolved-allow-once-via-arrow-enter.png` | batch-agent | **PASS** |
+| 2 | esc = deny | Pressing Escape while a decision is pending resolves it as Deny | Turn 3's second `delete_file` prompt resolved to `— Deny` (red) immediately after `Escape`; turn continued and completed on its own ("Understood, I'll leave that one alone too.") — the same auto-continuation any other deny path triggers | `ink-app/captures/verify/ib4-proof1-arrow-nav-esc-deny.cast`, still `ib4-03-resolved-deny-via-esc.png` | batch-agent | **PASS** |
+| 3 | ctrl+c = deny while pending; ctrl+c exits the app once nothing is pending | ctrl+c on a pending decision resolves Deny (not an app crash/exit); ctrl+c with no decision pending genuinely quits the app | `main.tsx` sets `exitOnCtrlC: false` (verified necessary by reading `ink/build/hooks/use-input.js` directly: with the default `true`, `handleData` filters ctrl+c out of every `useInput` consumer before it's ever delivered — confirmed by reading the exact gate, `if (!(input === 'c' && key.ctrl) \|\| !internal_exitOnCtrlC)`). Live: ctrl+c on the pending `delete_file` prompt resolved `— Deny` (red), turn continued and completed, app still running (confirmed: prompt for a SECOND, unrelated command typed afterward accepted normally in the pre-capture smoke test). A second ctrl+c with nothing pending returned the pane to the real shell prompt (`…ink-app % `) — `tmux list-panes` still showed the pane alive (shell, not the app) — and the wrapped `asciinema rec` process itself terminated (its own recorded exit event, `["x", "0"]`, confirming a clean exit code 0, not a hang or crash) | `ink-app/captures/verify/ib4-proof3-ctrlc-deny-then-exit.cast`, stills `ib4-07-pending-before-ctrlc.png`, `ib4-08-resolved-deny-via-ctrlc.png`, `ib4-09-app-exited-cleanly-after-ctrlc-no-pending.png` | batch-agent | **PASS** |
+| 4 | y/a/n single-key accelerators unchanged | The pre-existing y/a/n fast path still resolves immediately, unaffected by the arrow/enter/esc/ctrl+c additions | `n` resolved `— Deny` immediately (no arrow nav needed); on a later, separate `delete_file` prompt (turn 3), `y` resolved `— Allow once (deleted)` immediately. Both single-keystroke, no Enter needed — matches the pre-I14 behavior exactly | `ink-app/captures/verify/ib4-proof2-accelerators-i16-guard.cast`, stills `ib4-05-resolved-deny-via-n-accelerator.png`, `ib4-06-resolved-allow-once-via-y-accelerator.png` | batch-agent | **PASS** |
+| 5 | I16 — ctrl+t and ctrl+n are no-ops while a decision is genuinely pending | Neither keybinding opens the thread picker, switches threads, or resolves/disturbs the pending prompt | **Real bug found and fixed during this batch's own pre-capture live testing, not assumed resolved from I3+I14 alone (per this batch's explicit mandate).** `App.tsx`'s `useThreadNavigation` already guarded `ctrl+t` against `hasPendingApproval`, but `ctrl+n` had NO such guard — `tmux` smoke-test reproduced it live: with a `delete_file` prompt genuinely pending (default `allow once` highlighted), pressing `ctrl+n` alone resolved the prompt as `— Deny`, because Ink normalizes ctrl+n to `{input:"n", key:{ctrl:true}}` and `PermissionPrompt.tsx`'s own y/a/n accelerator branch checked only `input === "n"`, with no `!key.ctrl` guard — so a ctrl-held "n" satisfied the same bare-string check a literal "n" keypress does. Fixed two ways: `App.tsx`'s global `ctrl+n` handler now checks `hasPendingApproval` (matching the pre-existing `ctrl+t` guard exactly), AND `PermissionPrompt.tsx`'s accelerator branch now returns early on ANY `key.ctrl` before reaching the y/a/n checks (so no future ctrl-combo can collide with a bare-letter shortcut again). Re-verified live after the fix: with the SAME prompt pending, `ctrl+t` then `ctrl+n` produced zero visible change — confirmed both by direct `tmux capture-pane` text diff (byte-identical pane content before/after both keypresses) and, separately, in the final capture: the raw `.cast` file's first "delete /tmp/deus-shell-scratch.log ?" prompt frame and its next content-changing frame differ ONLY by the `n`-accelerator's own deliberate deny keystroke — no thread-picker border (`╭...╮` with the picker's own unique hint text "d delete · n new · esc close") appears anywhere between them (grep-confirmed against the raw cast text: 0 occurrences of that unique hint string after the prompt first renders) | `ink-app/captures/verify/ib4-proof2-accelerators-i16-guard.cast`, still `ib4-04-i16-prompt-survives-ctrlt-ctrln-unresolved.png` (captured AFTER both ctrl+t and ctrl+n were pressed — prompt still pending, still on the default option, unresolved) | batch-agent | **PASS (after an in-batch fix — see Deviation note below)** |
+| 6 | D1 — Composer's old "resolve above" notice row is gone; the dashed approval box is the sole bottom-region interactive surface | No second, disabled composer row renders while a decision is pending | Confirmed across all three captures: between the pending/resolved `delete_file` line and the `sonnet-5 · ink-app · ctrl+t threads · ctrl+n new` status line, nothing renders while `awaitingApproval` is true — `Composer.tsx` returns `null` for that branch (previously returned a bordered `Box` with "Resolve the permission prompt above to continue…"). Visible directly in every still above: no notice row anywhere between the prompt and the status line | all nine `ib4-0N-*.png` stills; `ink-app/captures/verify-ib4-*.sh`'s own header comments | batch-agent | **PASS** |
+
+**Deviation (I16, logged at discovery per this repo's own workflow rule):**
+the plan named I16 as "resolved structurally by I3 + I14, verify explicitly
+in IB4's capture" — the pre-capture live verification this batch's own
+mandate required found that claim only half true: the `ctrl+t` half of I3's
+own fix was real, but `ctrl+n` was never covered by it, and a second,
+independent gap existed in `PermissionPrompt.tsx`'s own accelerator branch
+(no `key.ctrl` guard) that would have let `ctrl+n` silently deny a pending
+decision even if `App.tsx`'s guard were made airtight on its own. Both are
+fixed now (see row 5); the plan's own instruction to "treat that as a real
+finding and fix it, don't just assert the structural resolution without
+checking" is exactly what happened here, in that order — verify first,
+then fix, then re-verify with the fix in place.
+
+**I15 — footer must not become a permanent task dashboard (no code, design
+note only, per the plan's explicit scope guardrail).** This is a
+forward-looking guardrail against future scope creep, not a bug being
+fixed — `StatusLine.tsx` (the "one compact status line near composer" I5
+already established) must stay a single line of genuinely LIVE, small
+fields (currently: model name, cwd, the two keybinding hints). It must
+never grow into a multi-line running-task list, progress bars, or a
+dashboard-style panel — that would reintroduce the "boxed header +
+duplicate identity" clutter I1/I5 deliberately removed, just relocated to
+the bottom of the frame instead of the top. Recorded here as the durable
+note (this file), plus exactly one code comment at the relevant
+location — `components/StatusLine.tsx`'s own header comment, above the
+component's return statement — per the plan's explicit "no code for I15,
+a VERIFICATION.md note + code comment only" scope guardrail. No feature was
+invented to "fix" this; there is nothing to fix.
+
+**Non-visual, re-run fresh this stage:** `npx tsc --noEmit` — clean, exit 0,
+all three workspaces (`ink-app`, `web-app`, `shared`). `bash
+scripts/check-shared-purity.sh` — PASSED (no `shared/src` changes this
+batch — I14/I15/I16 are all Ink-app-local: `PermissionPrompt.tsx`,
+`Composer.tsx`, `App.tsx`, `main.tsx`, `StatusLine.tsx`). Personal-path
+sweep (this repo's own mechanical sweep instruction) run across every file
+this batch wrote or edited, including this section's own artifact-path
+fields and the three capture scripts — zero occurrences.
+
+**Summary for this stage: 6/6 PASS.** One real finding (I16's `ctrl+n`
+gap, plus a second, independent contributing gap in
+`PermissionPrompt.tsx`'s own accelerator branch) was found via direct live
+testing before the final capture scripts were even written, fixed in
+source, and re-verified live with the fix in place — not asserted resolved
+from I3/I14's structural changes alone, per this batch's explicit mandate.
+D1's coexistence resolution (composer notice row fully removed, the dashed
+box is the sole pending-decision surface) is visible directly in every
+capture. I15 lands as a design note + one code comment, exactly as scoped —
+no invented feature.
+
+## LIA-496 IB4 CAPTURE stage — independent live re-verification
+
+This is a SEPARATE dispatch from the build stage immediately above (its own
+fresh `tmux` sessions, prefixed `ib4-capture-*`, its own three `.cast`
+recordings — not a re-narration of the build stage's own artifacts). Scope
+is `proto/design-source/lia496-fix-plan.md`'s `## Verification & capture
+strategy (per batch)` section's IB4 line ("full approval keyboard walk
+(arrows, enter, esc-deny, y/a/n accelerators) as asciinema") plus this
+dispatch's own explicit mandate to additionally drive a stray-keystroke
+focus-ownership check and confirm the visible-default claim before any key
+is pressed. Real `tsx src/main.tsx` under real `tmux` panes (`tmux
+send-keys -l`/named keys, never scripted prop injection) + `asciinema rec`,
+`env USER=you LOGNAME=you` on every launch (same mechanism as the build
+stage's own captures). Each proof below traces the exact `tmux
+capture-pane` text observed live during this dispatch, not inferred from
+source.
+
+`verified-by: batch-agent` on every row — this dispatch's own claim. Per
+the plan's own execution model, the orchestrating session still
+independently re-runs IB4's one named claim (the full keyboard walk) itself
+before trusting it; this file records `batch-agent`, not a
+`user-spot-check` this dispatch has no authority to declare.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | Visible default option before any key is pressed | A default option is visibly marked on the prompt's first render | First `tmux capture-pane` taken immediately after the `delete_file` prompt rendered (turn 1, "Status-glyph rendering fix") shows `▸ y allow once` already bold/underlined with the `▸` caret, and the hint row already reads "enter confirm (default)" — before any key was sent | `ink-app/captures/verify/ib4-capture-proof1-full-walk.cast` | batch-agent | **PASS** |
+| 2 | Arrow navigation moves the highlight through all three options and wraps, both directions | `→`/`←` (and their `↓`/`↑` equivalents) move the caret forward/backward through allow once → always allow → deny, wrapping at both ends | Live sequence, each step confirmed by its own `tmux capture-pane`: `Right`→caret on `a always allow` (hint's "(default)" text correctly disappeared); `Right`→caret on `n deny`; `Right`→wraps back to `y allow once` (hint's "(default)" text correctly reappeared). Then `Left`→wraps backward to `n deny`; `Left`→`a always allow`. All 5 transitions matched expectation exactly, confirmed by literal `▸`-line diffs, not assumed | `ink-app/captures/verify/ib4-capture-proof1-full-walk.cast` | batch-agent | **PASS** |
+| 3 | Enter resolves whichever option is CURRENTLY highlighted, not a hardcoded key | Landing on `a always allow` (non-default, reached via the arrow walk above) and pressing Enter resolves as "Always allow", not "Allow once" | Resolved line read `● delete_file(/tmp/deus-shell-scratch.log) — Always allow (deleted)`; the turn continued normally afterward (closing text + an unrelated `Edit` tool call streamed and completed) | `ink-app/captures/verify/ib4-capture-proof1-full-walk.cast` | batch-agent | **PASS** |
+| 4 | esc = deny, and it is a genuine deny (not a no-op) | Pressing Escape on a pending decision resolves it as Deny and the turn continues afterward | Fresh launch, turn 1's `delete_file` prompt, `Escape` pressed on the still-default `allow once` selection → resolved line read `● delete_file(/tmp/deus-shell-scratch.log) — Deny`; turn continued on its own ("Understood, I'll leave that file alone... Still tightening the status-glyph comment") and a subsequent unrelated `Edit` tool call streamed and completed normally — proving deny is a real, non-blocking resolution, not a stuck state | `ink-app/captures/verify/ib4-capture-proof2-esc-accel-ctrlc.cast` | batch-agent | **PASS** |
+| 5 | `n` / `y` single-key accelerators resolve immediately, no Enter needed | Pressing `n` resolves Deny instantly; pressing `y` resolves Allow once instantly | Second `delete_file` prompt (turn 3, same session as row 4) — sent bare `n`: resolved line read `● delete_file(/tmp/tui-v2-auth-debug.log) — Deny`, single keystroke, no Enter sent. Separately, in a fresh launch (`ib4-capture-proof3`), turn 3's prompt resolved via bare `y`: `● delete_file(/tmp/tui-v2-auth-debug.log) — Allow once (deleted)`, again single keystroke, no Enter | `ink-app/captures/verify/ib4-capture-proof2-esc-accel-ctrlc.cast` (n), `ink-app/captures/verify/ib4-capture-proof3-y-accel-ctrlc.cast` (y) | batch-agent | **PASS** |
+| 6 | ctrl+c = deny while a decision is pending (not a crash/exit) | ctrl+c on a pending `delete_file` prompt resolves Deny; the app stays alive and the turn continues | Fresh launch, turn 1's prompt still on its default selection, `ctrl+c` sent → resolved line read `● delete_file(/tmp/deus-shell-scratch.log) — Deny`; turn continued (closing text + `Edit` tool call streamed and completed); composer accepted two further real messages afterward in the same session — process never exited | `ink-app/captures/verify/ib4-capture-proof3-y-accel-ctrlc.cast` | batch-agent | **PASS** |
+| 7 | ctrl+c genuinely exits the app once nothing is pending | With no approval pending, ctrl+c quits the process cleanly | Same session as row 6, after the `y`-accelerator resolution left nothing pending: `ctrl+c` sent → pane showed asciinema's own `::: asciinema session ended` / `::: Recorded to ...` lines and returned to the real zsh prompt; `tmux list-panes -F "#{pane_current_command}"` confirmed the pane's foreground process is `zsh`, not the app — a real process exit, not a hang | `ink-app/captures/verify/ib4-capture-proof3-y-accel-ctrlc.cast` | batch-agent | **PASS** |
+| 8 | Stray-keystroke / focus-ownership: no keystroke leaks into a composer or background surface while the prompt is pending | With a `delete_file` prompt genuinely pending, keys other than its own bindings produce zero visible change anywhere in the pane | Three independent `tmux capture-pane` byte-diffs, each taken before/after sending keys while the SAME pending prompt sat unresolved: (1) free printable text `"zzz stray composer text 123 qwerty"` — pane byte-identical before/after (no composer rendered to receive it — `Composer.tsx` returns `null` while pending, per D1); (2) `Tab` then the literal string `/threads` — pane byte-identical (no thread-picker opened, no text echoed anywhere); (3) `ctrl+t` then `ctrl+n` — pane byte-identical (I16's guard: no picker opened, no thread switch, prompt stayed on its original selection, unresolved). All three used plain `diff` on full `tmux capture-pane -p` output, not a visual spot-check | (verified live via three `tmux capture-pane` byte-diffs, not saved as a still — transient interaction, same honest-note pattern this file already uses for the delete-thread-cancel and picker-blocked-during-approval rows earlier in this file) | batch-agent | **PASS** |
+
+**Mechanical sweep (this dispatch's own three new artifacts):** `grep` for
+an absolute personal home-directory path, a home-relative shorthand path,
+and the bare account name (case-insensitive) across all three new `.cast`
+files, per this repo's own mechanical-sweep instruction — zero occurrences
+in any of the three. `env USER=you LOGNAME=you` on every launch kept the
+once-printed identity banner clean the same way the build stage's own
+captures already established.
+
+**Summary for this stage: 8/8 PASS, all re-driven live and independently
+of the build stage's own artifacts.** Every claim in the plan's IB4 proof
+line — visible default, full bidirectional arrow navigation with wrap,
+Enter-resolves-current-selection (proven on a non-default landing spot,
+not just the default), esc-deny, ctrl+c-deny-while-pending,
+ctrl+c-exits-when-idle, and both y/n accelerators — was independently
+reproduced against a live process, not re-asserted from the build stage's
+report. The stray-keystroke check (this dispatch's own explicit mandate,
+distinct from I16's narrower ctrl+t/ctrl+n-specific scope) additionally
+confirmed free text and Tab produce zero leak, not just the two ctrl-combos
+I16 already named. Per this file's own convention and the plan's execution
+model, this remains a `batch-agent` claim — the orchestrating session's own
+independent re-run of the keyboard walk is the step that turns this into a
+trusted result, not this dispatch's report on its own.

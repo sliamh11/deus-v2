@@ -82,7 +82,7 @@
 // standing focus stop — Tab-cycling has nothing left to cycle BETWEEN
 // during normal use, which is expected, not a regression of the fix above.
 import { useEffect, useMemo, useRef, useState, type FC } from "react";
-import { Box, useInput } from "ink";
+import { Box, useApp, useInput } from "ink";
 import { AssistantRuntimeProvider, useRemoteThreadListRuntime, useLocalRuntime, useAui, useAuiState, ThreadPrimitive } from "@assistant-ui/react-ink";
 import { getFixtureAdapter, fixtureThreadListAdapter } from "@lia496/shared";
 import { Composer, useIsAwaitingApproval } from "./components/Composer";
@@ -178,8 +178,32 @@ function useThreadRuntime() {
 // `hasPendingApproval` guard) for the same reason.
 type Overlay = "none" | "picker" | "help";
 
+// LIA-496 IB4 (I16 verification finding) — `ctrl+n` had the exact same
+// unmount hazard the `ctrl+t` guard above already documents, but no guard
+// of its own: `triggerNewThread()` calls `aui.threads.switchToNewThread()`,
+// which flips `mainThreadId`, which flips `isFreshDraft` true, which swaps
+// `MainPane`'s JSX from `LiveMessageTail` (the ONLY thing that mounts the
+// live `PermissionPrompt`) to a plain `<EmptyState />` — unmounting a
+// pending approval's `useInput` out from under the user, leaving it
+// neither committed nor rendered, exactly the dead end the `ctrl+t` fix
+// above was written to prevent. Found by tracing this mechanism directly
+// while verifying I16 (not assumed fixed by I3/I14's structural changes —
+// it wasn't, for this specific keybinding), confirmed as a real gap, and
+// fixed below with the identical guard shape `ctrl+t` already uses.
+//
+// I14 (D1) also adds a genuinely new always-active binding here: ctrl+c.
+// `main.tsx` sets `exitOnCtrlC: false` (see that file's header comment for
+// the mechanism this rests on), so Ink no longer exits the process on
+// ctrl+c by itself — this hook now owns that behavior manually via
+// `useApp().exit()`, but ONLY when no approval is pending. When one IS
+// pending, this handler's own `hasPendingApproval` guard makes ctrl+c here
+// a no-op, and `PermissionPrompt.tsx`'s own `useInput` (isActive'd on the
+// pending approval) is the one that consumes the keystroke instead,
+// resolving it as a deny — the two can never both fire for the same
+// keypress.
 function useThreadNavigation() {
   const aui = useAui();
+  const { exit } = useApp();
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
   const [overlay, setOverlay] = useState<Overlay>("none");
   const awaitingFreshDraftRef = useRef(false);
@@ -205,6 +229,7 @@ function useThreadNavigation() {
   useInput(
     (input, key) => {
       if (key.ctrl && input === "n") {
+        if (hasPendingApproval) return; // see this hook's header comment (I16)
         triggerNewThread();
         return;
       }
@@ -213,6 +238,11 @@ function useThreadNavigation() {
           if (current === "picker") return "none"; // closing always allowed
           return hasPendingApproval ? current : "picker";
         });
+        return;
+      }
+      if (key.ctrl && input === "c") {
+        if (hasPendingApproval) return; // PermissionPrompt.tsx consumes it instead
+        exit();
         return;
       }
     },

@@ -41,6 +41,19 @@ import { LoadingPrimitive, StatusBarPrimitive } from "@assistant-ui/react-ink";
 import { theme, STATUS_COLOR } from "../theme";
 import { getCwdLabel, MODEL_NAME } from "../identity";
 
+// LIA-496 IB4 (I15) — design guardrail, no code change: this must stay a
+// SINGLE line of small, genuinely-live fields (currently: model, run-state,
+// cwd, keybinding hints). Never grow it into a multi-line running-task
+// list, progress bars, or a dashboard-style panel — that would reintroduce
+// the "boxed header + duplicate identity" clutter I1/I5 deliberately
+// removed from the TOP of the frame, just relocated to the bottom instead.
+// See `proto/VERIFICATION.md`'s IB4 section for the durable design note
+// this comment is the code-side half of. (IB4's own worktree branched
+// before IB3's I11 rework below landed on the shared branch — this
+// guardrail comment applies to whichever version of the row exists, not a
+// specific implementation, so it's kept alongside I11's real component
+// rather than reverting to the pre-I11 static line IB4's isolated branch
+// still had.)
 export const StatusLine: FC = () => {
   const isRunning = useAuiState((s) => s.thread.isRunning);
   // The genuinely custom half of I11: interrupt. `useComposerCancel` is the
