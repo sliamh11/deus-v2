@@ -908,3 +908,34 @@ itself used for the time-bucket proof — the two proofs operate on
 different rows by design (deleting the row under test would invalidate a
 later re-check of the same bucket), so this does not weaken either
 proof.
+
+## Orchestrating-session independent re-verification (`verified-by: user-spot-check`)
+
+Per the plan's own execution model — WB2's one named highest-risk claim is
+row 1 (time-bucket correctness: the sanctioned ~9-day-old seed thread must
+render under "Previous 7 days"/"Older", genuinely NOT "Yesterday") —
+re-verified firsthand via a live browser session against the real dev
+server, independent of any batch-agent dispatch, before trusting the SHIP
+verdict above.
+
+**Method:** started `vite` (web-app) fresh, opened the app in a real
+Chrome tab, read the sidebar's real rendered bucket structure directly —
+no scripted DOM walk, a direct visual read of the live page.
+
+**Result:** all four buckets render in the correct order with the correct
+membership: **Today** — Status-glyph rendering fix, Shiki theme swap
+crash. **Yesterday** — Composer keyboard shortcuts (only). **Previous 7
+days** — LIA-495 migration spike, Sidebar layout pass, Diff panel polish.
+**Older** — Streaming markdown flicker. The sanctioned fixture thread
+genuinely lands under "Older", not "Yesterday" — the literal scoped claim
+this proof exists to prove. Also visually confirmed in the same session:
+the search input, the desktop-collapse chevron, and the identity-leak fix
+(footer reads "You", not a personal name).
+
+This independently confirms the time-bucket date-math fix genuinely works
+on live data, matching the batch's own capture-stage claim (which walked
+the DOM programmatically and reported the identical bucket membership).
+
+**verified-by: user-spot-check — PASS (time-bucket correctness confirmed
+via direct visual read of the live app; reproduced independently outside
+the batch's own driver script).**
