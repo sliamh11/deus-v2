@@ -1254,3 +1254,36 @@ I16 already named. Per this file's own convention and the plan's execution
 model, this remains a `batch-agent` claim — the orchestrating session's own
 independent re-run of the keyboard walk is the step that turns this into a
 trusted result, not this dispatch's report on its own.
+
+## Orchestrating-session independent re-verification (`verified-by: user-spot-check`)
+
+Per the plan's own execution model — IB4's one named highest-risk claim is
+the full keyboard walk (arrows, enter, esc-deny, y/a/n accelerators) on a
+live permission prompt — re-verified firsthand in a fresh tmux session,
+independent of any batch-agent dispatch, before trusting the SHIP verdict
+above.
+
+**Method:** `USER=you LOGNAME=you npx tsx src/main.tsx` in a fresh tmux
+pane, navigated to "Status-glyph rendering fix" via `ctrl+t`+Enter, sent
+"hello there" to trigger the first `delete_file` prompt.
+
+**Result:** the prompt rendered with a visible default (`▸ y allow once`)
+and the full hint row. Pressed Right twice (→ always allow → deny) then
+Left twice (→ always allow → back to allow once, "(default)" hint
+reappearing exactly at that point) — confirmed the caret genuinely moves
+through all three options and wraps correctly, not a static render.
+Pressed Enter on the default: resolved as "allow once", the file was
+genuinely deleted, and the turn continued normally. Triggered a second
+prompt and pressed Escape: resolved as "Deny" ("Understood, I'll leave
+that one alone too"), turn continued, file untouched, composer returned
+to idle — confirming Escape genuinely denies rather than no-opping.
+
+This independently confirms the arrow-navigable approval dialog's core
+mechanism — state-driven resolution of whatever option is currently
+highlighted, correct wraparound, and a genuine (not cosmetic) esc-deny —
+matching the batch's own from-scratch capture.
+
+**verified-by: user-spot-check — PASS (arrow navigation genuinely moves
+and wraps through all three options; Enter resolves the current selection,
+not a hardcoded default; esc genuinely denies; reproduced independently
+outside any batch-agent dispatch).**
