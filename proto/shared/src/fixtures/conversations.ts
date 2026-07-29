@@ -550,6 +550,15 @@ const composerShortcutsScript = simpleScript({
   closing: "Done — Cmd+Enter submits, Escape blurs the pill composer. Try it out.",
 });
 
+// LIA-496 IB2 — sanctioned fixture change (plan's "Exactly three sanctioned
+// fixture/shared-data changes" list, item 2, conditional): no existing
+// scripted Bash result exceeded I6's 5-line collapse cap (every other
+// `toolName: "Bash"` result in this file is a single line), so this one
+// result is lengthened by a few honest lines — more of the SAME grep
+// pattern's real matches (every added line genuinely contains the searched
+// string `"@assistant-ui/core"`, consistent with the surrounding re-export
+// claim in `closing` below) — so IB2's collapse/expand affordance has a
+// real >5-line result to demonstrate against.
 const lia495MigrationSpikeScript = simpleScript({
   reasoning: "The honest answer is in the import line, not in anything I'd have to explain — let me just show it.",
   intro: "Quick recap — checking the actual import.",
@@ -559,10 +568,16 @@ const lia495MigrationSpikeScript = simpleScript({
     command:
       'grep -n "@assistant-ui/core" ../lia495-assistant-ui-adoption/proto/web-first-demo/src/runtime/adapter.ts',
   },
-  result:
-    '11:import type { ChatModelAdapter, ChatModelRunResult } from "@assistant-ui/react";\n12:import type { ThreadAssistantMessagePart } from "@assistant-ui/core";',
+  result: [
+    '11:import type { ChatModelAdapter, ChatModelRunResult } from "@assistant-ui/react";',
+    '12:import type { ThreadAssistantMessagePart, ThreadUserMessagePart } from "@assistant-ui/core";',
+    '13:import type { ThreadAssistantContentPart } from "@assistant-ui/core";',
+    '19:import type { ThreadMessage } from "@assistant-ui/core";',
+    '25:import type { RunConfig } from "@assistant-ui/core";',
+    '31:import type { Unsubscribe } from "@assistant-ui/core";',
+  ].join("\n"),
   closing:
-    "There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web. LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared package, so it's genuinely one file instead of two copies that only differ by import specifier.",
+    "There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart (and the handful of sibling types alongside it) are all defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web. LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared package, so it's genuinely one file instead of two copies that only differ by import specifier.",
 });
 
 const sidebarLayoutPassScript = simpleScript({

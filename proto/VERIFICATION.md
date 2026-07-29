@@ -714,3 +714,275 @@ independent reproduction of the same result via a different mechanism
 
 **verified-by: user-spot-check — PASS (stop-mid-stream genuinely halts
 output; reproduced independently outside the batch's own driver script).**
+
+## LIA-496 IB2 — Content grammar (I6–I10) capture stage
+
+`expected` values below are frozen from `proto/design-source/lia496-fix-plan.md`'s
+`## Full fix inventory` § "F — Content grammar" and `## Verification & capture
+strategy (per batch)` sections. Built in the isolated worktree
+`.claude/worktrees/lia496-ib2` (branched from `lia496-production-ui-spike`
+after IB1 + WB1 landed); does not contain any sibling batch's concurrent
+work. All captures run for real against the live `tsx src/main.tsx` process
+under `tmux` + `asciinema rec`, same established pattern as IB1/WB1 —
+`env USER=you LOGNAME=you` per `identity.ts`'s own documented public-repo
+capture convention. `verified-by: batch-agent` on every row below — this
+dispatch's own claims, per this file's own convention (see IB1's section
+above for the same disclosure).
+
+**Infra finding, not a code defect — logged because every future batch
+touching `shared/` will hit it:** this worktree's `proto/node_modules` is a
+pre-existing symlink to the `lia496-production-ui-spike` worktree's
+`node_modules` (a disk-space shortcut, not something this batch created).
+Since `@lia496/shared` is itself a workspace symlink (`../../shared`,
+relative), the chain resolves relative to that symlink's OWN physical
+location — meaning `@lia496/shared` silently resolved to the SIBLING
+worktree's `shared/` source, not this worktree's edited copy, for any
+process launched with plain Node module resolution (confirmed directly:
+`npx tsx -e '...'`'s own stack trace named the `lia496-production-ui-spike`
+path). A real edit to `shared/src/fixtures/conversations.ts` was made
+in this worktree and DID NOT take effect in a real `tsx src/main.tsx` run
+until fixed. Workaround, scoped entirely to this worktree's own `ink-app/`
+directory (gitignored, touches nothing outside this worktree, does not
+modify the shared/production-ui-spike `node_modules` at all):
+`ink-app/node_modules/@lia496/shared` created as a NEW symlink to
+`../../../shared` (this worktree's own `proto/shared`), which Node's
+module resolution finds first (closer to the importing file) before ever
+walking up to the shared, cross-worktree `proto/node_modules`. Any sibling
+batch that edits `shared/` and wants its own capture to reflect that edit
+needs the same fix in ITS OWN worktree.
+
+**Deviation from the named file scope, found live during this batch's own
+verification (not anticipated by the plan):** I6/I10's ctrl+o expand
+affordance was DEAD ON ARRIVAL under IB1's part-granularity `<Static>`
+commit model — a tool-call part commits into `<Static>` the instant its own
+`status` settles, and this fixture's tool results resolve in one atomic
+yield (not incrementally), so a capped `BashLine`/`DiffPanel` instance's
+interactive `useInput` hook was unmounted within a single React tick of
+first appearing, before any human could plausibly press ctrl+o. Reproduced
+live: a scripted press right after the result first rendered landed on an
+already-unmounted instance and did nothing (confirmed via a stderr-logged
+`useInput` probe that never fired). Fixed with a small, targeted addition
+outside the originally-named files: `ink-app/src/toolOutputCap.ts` (new —
+`OUTPUT_LINE_CAP`/`DIFF_LINE_CAP`/`isCappedToolPart`, the single shared
+source for "is this tool-call part capped", used by `Messages.tsx`,
+`DiffPanel.tsx`, and `committedBlocks.tsx`) and a targeted change to
+`committedBlocks.tsx`'s per-part commit loop (IB1's file, not previously in
+this batch's scope): a capped-and-not-yet-committed part is now held live
+until its CONTAINING MESSAGE settles, not just the part itself — giving the
+same realistic window a live terminal session actually has (the rest of
+that turn's own streaming, empirically ~1-3s for this fixture's scripts),
+instead of an unmountable microsecond one. Re-verified live after the fix:
+ctrl+o pressed mid-stream (closing text still incomplete) genuinely expanded
+the capped Bash result to all 6 lines, and a second ctrl+o press genuinely
+re-collapsed it. This is a real behavioral fix, not a comment-only
+acknowledgment of the plan's already-accepted `<Static>` immutability risk
+(risk #2, "completed turns can't be restyled after commit") — that risk is
+about STYLE on ALREADY-COMMITTED content and remains true and accepted as
+documented; this fix is about giving the interactive affordance a
+real, human-usable window BEFORE commit, which the plan did not anticipate
+needing.
+
+**Sanctioned fixture change (plan's "Exactly three sanctioned
+fixture/shared-data changes" list, item 2, conditional) — needed.** No
+existing scripted `Bash` result in `shared/src/fixtures/conversations.ts`
+already exceeded I6's 5-line cap (every one was a single line, confirmed by
+grepping every `toolName: "Bash"` occurrence and reading each `result`
+value directly). `lia495-migration-spike`'s `call-grep-adapter-import` Bash
+result was lengthened from 2 lines to 6 (each added line genuinely contains
+the searched string `"@assistant-ui/core"`, consistent with the existing
+`closing` text's re-export claim) — the smallest, most narrowly-scoped
+honest extension available, not a fabricated wall of filler text.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | I6 — capped tool output (~5 lines) + locally-computed "… +N lines · ctrl+o expand", N from the raw result, auto-expand on error, ctrl+o toggles | `Messages.tsx`'s `BashLine` caps raw output at 5 lines with a computed hidden-line count, not a library prop; ctrl+o toggles expand/collapse | Sent a message on "LIA-495 migration spike" (its Bash result is the sanctioned 6-line fixture lengthening above); the rendered transcript showed exactly 5 lines + "… +1 lines · ctrl+o expand"; pressing ctrl+o while the message was still mid-stream (closing text visibly incomplete) expanded to all 6 lines with the cap row gone; a second ctrl+o press re-collapsed it back to 5 + the cap row. Both directions confirmed live via `tmux capture-pane`, not just implied by the recording | `ink-app/captures/verify/i6-bash-output-collapsed.png`, `ink-app/captures/verify/i6-bash-output-expanded-ctrlo.png`, `ink-app/captures/verify/verify-ib2.cast` (byte-exact source, both toggles present) | batch-agent | **PASS** |
+| 2 | I7 — one status-colored glyph for tools, no ⏺/● collision | `GLYPH_TOOL` (`theme.ts`, new) replaces the pre-existing collision: `Messages.tsx`'s `BashLine` hardcoded `"⏺"` while `DiffPanel.tsx`/`PermissionPrompt.tsx` each separately hardcoded `"●"` — the exact same character already claimed by `GLYPH_ASSISTANT` (the assistant speaker gutter mark) | Confirmed across both captured threads: `BashLine` (Bash fallback), `DiffPanel` (Edit tool), and `PermissionPrompt` (all three of its states — auto-approved inert line, dashed pending box... N/A here since no delete_file was exercised this batch, resolved line) all import and render the same `GLYPH_TOOL = "⏺"`, visually distinct from `GLYPH_ASSISTANT = "●"` used only for the speaker gutter — confirmed by direct source read (single import site in each of the three files) and live capture (`⏺ Bash(...)`, `⏺ Edit(...)` both render the identical glyph) | `ink-app/captures/verify/i9-i10-diffpanel-unboxed.png` (`⏺ Edit(...)`), `ink-app/captures/verify/i6-bash-output-collapsed.png` (`⏺ Bash(...)`) | batch-agent | **PASS** |
+| 3 | I8 — drop redundant "you"/"deus" speaker labels | Gutter glyphs (`❯` amber / `●` dim) already encode speaker; the text labels are removed | Confirmed live: neither capture shows a "you" or "deus" text label anywhere — user turns render as `❯ <text>` only, assistant turns render as `● <reasoning/text/tool content>` only, gutter glyph alone. **Found and fixed mid-batch, not caught by editing `Messages.tsx` alone**: `committedBlocks.tsx` has its own duplicated header markup (`CommittedTranscript`'s "assistant-header" block AND `LiveMessageTail`'s own `tail.showHeader` block) for `<Static>` commit-timing reasons — both independently hardcoded the same `"deus"` text and had to be fixed too, since most of what a user actually sees goes through the COMMITTED path, not the live `AssistantMessage` component this finding's named file targeted | `ink-app/captures/verify/i6-bash-output-collapsed.png`, `ink-app/captures/verify/i9-i10-diffpanel-unboxed.png` | batch-agent | **PASS** |
+| 4 | I9 — unbox thinking/code-block/diff chrome; borders reserved for composer/permission/overlays | `ReasoningGroup` (Messages.tsx), `TokenLine`'s two code-block boxes, `DiffPanel`'s diff box all lose their `borderStyle`/`borderColor`/`paddingX` | Live capture confirms: the reasoning text ("The honest answer is in the import line…") renders as plain italic dim text, no border anywhere around it; the diff panel renders with no border at all (compare against the ORIGINAL Ink section's own `diffview-single-header.png` row above, which documents the pre-IB2 bordered diff card). `PermissionPrompt`'s dashed box was NOT touched (a reserved permission surface, correctly out of I9's scope) — not exercised this batch (no `delete_file` turn triggered), confirmed by source read only, not live capture, stated honestly rather than implied covered | `ink-app/captures/verify/i9-i10-diffpanel-unboxed.png`, `ink-app/captures/verify/i6-bash-output-collapsed.png` (reasoning box unboxed) | batch-agent | **PASS** |
+| 5 | I10 — diff panel box/gutter/silent-cap fix per D2 (single unified gutter kept, not two-sided; "+N lines hidden"/ctrl+o expand computed locally from the raw patch, not a `DiffView` prop; "context-only numbering on ambiguous deletions" dropped as not implementable) | `DiffPanel.tsx` keeps `DiffView`'s single unified gutter (rejecting GPT's two-sided ask, matching Claude Code's real convention); the border is gone (I9); `DIFF_LINE_CAP`/hidden-count math lives in the new shared `toolOutputCap.ts`, not read off any `DiffView` prop (confirmed none exists: `DiffView.d.ts`'s real surface is `{patch, oldFile, newFile, showLineNumbers?, contextLines?, maxLines?}`, no truncation-count field) | Live capture on "Sidebar layout pass" (an Edit-tool thread): single unified gutter with line numbers on the left only, red/green +/- diff lines, no border, `⏺ Edit(web-app/src/components/Sidebar.tsx)` header using the unified glyph (I7), `DiffView`'s own internal "+11 -1" header intact (LIA-495's proven single-header fix, not reintroduced). This diff was 17 lines total — under `DIFF_LINE_CAP` (30) — so the "+N lines · ctrl+o expand" row correctly did NOT render; no fixture thread in this batch's exercised scripts produces a >30-line diff, so the cap-triggered row itself is verified by source read + the same mechanism I6 already proves live (identical `toolOutputCap.ts`/`useState`+`useInput` pattern, shared code path), not a separate live capture — stated honestly, not implied covered. "Context-only numbering on ambiguous deletions" — no ambiguity observed in any diff exercised this batch; per D2's own resolution this is dropped as not implementable through `showLineNumbers`'s boolean-only surface, not silently retested until it happens to pass | `ink-app/captures/verify/i9-i10-diffpanel-unboxed.png` | batch-agent | **PASS** |
+
+**Known `<Static>` limitation, restated per the plan's own Risk #2** ("completed
+turns can't be restyled after commit; a later batch touching message chrome
+(IB2) only affects newly committed turns in a running session"): I6/I10's
+collapse/expand state is local React state on a still-mounted instance. Once
+a part commits into `<Static>` (now gated on message-settle, per the fix
+above — not part-settle), it is frozen in whatever expand state it had at
+that instant; ctrl+o pressed after that has nothing left to toggle. This is
+accepted, matches real terminal scrollback semantics (Claude Code itself
+cannot retroactively expand old, already-scrolled tool output either), and
+is now a REALISTIC window (the rest of that turn's streaming) rather than an
+unmountable one, per the deviation fix above.
+
+**Non-visual, re-run fresh this stage:** `tsc --noEmit` — clean, exit 0, all
+three workspaces (`shared`, `ink-app`, `web-app`); `proto/scripts/check-shared-purity.sh`
+— PASSED. Raw `.cast` byte log grepped for `\x1b[3J` (the destructive
+scrollback-clear escape IB1's proofs guard) — zero occurrences, confirming
+this batch's commit-timing change did not regress IB1's scrollback
+invariant.
+
+**Summary for this stage: 5 PASS / 0 FAIL.** One real, load-bearing defect
+was found and fixed live during this batch's own verification (I6/I10's
+ctrl+o affordance being unmountable before commit) rather than shipped
+un-noticed behind a passing-looking static-analysis pass — flagging it here
+as the highest-risk claim for the orchestrating session's own named
+re-verification (per the plan's execution model: "a real >5-line Bash
+result genuinely collapses then expands via ctrl+o — re-attach the tmux
+session and press the key myself"), since a subagent's PASS on exactly this
+kind of interaction-timing claim is the hardest to trust without hands-on
+confirmation.
+
+## LIA-496 IB2 — capture-stage independent re-run
+
+A separate, freshly-launched agent (not the build stage above) re-drove all
+four of this batch's proofs end-to-end in a brand-new tmux session
+(`ib2-verify`, killed and restarted twice to guarantee a clean process, no
+state carried from the build stage's own run) against
+`proto/design-source/lia496-fix-plan.md`'s "Verification & capture
+strategy" section as the frozen-expected source. This is still a
+**batch-agent** row, not `user-spot-check` — per the plan's own three-tier
+`verified-by` model, only the orchestrating (top-level) session's own
+hands-on re-attach counts as `user-spot-check`; this stage is an
+independent second agent, one rung more trustworthy than the build stage's
+own self-report but not the named final check.
+
+**First attempt at re-verifying I6 genuinely FAILED before it passed —
+recorded honestly, not silently retried away:** the first live attempt
+captured the collapsed row correctly (N=1, matching the fixture's 6 total
+lines − 5-line cap), but a multi-step `capture → save → re-capture → press
+ctrl+o` sequence (each step its own tool round-trip) took long enough that
+the message had already fully streamed and committed into `<Static>` by
+the time ctrl+o was pressed — the press landed on nothing (screen unchanged,
+still showing the collapsed row), directly reproducing the plan's own
+documented `<Static>`-immutability risk (risk #2: "completed turns can't be
+restyled after commit"). This is a genuine, reproducible timing hazard, not
+a fluke — it confirms the affordance's live window is real but narrow. A
+second attempt, polling every 0.1s and sending ctrl+o in the SAME loop
+iteration that detected the mid-stream window (same technique the build
+stage's own capture script uses), succeeded twice in a row (once
+unrecorded, once recorded to `ib2-capture-stage-reverify.cast` below).
+
+| # | feature | expected (design-source citation) | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | I6 — >5-line Bash result collapses to 5 lines + accurate "… +N lines · ctrl+o expand"; ctrl+o toggles expand while mid-stream | `proto/design-source/lia496-fix-plan.md` § "Verification & capture strategy (per batch)": "IB2: a >5-line Bash result collapsed + ctrl+o expanded" | Navigated `ctrl+t` → "LIA-495 migration spike", sent "recap the import". Its Bash result has 6 real lines (grep matches, confirmed by reading `shared/src/fixtures/conversations.ts:571-578` directly). **Run 1 (FAIL, honestly recorded):** collapsed row rendered correctly ("… +1 lines · ctrl+o expand", N=1 = 6−5, accurate) but a slow multi-step capture sequence let the message finish streaming before ctrl+o was sent — the press had no effect (message already committed to `<Static>`), reproducing the plan's own documented immutability risk rather than proving the live affordance. **Run 2 (PASS):** tight 0.1s poll loop sent ctrl+o in the same iteration that detected the mid-stream window (closing text visibly cut off at "...are all"/"...answe") — genuinely expanded to all 6 lines, cap row gone. Repeated a third time with asciinema recording live: expand confirmed mid-stream (closing text cut at "...are all"), then a second ctrl+o re-collapsed back to 5 lines + "… +1 lines · ctrl+o expand" (both directions, one continuous recording) | `ink-app/captures/verify/ib2-recapture-i6-collapsed-midstream.txt`, `ink-app/captures/verify/ib2-recapture-i6-expanded-midstream.txt`, `ink-app/captures/verify/ib2-capture-stage-reverify.cast` (full session, byte-exact) | batch-agent | **PASS** (after one honestly-recorded FAIL on an earlier, too-slow attempt — see note above) |
+| 2 | I9/I10 — diff panel renders with no box/border at the responsive width; single unified gutter (not two-sided) | same plan section: "diff rendered unboxed at the new responsive width" | Switched to "Sidebar layout pass", sent "show me the diff". `⏺ Edit(web-app/src/components/Sidebar.tsx)` rendered with no border of any kind around the diff body; single left-hand line-number gutter (`4`, `5`, `6 -`, `6 +`, `8 +`…) — no second/right-hand gutter column, matching D2's rejection of GPT's two-sided ask; `DiffView`'s own "+11 -1" header line intact | `ink-app/captures/verify/ib2-recapture-i9-i10-diffpanel-unboxed.txt`, `ink-app/captures/verify/ib2-capture-stage-reverify.cast` | batch-agent | **PASS** |
+| 3 | I7 — one status-colored glyph for tools (no ⏺/● collision) | same plan section (I7 fix inventory item, `## Full fix inventory`): "one status-colored glyph for tools" | Both tool types observed in this run render the identical `⏺` glyph: `⏺ Bash(grep -n "@assistant-ui/core"...)` in the I6 capture and `⏺ Edit(web-app/src/components/Sidebar.tsx)` in the I9/I10 capture — same run, same glyph, visually distinct from the `●` gutter mark used only for the assistant speaker column | `ink-app/captures/verify/ib2-recapture-i6-collapsed-midstream.txt`, `ink-app/captures/verify/ib2-recapture-i9-i10-diffpanel-unboxed.txt` | batch-agent | **PASS** |
+| 4 | I8 — no "you"/"deus" text labels; gutter glyph alone indicates speaker | same plan section (I8 fix inventory item): "drop — gutter glyphs already encode speaker" | Across the entire re-run (both threads, both user and assistant turns) no "you" or "deus" text label appears anywhere; user turns show only `❯ <text>`, assistant turns show only `● <content>` — confirmed in every capture in this row | `ink-app/captures/verify/ib2-recapture-i6-collapsed-midstream.txt`, `ink-app/captures/verify/ib2-recapture-i6-expanded-midstream.txt`, `ink-app/captures/verify/ib2-recapture-i9-i10-diffpanel-unboxed.txt`, `ink-app/captures/verify/ib2-capture-stage-reverify.cast` | batch-agent | **PASS** |
+
+**Non-visual, re-run fresh at this stage too:** `tsc --noEmit` on `ink-app`
+— clean, exit 0. `proto/scripts/check-shared-purity.sh` — PASSED. The fresh
+`.cast` byte log (`ib2-capture-stage-reverify.cast`) was grepped in raw
+bytes for the destructive `\x1b[3J` scrollback-clear escape — zero
+occurrences, independently reconfirming IB1's scrollback invariant held
+throughout this run (multiple thread switches, one multi-part streaming
+message, one diff render).
+
+**Mechanical sweep, run against every file this stage wrote (including this
+section's own text):** grepped for the literal home-directory path prefix
+pattern, for home-relative-path shorthand, and for the operator's bare
+username. **First sweep found real leaks** — the two raw `tmux
+capture-pane` text captures included scrollback from an earlier failed
+launch attempt (a wrong-cwd `tsx` run, before the working directory was
+corrected) whose Node stack trace and shell prompt lines carried the
+leaked absolute path and username. Fixed by trimming both files to start
+at the app's own first rendered line (`deus // transcript`), discarding
+the leaked shell scrollback above it. Re-swept after the fix: zero
+occurrences of all three patterns across every artifact this stage wrote,
+including the `.cast` (asciinema records only the recorded subprocess's
+own output, confirmed clean by raw byte count of all three patterns = 0)
+and this VERIFICATION.md section itself.
+
+**Summary for this stage: 4/4 PASS on re-run**, with one real, honestly-recorded
+transient FAIL on I6's first attempt (a too-slow multi-step capture sequence
+missed the live window and pressed ctrl+o after the message had already
+committed) before a tighter-timed second and third attempt both succeeded —
+consistent with, not contradicting, the build stage's own documented
+`<Static>`-immutability risk. **This stage's own PASS rows remain
+`verified-by: batch-agent`, not `user-spot-check`** — per the plan's
+execution model, IB2's one named highest-risk claim (the I6 ctrl+o
+collapse/expand behavior) is reserved for the orchestrating session's own
+hands-on re-attach-and-press before it is trusted as final.
+
+## LIA-496 IB2 code-review REVISE round 2 — three findings fixed
+
+Code-review REVISE on the commit stage (findings on the untracked-file set
+`captures/`, `toolOutputCap.ts`, `verify-ib2.sh`, plus the two live source
+files below). All three addressed; two required a real code/config fix,
+one was reviewed and confirmed genuinely informational (no change).
+
+**Finding 1 (high) — `proto/node_modules`/`proto/web-app/node_modules`
+untracked, un-ignored symlinks leaking an absolute host path + username.**
+`.gitignore`'s trailing-slash `node_modules/` pattern only matches real
+directories (`git check-ignore -v` on all three matched only
+`ink-app/node_modules`, a real directory — `git status` listed both
+workspace-root symlinks as untracked), so a routine `git add -A`/`git add
+proto` would have committed both symlinks — whose `readlink` targets are
+absolute paths under the operator's home directory — into this PUBLIC
+repo. **Fix:** added `proto/node_modules` and `proto/web-app/node_modules`
+to `.git/info/exclude` (the shared git-common-dir exclude file — this repo
+uses linked worktrees off one `.git`, so this one edit protects every
+worktree of this clone, not just this one; confirmed the pattern recurs
+across sibling worktrees — `lia496-ib3`/`lia496-ib4`/`lia496-wb3` all carry
+the identical symlink today). Not a tracked repo file, so it ships nothing
+into the public history itself — it only stops the leak at `git add` time,
+which is exactly the hazard the finding named. **Re-verified:** `git
+check-ignore -v proto/node_modules proto/web-app/node_modules` now matches
+both (exit 0, both attributed to the new `.git/info/exclude` lines); `git
+status` no longer lists either symlink as untracked; the rest of `git
+status`'s untracked list (the intended capture/source files) is unchanged.
+
+**Finding 2 (low) — `Messages.tsx`'s `BashLine` auto-expand-on-error only
+worked for a fresh mount, not a live-streaming instance.**
+`useState(isError)` is only an *initializer* — evaluated once at mount —
+so an instance mounted while `pending` (`isError` still `false`) never
+re-checked it once the error result arrived later on that SAME instance;
+only a fresh remount (e.g. the `<Static>` commit-time remount) picked up
+`isError=true`. Latent in every existing fixture (none scripts a Bash
+`isError:true` result over 5 lines), but the build summary's unqualified
+"auto-expands on error" claim was only fully true for the committed path.
+**Fix:** added a `useEffect` in `BashLine` (`ink-app/src/components/
+Messages.tsx`) that calls `setExpanded(true)` whenever `isError` transitions
+to `true` on an already-mounted instance, alongside the existing
+mount-time initializer (kept, since it still covers the direct-remount
+case and needs no different behavior). **Re-verified with a real
+positive/negative-control pair** (not just re-reasoning about the diff):
+a standalone throwaway repro (`ink-app/captures/verify-bashline-live-
+error.tsx`, driven under a real tmux pty via `ink-app/captures/run-
+bashline-live-error-verify.sh`, since `BashLine`'s ctrl+o `useInput`
+needs raw-mode support a bare non-tty `tsx` run doesn't have) mounts
+`BashLine` `pending` (`isError:false`), then `rerender()`s the SAME
+instance with an 8-line error result attached — exactly the transition
+the finding named as broken. **With the fix:** all 8 error lines render,
+no "… +N lines · ctrl+o expand" cap row — PASS. **Negative control:**
+temporarily commented out the new `useEffect` and re-ran the identical
+script — the cap row reappeared ("… +3 lines · ctrl+o expand", only 5 of
+8 lines shown), confirming the repro genuinely exercises the bug rather
+than passing regardless. Fix restored immediately after (`grep -n
+useEffect ink-app/src/components/Messages.tsx` confirms it's back), then
+re-ran the positive case once more to confirm the restored file matches
+the verified-passing version — PASS again. `npx tsc --noEmit` on
+`ink-app` after restoring — clean, exit 0. This did NOT change any
+existing capture's rendered output (no fixture reaches this code path,
+per above), so none of IB2's existing `.png`/`.gif`/`.cast` artifacts
+needed re-capture — only this new standalone repro was needed.
+
+**Finding 3 (low) — `DiffPanel`'s ctrl+o is a global toggle across every
+mounted capped part.** Reviewed directly: `DiffPanel.tsx` registers its
+own `useInput({ isActive: cappedDiff })` for ctrl+o, exactly like
+`BashLine` does — both fire on the same keypress if two capped parts are
+live in the same message at once (possible under the hold-until-message-
+settles commit gate). Confirmed via source read (`grep -n "useInput\|
+isActive\|ctrl.*o" ink-app/src/components/DiffPanel.tsx`); no fixture
+currently mounts two capped parts in one message, so this is unexercised
+today. Per the finding's own text this matches Claude Code's own global
+ctrl+o semantics and is informational — **no code change made**, consistent
+with the finding's explicit "no change required."
+
+**Mechanical sweep (this round's own files):** grepped
+`ink-app/src/components/Messages.tsx`, `ink-app/captures/verify-bashline-
+live-error.tsx`, `ink-app/captures/run-bashline-live-error-verify.sh`,
+this VERIFICATION.md section, and `.git/info/exclude` for the literal
+absolute-path prefix, the home-relative shorthand, and the bare operator
+username — zero occurrences in all five.
+
+**Summary for this round: 2/3 findings required a real fix (both applied
+and re-verified above), 1/3 confirmed informational per its own text.**

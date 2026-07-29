@@ -70,10 +70,15 @@ export const TokenLine: FC<{ code: string; lang?: string | undefined }> = ({ cod
   }, [id, code]);
   const justCopied = useIsJustCopied(id);
 
+  // I9 (LIA-496 IB2) — no border around the code block. Borders are
+  // reserved for composer/permission/overlays; a `marginLeft` indent (in
+  // place of the removed `paddingX`) is what still visually distinguishes
+  // code from surrounding prose, same idiom as Claude Code's own unboxed
+  // fenced-code rendering.
   if (!resolvedLang) {
     return (
       <Box flexDirection="column">
-        <Box borderStyle="round" borderColor={theme.line} paddingX={1} flexDirection="column">
+        <Box flexDirection="column" marginLeft={1}>
           {code.split("\n").map((line, i) => (
             <Text key={i} color={theme.dim}>
               {line || " "}
@@ -89,7 +94,7 @@ export const TokenLine: FC<{ code: string; lang?: string | undefined }> = ({ cod
 
   return (
     <Box flexDirection="column">
-      <Box borderStyle="round" borderColor={theme.line} paddingX={1} flexDirection="column">
+      <Box flexDirection="column" marginLeft={1}>
         {tokens.map((lineTokens, lineIndex) => (
           <Text key={lineIndex}>
             {lineTokens.length === 0

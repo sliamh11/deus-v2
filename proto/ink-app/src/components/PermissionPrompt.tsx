@@ -27,7 +27,7 @@ import { type FC } from "react";
 import { Box, Text, useInput } from "ink";
 import type { ToolCallMessagePartProps } from "@assistant-ui/react-ink";
 import { extractPath, executionOutcomes, decisionFromOptionId, type PermissionDecision } from "@lia496/shared";
-import { theme } from "../theme";
+import { theme, GLYPH_TOOL } from "../theme";
 
 const DASHED_BORDER = {
   topLeft: "┌",
@@ -39,8 +39,6 @@ const DASHED_BORDER = {
   bottomLeft: "└",
   left: "╎",
 };
-
-const GLYPH = "●";
 
 function decisionLabel(decision: PermissionDecision): string {
   switch (decision) {
@@ -69,7 +67,7 @@ const ResolvedLine: FC<{ props: ToolCallMessagePartProps; path: string | undefin
   return (
     <Box marginBottom={1}>
       <Text color={color}>
-        {GLYPH} delete_file({path ?? props.argsText}) — {decisionLabel(decision)}
+        {GLYPH_TOOL} delete_file({path ?? props.argsText}) — {decisionLabel(decision)}
         {outcome ? ` (${outcome})` : ""}
       </Text>
     </Box>
@@ -113,7 +111,7 @@ export const PermissionPrompt: FC<ToolCallMessagePartProps> = (props) => {
     return (
       <Box marginBottom={1}>
         <Text color={theme.dim}>
-          {GLYPH} delete_file({path ?? props.argsText}) — {outcome}
+          {GLYPH_TOOL} delete_file({path ?? props.argsText}) — {outcome}
         </Text>
       </Box>
     );
@@ -124,7 +122,7 @@ export const PermissionPrompt: FC<ToolCallMessagePartProps> = (props) => {
       return (
         <Box marginBottom={1}>
           <Text color={theme.amber}>
-            {GLYPH} delete_file({path ?? props.argsText}) — request {approval.resolution}, no decision made
+            {GLYPH_TOOL} delete_file({path ?? props.argsText}) — request {approval.resolution}, no decision made
           </Text>
         </Box>
       );
