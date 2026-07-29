@@ -18,7 +18,7 @@ export const EmptyState: FC = () => (
       <Text color={theme.dim}>
         Type after {"'"}
         <Text color={theme.amber}>{COMPOSER_PROMPT}</Text>
-        {"'"} below and press enter to start, or ↑/↓ + enter in the sidebar to open a seeded thread.
+        {"'"} below and press enter to start, or ctrl+t (↑/↓ + enter) to open a seeded thread.
       </Text>
     </Box>
   </Box>

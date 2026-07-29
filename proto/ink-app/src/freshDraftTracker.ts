@@ -31,8 +31,11 @@
 // un-wrapped `useSyncExternalStore` — deliberately bypassing every
 // assistant-ui reactive layer implicated above) tracks that fact
 // independently: `markFreshDraft` is called once `switchToNewThread()`
-// resolves (`Sidebar.tsx`'s `ctrl+n`/`ThreadListPrimitive.New` handler);
-// `clearFreshDraft` is called the moment that thread's OWN adapter
+// resolves (LIA-496 IB1: `App.tsx`'s `useThreadNavigation`/
+// `triggerNewThread` — formerly `Sidebar.tsx`'s `ctrl+n`/
+// `ThreadListPrimitive.New` handler, before that file was replaced by the
+// transient `ThreadPicker.tsx` overlay); `clearFreshDraft` is called the
+// moment that thread's OWN adapter
 // actually runs a turn (`useThreadRuntime` below, App.tsx) — i.e. the
 // instant real content needs to start rendering for it, at which point we
 // hand back off to the normal primitives.

@@ -1,9 +1,12 @@
 // LIA-496 — rendered via `ErrorPrimitive` (real primitive, not a
-// hand-rolled check of message status). Wired from Messages.tsx's
-// `AssistantMessage`, wrapped in `ErrorPrimitive.Root` (confirm that link
-// there, not here) — `ErrorPrimitive.Root` itself renders nothing unless
-// `useMessageError()` finds a real `message.status = {type:"incomplete",
-// reason:"error", ...}` (confirmed by reading
+// hand-rolled check of message status). After IB1, the live transcript
+// path wires this from `committedBlocks.tsx`'s own "assistant-error" block
+// (confirm that link there, not here) — `AssistantMessage`
+// (`Messages.tsx`) still wraps it the same way but is no longer mounted by
+// `App.tsx`; only `spike/approach-b.tsx` still uses it. `ErrorPrimitive.Root`
+// itself renders nothing unless `useMessageError()` finds a real
+// `message.status = {type:"incomplete", reason:"error", ...}` (confirmed
+// by reading
 // node_modules/@assistant-ui/core/src/react/primitive-hooks/
 // useMessageError.ts directly), so this component only ever mounts for a
 // genuinely errored message — currently the "theme-swap-crash" seeded

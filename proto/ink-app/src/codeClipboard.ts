@@ -72,14 +72,14 @@ function writeOsc52(text: string): void {
 
 // Global, always-active hotkey action (mounted once, from
 // `CodeCopyHotkey.tsx`) — copies the MOST RECENTLY RENDERED code block.
-// Mirrors `Sidebar.tsx`'s own `ctrl+n` binding: "always active regardless
-// of focus", already confirmed safe to coexist with `TextInput`'s own
-// focus-gated `useInput` (that file's own comment) — `ctrl+y` is a
+// Mirrors `App.tsx`'s own `useThreadNavigation` `ctrl+n`/`ctrl+t`
+// bindings: "always active regardless of focus", already confirmed safe
+// to coexist with `TextInput`'s own focus-gated `useInput` — `ctrl+y` is a
 // distinct chord from anything else bound in this app (`y`/`a`/`n`
-// un-modified for permission decisions, `ctrl+n` for new thread), so
-// there is no key collision to worry about, unlike the Tab-handling
-// conflict App.tsx's header comment documents and deliberately avoids
-// repeating here.
+// un-modified for permission decisions, `ctrl+n`/`ctrl+t` for thread
+// navigation), so there is no key collision to worry about, unlike the
+// Tab-handling conflict App.tsx's header comment documents and
+// deliberately avoids repeating here.
 export function copyLatestCodeBlock(): void {
   if (latestId === undefined || !latestCode) return;
   writeOsc52(latestCode);

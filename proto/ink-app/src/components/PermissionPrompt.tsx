@@ -148,7 +148,16 @@ export const PermissionPrompt: FC<ToolCallMessagePartProps> = (props) => {
           {" a "}
         </Text>
         <Text> always allow   </Text>
-        <Text backgroundColor={theme.dim} color={theme.ink}>
+        {/* I1 (LIA-496 IB1) — literal dark foreground on all three key-cap
+            chips, not `theme.ink` (light): these chips carry their OWN
+            local `backgroundColor` (never removed by I1's global-background
+            deletion below), so their text must stay a genuinely dark color
+            to read against it regardless of what the surrounding frame
+            does. `theme.bg` is the right literal here specifically because
+            it's a real dark hex value, matched to the two `allow`/`always`
+            chips above, not because it still means "the app background"
+            (that global usage is gone). */}
+        <Text backgroundColor={theme.dim} color={theme.bg}>
           {" n "}
         </Text>
         <Text> deny</Text>

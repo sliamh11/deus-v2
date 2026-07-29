@@ -1,0 +1,1940 @@
+[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+
+  [38;2;43;39;35m╭──────────────────────────────────────────────────────────────────────────────────────────────╮[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [1m[38;2;227;220;209mthreads[39m[22m                                             [38;2;138;129;119m↑/↓ enter · d delete · n new · esc close[39m [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m── today[39m                                                                                     [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [7m[38;2;138;129;119m  Status-glyph rendering fix[39m[27m                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Composer keyboard shortcuts[39m                                                                [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Shiki theme swap crash[39m                                                                     [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m── yesterday[39m                                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  LIA-495 migration spike[39m                                                                    [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Sidebar layout pass[39m                                                                        [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Diff panel polish[39m                                                                          [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Streaming markdown flicker[39m                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m╰──────────────────────────────────────────────────────────────────────────────────────────────╯[39m
+
+[?2026l[?2026h[2J[3J[H  [38;2;227;220;209mdeus // transcript[39m
+  [38;2;138;129;119mmodel: [38;2;127;176;105msonnet-5[38;2;138;129;119m · you · ink-app[39m
+
+
+
+  [38;2;43;39;35m╭──────────────────────────────────────────────────────────────────────────────────────────────╮[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [1m[38;2;227;220;209mthreads[39m[22m                                             [38;2;138;129;119m↑/↓ enter · d delete · n new · esc close[39m [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m── today[39m                                                                                     [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Status-glyph rendering fix[39m                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [7m[38;2;138;129;119m  Composer keyboard shortcuts[39m[27m                                                                [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Shiki theme swap crash[39m                                                                     [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m── yesterday[39m                                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  LIA-495 migration spike[39m                                                                    [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Sidebar layout pass[39m                                                                        [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Diff panel polish[39m                                                                          [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Streaming markdown flicker[39m                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m╰──────────────────────────────────────────────────────────────────────────────────────────────╯[39m
+
+[?2026l[?2026h[2J[3J[H  [38;2;227;220;209mdeus // transcript[39m
+  [38;2;138;129;119mmodel: [38;2;127;176;105msonnet-5[38;2;138;129;119m · you · ink-app[39m
+
+
+
+  [38;2;43;39;35m╭──────────────────────────────────────────────────────────────────────────────────────────────╮[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [1m[38;2;227;220;209mthreads[39m[22m                                             [38;2;138;129;119m↑/↓ enter · d delete · n new · esc close[39m [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m── today[39m                                                                                     [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Status-glyph rendering fix[39m                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Composer keyboard shortcuts[39m                                                                [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [7m[38;2;138;129;119m  Shiki theme swap crash[39m[27m                                                                     [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m── yesterday[39m                                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  LIA-495 migration spike[39m                                                                    [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Sidebar layout pass[39m                                                                        [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Diff panel polish[39m                                                                          [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Streaming markdown flicker[39m                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m╰──────────────────────────────────────────────────────────────────────────────────────────────╯[39m
+
+[?2026l[?2026h[2J[3J[H  [38;2;227;220;209mdeus // transcript[39m
+  [38;2;138;129;119mmodel: [38;2;127;176;105msonnet-5[38;2;138;129;119m · you · ink-app[39m
+
+
+
+  [38;2;43;39;35m╭──────────────────────────────────────────────────────────────────────────────────────────────╮[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [1m[38;2;227;220;209mthreads[39m[22m                                             [38;2;138;129;119m↑/↓ enter · d delete · n new · esc close[39m [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m── today[39m                                                                                     [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Status-glyph rendering fix[39m                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Composer keyboard shortcuts[39m                                                                [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Shiki theme swap crash[39m                                                                     [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m── yesterday[39m                                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [7m[38;2;138;129;119m  LIA-495 migration spike[39m[27m                                                                    [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Sidebar layout pass[39m                                                                        [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Diff panel polish[39m                                                                          [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m [38;2;138;129;119m  Streaming markdown flicker[39m                                                                 [38;2;43;39;35m│[39m
+  [38;2;43;39;35m│[39m                                                                                              [38;2;43;39;35m│[39m
+  [38;2;43;39;35m╰──────────────────────────────────────────────────────────────────────────────────────────────╯[39m
+
+[?2026l[?2026h[2J[3J[H  [38;2;227;220;209mdeus // transcript[39m
+  [38;2;138;129;119mmodel: [38;2;127;176;105msonnet-5[38;2;138;129;119m · you · ink-app[39m
+
+
+
+
+   [38;2;138;129;119m● No messages in this session yet.[39m
+
+   [38;2;138;129;119mType after '[38;2;201;148;74m> [38;2;138;129;119m' below and press enter to start, or ctrl+t (↑/↓ + enter) to open a seeded [39m
+   [38;2;138;129;119mthread.[39m
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2mask deus to do something… (/threads for sessions)[22m
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+
+
+   [38;2;138;129;119m● No messages in this session yet.[39m
+
+   [38;2;138;129;119mType after '[38;2;201;148;74m> [38;2;138;129;119m' below and press enter to start, or ctrl+t (↑/↓ + enter) to open a seeded [39m
+   [38;2;138;129;119mthread.[39m
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+  [38;2;138;129;119m── thread: LIA-495 migration spike ──[39m
+
+
+
+
+   [38;2;138;129;119m● No messages in this session yet.[39m
+
+   [38;2;138;129;119mType after '[38;2;201;148;74m> [38;2;138;129;119m' below and press enter to start, or ctrl+t (↑/↓ + enter) to open a seeded [39m
+   [38;2;138;129;119mthread.[39m
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+
+
+   [38;2;138;129;119m● No messages in this session yet.[39m
+
+   [38;2;138;129;119mType after '[38;2;201;148;74m> [38;2;138;129;119m' below and press enter to start, or ctrl+t (↑/↓ + enter) to open a seeded [39m
+   [38;2;138;129;119mthread.[39m
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39mwalk me through the migration[7m [27m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+
+
+   [38;2;138;129;119m● No messages in this session yet.[39m
+
+   [38;2;138;129;119mType after '[38;2;201;148;74m> [38;2;138;129;119m' below and press enter to start, or ctrl+t (↑/↓ + enter) to open a seeded [39m
+   [38;2;138;129;119mthread.[39m
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+
+
+   [38;2;138;129;119m● No messages in this session yet.[39m
+
+   [38;2;138;129;119mType after '[38;2;201;148;74m> [38;2;138;129;119m' below and press enter to start, or ctrl+t (↑/↓ + enter) to open a seeded [39m
+   [38;2;138;129;119mthread.[39m
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39mwalk me through the migration[7m [27m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+  [1m[38;2;138;129;119m●[39m[22m [38;2;138;129;119mdeus[39m
+    [3m[38;2;138;129;119mThe[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39mwalk me through the migration[7m [27m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G  [1m[38;2;201;148;74m❯[39m[22m [38;2;138;129;119myou[39m
+    walk me through the migration
+
+  [1m[38;2;138;129;119m●[39m[22m [38;2;138;129;119mdeus[39m
+
+    [3m[38;2;138;129;119mThe[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe ho[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe hones[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest a[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answ[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the im[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the impor[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import l[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, n[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in any[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anythi[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd ha[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to exp[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explai[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain —[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — le[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — let m[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — let me j[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — let me just[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — let me just sh[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — let me just show[39m[23m
+    [3m[38;2;138;129;119m [39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — let me just show[39m[23m
+    [3m[38;2;138;129;119m it.[39m[23m
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — let me just show[39m[23m
+    [3m[38;2;138;129;119m it.[39m[23m
+    Qui
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G    [3m[38;2;138;129;119mThe honest answer is in the import line, not in anything I'd have to explain — let me just show[39m[23m
+    [3m[38;2;138;129;119m it.[39m[23m
+
+    Qui
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick rec
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — c
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — chec
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checkin
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checking t
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checking the
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checking the act
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checking the actual
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checking the actual im
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checking the actual impor
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checking the actual import.
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    Quick recap — checking the actual import.
+
+    [1m[38;2;138;129;119m⏺ [39mBash[22m([38;2;138;129;119mgrep -n "@assistant-ui/core" [39m                                              )
+           [38;2;138;129;119m../lia495-assistant-ui-adoption/proto/web-first-demo/src/runtime/adapter.ts[39m
+    [38;2;138;129;119m  running…[39m
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G    Quick recap — checking the actual import.
+
+
+    [1m[38;2;138;129;119m⏺ [39mBash[22m([38;2;138;129;119mgrep -n "@assistant-ui/core" [39m                                              )
+           [38;2;138;129;119m../lia495-assistant-ui-adoption/proto/web-first-demo/src/runtime/adapter.ts[39m
+    [38;2;138;129;119m  running…[39m
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [1m[38;2;127;176;105m⏺ [39mBash[22m([38;2;138;129;119mgrep -n "@assistant-ui/core" [39m                                              )
+           [38;2;138;129;119m../lia495-assistant-ui-adoption/proto/web-first-demo/src/runtime/adapter.ts[39m
+    [38;2;227;220;209m  11:import type { ChatModelAdapter, ChatModelRunResult } from "@assistant-ui/react";[39m
+    [38;2;227;220;209m12:import type { ThreadAssistantMessagePart } from "@assistant-ui/core";[39m
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G    [1m[38;2;127;176;105m⏺ [39mBash[22m([38;2;138;129;119mgrep -n "@assistant-ui/core" [39m                                              )
+           [38;2;138;129;119m../lia495-assistant-ui-adoption/proto/web-first-demo/src/runtime/adapter.ts[39m
+    [38;2;227;220;209m  11:import type { ChatModelAdapter, ChatModelRunResult } from "@assistant-ui/react";[39m
+    [38;2;227;220;209m12:import type { ThreadAssistantMessagePart } from "@assistant-ui/core";[39m
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    The
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There'
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's y
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your an
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answe
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer —
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — Ch
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatM
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatMode
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAd
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapt
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/Cha
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatMo
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModel
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRun
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunRes
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/Th
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/Threa
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAs
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssis
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistan
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMe
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessa
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessageP
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart ar
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are a
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    def
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    define
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined o
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @a
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assi
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assista
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/cor
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core a
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exp
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-export
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unc
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchan
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by bo
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @as
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assis
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistan
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-u
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/r
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/reac
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react a
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @as
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assis
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistan
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-u
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/r
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/reac
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-i
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink,
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LI
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-4
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495'
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's t
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn ge
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn gener
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generato
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators nee
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed ze
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero log
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic cha
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic change
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes t
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to r
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    L
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 go
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one st
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step fur
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step furthe
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further a
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imp
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and import
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports s
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports stra
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straigh
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight f
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @a
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assi
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assista
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/cor
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core i
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in t
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the sha
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared pa
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared packa
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package,
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's gen
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuin
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely on
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one f
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file in
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file inste
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two co
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copie
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies t
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that on
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only dif
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ by
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ by im
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ by impor
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ by import s
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ by import spec
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ by import specifi
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ by import specifier.
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l[?2026h[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G    There's your answer — ChatModelAdapter/ChatModelRunResult/ThreadAssistantMessagePart are all
+    defined once in @assistant-ui/core and re-exported unchanged by both @assistant-ui/react and
+    @assistant-ui/react-ink, so LIA-495's turn generators needed zero logic changes to run on web.
+    LIA-496 goes one step further and imports straight from @assistant-ui/core in the shared
+    package, so it's genuinely one file instead of two copies that only differ by import specifier.
+
+
+
+
+    [38;2;127;176;105msonnet-5[38;2;138;129;119m · ink-app · ctrl+t threads · ctrl+n new[39m
+  [38;2;43;39;35m────────────────────────────────────────────────────────────────────────────────────────────────[39m
+   [38;2;201;148;74m> [39m[2m[7m [27mask deus to do something… (/threads for sessions)[22m
+
+[?2026l

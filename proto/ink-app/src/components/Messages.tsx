@@ -39,7 +39,15 @@ import { ErrorState } from "./ErrorState";
 
 const BULLET = "⏺";
 
-const BashLine: FC<ToolCallMessagePartProps> = (props) => {
+// Exported (LIA-496 IB1 spike, `spike/approach-a.tsx`) so the
+// prop-reconstruction candidate can reuse this EXACT leaf component instead
+// of hand-duplicating it — the spike write-up itself lives in
+// `spike/approach-a.tsx`/`spike/approach-b.tsx`'s own header comments (no
+// separate `docs/decisions/` note exists for it; this comment previously
+// pointed at one that was never actually created). Not otherwise a public
+// API of this module; Messages.tsx's own wiring below still uses it as a
+// plain local const.
+export const BashLine: FC<ToolCallMessagePartProps> = (props) => {
   const pending = props.result === undefined;
   const isError = props.isError === true;
   const color = STATUS_COLOR[liveBulletStatus(pending, isError)];
@@ -98,6 +106,27 @@ export const UserMessage: FC = () => (
   </Box>
 );
 
+// Exported (LIA-496 IB1 REVISE round — part-granularity commits, code-review
+// finding) so `committedBlocks.tsx`'s per-part committed renderer AND this
+// file's own live `AssistantMessage` dispatch off the exact SAME
+// `MessagePrimitive.Parts`/`MessagePrimitive.PartByIndex` `components`
+// config — never duplicated between the two call sites (this repo's own
+// "never duplicate content across files" rule). See `committedBlocks.tsx`'s
+// header comment for why part-level (not message-level) dispatch is now
+// required at all.
+export const assistantPartComponents = {
+  Text: MarkdownText,
+  Reasoning: ReasoningLine,
+  ReasoningGroup,
+  tools: {
+    by_name: {
+      Edit: DiffPanel,
+      delete_file: PermissionPrompt,
+    },
+    Fallback: BashLine,
+  },
+};
+
 export const AssistantMessage: FC = () => (
   <Box flexDirection="row" marginBottom={1}>
     <Box width={2}>
@@ -110,21 +139,7 @@ export const AssistantMessage: FC = () => (
       <ErrorPrimitive.Root>
         <ErrorState />
       </ErrorPrimitive.Root>
-      <MessagePrimitive.Parts
-        components={{
-          Text: MarkdownText,
-          Reasoning: ReasoningLine,
-          ReasoningGroup,
-          tools: {
-            by_name: {
-              Edit: DiffPanel,
-              delete_file: PermissionPrompt,
-            },
-            Fallback: BashLine,
-          },
-        }}
-        unstable_showEmptyOnNonTextEnd={false}
-      />
+      <MessagePrimitive.Parts components={assistantPartComponents} unstable_showEmptyOnNonTextEnd={false} />
     </Box>
   </Box>
 );

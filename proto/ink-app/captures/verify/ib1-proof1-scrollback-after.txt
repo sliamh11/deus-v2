@@ -1,0 +1,110 @@
+  deus // transcript
+  model: sonnet-5 · you · ink-app
+
+
+  ── thread: Composer keyboard shortcuts ──
+
+  ❯ you
+    any composer shortcut gaps?
+
+  ● deus
+    Cmd+Enter to submit and Escape to blur are standard composer affordances — I can wire both
+    directly in the keydown handler without touching the pill styling.
+    I'll wire the keydown handler in the composer component.
+
+    ● Edit(web-app/src/components/Composer.tsx)
+
+    ╭────────────────────────────────────────────────────────────────────────────────────────────╮
+    │ web-app/src/components/Composer.tsx +11 -0                                                 │
+    │   18     const composer = useComposerRuntime();                                            │
+    │   19                                                                                       │
+    │   20 +   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {      │
+    │   21 +     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {                │
+    │   22 +       event.preventDefault();                                                       │
+    │   23 +       composer.send();                                                              │
+    │   24 +       return;                                                                       │
+    │   25 +     }                                                                               │
+    │   26 +     if (event.key === "Escape") {                                                   │
+    │   27 +       event.currentTarget.blur();                                                   │
+    │   28 +     }                                                                               │
+    │   29 +   };                                                                                │
+    │   30 +                                                                                     │
+    │   20     return (                                                                          │
+    │   21                                                                                       │
+    ╰────────────────────────────────────────────────────────────────────────────────────────────╯
+
+    Done — Cmd+Enter submits, Escape blurs the pill composer. Try it out.
+
+
+
+  ── thread: Sidebar layout pass ──
+
+  ❯ you
+    recap the import fix
+
+  ● deus
+    ThreadListPrimitive doesn't expose a groupBy prop — confirmed by reading its .d.ts, it's
+    exactly Root/Items/ItemByIndex/LoadMore/New — so Today/Yesterday has to be manual filtering
+    over lastMessageAt in the sidebar component itself.
+    I'll widen the rail and add the two date-bucket headers.
+
+    ● Edit(web-app/src/components/Sidebar.tsx)
+
+    ╭────────────────────────────────────────────────────────────────────────────────────────────╮
+    │ web-app/src/components/Sidebar.tsx +11 -1                                                  │
+    │    4   import { ThreadListPrimitive } from "@assistant-ui/react";                          │
+    │    5                                                                                       │
+    │    6 - const RAIL_WIDTH = "224px";                                                         │
+    │    6 + const RAIL_WIDTH = "272px";                                                         │
+    │    7                                                                                       │
+    │    8 + function groupByDay(items: ThreadListItemState[]) {                                 │
+    │    9 +   const today: ThreadListItemState[] = [];                                          │
+    │   10 +   const yesterday: ThreadListItemState[] = [];                                      │
+    │   11 +   const now = new Date();                                                           │
+    │   12 +   for (const item of items) {                                                       │
+    │   13 +     (isSameCalendarDay(item.lastMessageAt, now) ? today : yesterday).push(item);    │
+    │   14 +   }                                                                                 │
+    │   15 +   return { today, yesterday };                                                      │
+    │   16 + }                                                                                   │
+    │   17 +                                                                                     │
+    │    8     export function Sidebar() {                                                       │
+    │    9                                                                                       │
+    ╰────────────────────────────────────────────────────────────────────────────────────────────╯
+
+    Widened the rail to 272px and split the list into Today/Yesterday sections.
+
+
+
+  ── thread: Streaming markdown flicker ──
+
+  ❯ you
+    one more check
+
+  ● deus
+    A flash of unstyled code during streaming means the highlighter wasn't warm yet on first render
+     — shiki's per-call async shorthand functions would explain exactly that.
+    Checking whether the singleton is actually pre-warmed before either app mounts.
+
+    ⏺ Bash(grep -n getSingletonHighlighter shared/src/highlight.ts)
+      60:const highlighter: Highlighter = await getSingletonHighlighter({ langs: LANGS });
+
+
+    Confirmed — shared/src/highlight.ts has a top-level await that warms the singleton and loads
+    both targets' themes before either app renders a frame, so highlightToHtml/highlightToTokens
+    are synchronous by the time any component calls them. No flicker to fix here; it was already
+    closed by the pre-warm. For reference, this is the wrapper both targets call:
+
+    ╭──────────────────────────────────╮
+    │ export function highlightToHtml( │
+    │   code: string,                  │
+    │   lang: BundledLanguage,         │
+    │   theme: BundledTheme,           │
+    │ ): string {                      │
+    │   return highligh                │
+    ╰──────────────────────────────────╯
+
+    sonnet-5 · ink-app · ctrl+t threads · ctrl+n new
+  ────────────────────────────────────────────────────────────────────────────────────────────────
+   >  ask deus to do something… (/threads for sessions)
+
+

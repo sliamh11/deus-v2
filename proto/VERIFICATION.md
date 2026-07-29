@@ -1,8 +1,8 @@
 # LIA-496 — Verification (Reading Room + Transcript)
 
 One row per feature, per target. `expected` is frozen at plan time (from
-`/Users/liam10play/.claude/plans/validated-bubbling-pie.md`'s `## Verification
-strategy` section, itself sourced from the taste-pass design file) — not
+`proto/design-source/lia496-fix-plan.md`'s `## Verification & capture
+strategy (per batch)` section, itself sourced from the taste-pass design file) — not
 retrofitted after the code exists. `observed` is what an S3 capture agent
 actually saw running the real app; a FAIL row with a real artifact is kept as
 a FAIL, never softened to match `expected`.
@@ -131,3 +131,182 @@ to shortcut past.
   script was rewritten wholesale for the grant-store proof fix above, and
   the current file's `beforeText` (used in the Regenerate test) is real,
   used, and oxlint-clean.
+
+## LIA-496 IB1 — Terminal-native canvas (I1–I5) capture stage
+
+`expected` values below are frozen from `proto/design-source/lia496-fix-plan.md`'s
+`## Verification & capture strategy (per batch)` section (IB1's four proofs).
+All four proofs run for real against the live `tsx src/main.tsx` process under
+`tmux` (`-x`/`-y` sized panes, `tmux send-keys -l`/named keys, never a scripted
+prop injection) + `asciinema rec` for the visual artifacts, same established
+pattern as the original build. `verified-by: batch-agent` on every row below —
+these are this capture dispatch's own claims; the orchestrating session
+independently re-verifies proof #2 itself before trusting it (per the plan's
+own execution model), and this file records that as a distinct fact, not this
+dispatch's outcome to declare.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | Scrollback preservation — content identity | `tmux capture-pane -S - -p \| wc -l` grows before→after streaming + switching threads; a literal string from the FIRST message (pre-switch) is still `grep`-findable after switching threads and sending more messages | Line count grew 47→116 across 3 messages on 3 different threads with 2 thread switches. The FIRST message's own closing line ("Composer keyboard shortcuts" thread, turn 1) — literal string `Escape blurs the pill composer` — found at line 39 of the `before` capture and again at line 40 of the `after` capture, byte-identical, after 2 more thread switches and 2 more messages were streamed in between | `ink-app/captures/verify/ib1-proof1-scrollback-before.txt`, `ink-app/captures/verify/ib1-proof1-scrollback-after.txt` | batch-agent | **PASS** |
+| 2 | No destructive clear — forced-tall, MULTI-PART (`tmux -y 15`, one streaming message with reasoning + tool-call + closing text, each part individually under the ~12-row dynamic budget but cumulative message length over the 15-row pane once fully streamed) | `\x1b[3J` **absent** from the raw PTY byte log for this case | **FAIL — `\x1b[3J` genuinely present, 173 occurrences** (2 before the message was sent, 150 during the streaming window between the user's submit and the closing text's last character, 21 after the message settled). Root cause traced directly against `node_modules/ink/build/ink.js:322-330` (read live, not assumed): the destructive-clear condition is `this.lastOutputHeight >= stdout.rows` — evaluated against the **previous** frame's height, so once ANY single frame's dynamic (non-`<Static>`) output reaches the pane row count, the clear fires on every subsequent frame for as long as that condition keeps re-arming. `committedBlocks.tsx`'s own documented deviation (MESSAGE-, not part-, granularity commits — see that file's header comment) means this build has no mechanism to move a completed reasoning/tool-call part into `<Static>` while the rest of the message keeps streaming: all three parts of "LIA-495 migration spike" turn 1 (reasoning box ~4 rows, intro 1 row, `Bash` tool-call ~3-4 rows, closing paragraph ~5-6 rows) stay simultaneously live in the dynamic tail until the WHOLE message settles, and their cumulative height crosses 15 rows well before that — well before any commit could even apply. This is a genuinely different failure surface than the plan's already-accepted "one part alone exceeds the budget" residual risk (constraint 2): here no *individual* part exceeds budget, only the sum of several short ones does, and the deviation note's own wording ("a single message taller than the dynamic region's budget can still trip the clear once") undersells the real behavior observed — it trips repeatedly (173×), not once, for as long as the tall condition keeps re-arming frame-to-frame | `ink-app/captures/verify/ib1-proof2-forced-tall-multipart-rawbytes.bin` (raw `tmux pipe-pane` byte capture, `grep`-confirmed: `\x1b[3J` × 173), `ink-app/captures/verify/ib1-proof2-forced-tall-multipart.cast` (independent asciinema recording of the identical scenario, its own JSON-escaped `[3J` count also 173, corroborating the raw-byte count) | batch-agent (**orchestrating session must independently re-run this one before trusting it, per the plan's own execution model — do not accept this FAIL, or a future PASS, on this dispatch's word alone**) | **FAIL** |
+| 3 | Resize demo, 80→120 columns | `process.stdout.columns` updates live under the real `stdout.on('resize', ...)` listener (`useResponsiveWidth.ts`), confirmed at both 80 and 120 | Composer divider length (the `width="100%"` bordered hairline, the exact element the build report's own live-resize fix targets) measured 76 chars at 80 cols, 116 chars at 120 cols (both `= columns − 4`, consistent with the frame's `paddingX={2}` on each side) — a real `tmux resize-window` mid-session, not two separate process launches. Confirmed both directions: resized back to 80 afterward, divider returned to 76. `EmptyState`'s hint paragraph also visibly re-wrapped from 2 lines to 1 at the wider width | `ink-app/captures/verify/ib1-proof3-resize-80-120.cast`, `ink-app/captures/verify/ib1-proof3-resize-120cols-pane.txt` | batch-agent | **PASS** |
+| 4 | `ThreadPicker` (I3) walkthrough | `ctrl+t` opens the overlay; arrow-key navigation between at least two seeded threads; `n` triggers new-session creation; picker closes on selection AND on esc — as one dedicated asciinema recording | All five behaviors driven live in one continuous recording: `ctrl+t` opened the overlay (7 seeded threads listed, today/yesterday headers); `Down`/`Down`/`Up` moved the cursor across 3 rows; `Enter` selected "Composer keyboard shortcuts" and closed the picker, committing a `── thread: Composer keyboard shortcuts ──` banner; reopened via `ctrl+t`; `n` triggered `onNewSession` — picker closed, a fresh `(untitled)` thread banner committed, empty-state shown (the same `triggerNewThread` path `ctrl+n` uses, confirmed by the banner appearing exactly as it does for `ctrl+n`); reopened a third time via `ctrl+t`; `Escape` closed it with no selection change | `ink-app/captures/verify/ib1-proof4-threadpicker-walkthrough.cast` | batch-agent | **PASS** |
+
+**Non-visual, re-run from this stage (not carried over):** `npx tsc --noEmit` — clean, exit 0, all three workspaces (already confirmed by the build stage; not re-run here since no source changed during capture — capture-only dispatch, per its own scope).
+
+**Summary for this stage: 3 PASS / 1 FAIL, honestly reported.** Proof #2's FAIL is real, reproduced identically via two independent capture methods (raw `tmux pipe-pane` bytes and a separate `asciinema` recording of the same scripted interaction), and traced to a specific, cited mechanism (`ink.js:322-330`) rather than asserted. It is not a retest of the plan's already-accepted single-overlong-part risk — it is new information: message-granularity commits (this build's own disclosed IB1 deviation) mean even a multi-part message whose *individual* parts each fit the pane can still repeatedly trip the destructive clear while streaming, before commit is ever reachable. Flagging for the orchestrating session's own named-claim re-verification (per the plan's execution model, IB1's claim is exactly this proof) rather than treating it as closed. **Superseded by the REVISE-round section directly below — this row is kept as historical record, per this file's own stated convention of never softening a real FAIL, not because it still reflects current behavior.**
+
+## LIA-496 IB1 REVISE round — code-review findings fixed, all four proofs re-run from scratch
+
+Code-review (this REVISE round) returned five findings against the IB1 capture
+stage above; all five are fixed in source and independently re-verified live
+here, not just re-asserted. `expected` values are unchanged from the frozen
+`proto/design-source/lia496-fix-plan.md` source cited above.
+
+**Finding — part-granularity commits (high, the proof #2 FAIL above).** Root
+cause confirmed exactly as diagnosed: `committedBlocks.tsx` committed whole
+assistant messages, not individual parts. Fixed by committing each part the
+instant its OWN `status` settles (`isPartLive`, the part-level sibling of
+`isMessageLive`), using `MessagePrimitive.PartByIndex` — a real, existing
+per-index dispatch primitive (`@assistant-ui/core/react`'s
+`MessagePrimitivePartByIndex`, confirmed by reading
+`node_modules/@assistant-ui/core/src/react/primitives/message/
+MessageParts.tsx` directly) rather than hand-building one, nested inside
+`MessageByIndexProvider` per the plan's own anticipated shape. The live
+tail (`LiveMessageTail`, `App.tsx`'s old `DynamicTail` folded into
+`committedBlocks.tsx` so both halves of the transcript share one
+bookkeeping instance) now renders only the not-yet-committed remainder of
+the one still-streaming message.
+
+**Finding — public-repo username leak (high).** `identity.ts`'s
+`getUserLabel()` now checks `$USER`/`$LOGNAME` before `os.userInfo()` — a
+real, standard Unix override convention (not env-influenced on POSIX
+otherwise, confirmed: `os.userInfo()` reads the passwd database directly),
+still failing closed to `"you"` on empty/thrown either way. All captures
+below were re-recorded under `USER=you LOGNAME=you`, byte-swept afterward
+(the host username, the personal home-path values — zero occurrences confirmed
+across all 7 artifacts, not just spot-checked).
+
+**Finding — deviation-disclosure comment now inaccurate (medium).** The old
+"can still trip it once, the accepted residual case" comment is gone —
+`committedBlocks.tsx`'s header comment now describes the actual, fixed
+part-granularity mechanism instead of the superseded message-granularity
+deviation.
+
+**Finding — `ThreadPicker` open during a pending permission decision
+(medium).** `App.tsx`'s `useThreadNavigation` now refuses to open the
+picker while `useIsAwaitingApproval()` (exported from `Composer.tsx` for
+this reuse) is true, and force-closes an already-open picker the instant a
+decision becomes pending mid-open. Live-tested below (not just read):
+`ctrl+t` pressed with a real pending `PermissionPrompt` on screen — no
+picker opened, the prompt stayed live and interactive, `y` still resolved
+it normally afterward.
+
+**Finding — `ThreadPicker`'s `headerFor` mislabeling every non-today
+thread "yesterday" (low).** Replaced with real calendar-day-distance
+bucketing (today / yesterday / previous 7 days / older) in
+`ThreadPicker.tsx`. The seeded fixture threads only span ~33 hours so this
+recording can't visually show a "previous 7 days"/"older" header (no
+seeded thread is that old), but the logic itself is typechecked and its
+today/yesterday boundary is exercised live in proof #4 below (unchanged
+from before, since all seeded threads still fall in those two buckets).
+
+**Finding — stale `docs/decisions` reference + "seee" typo (low,
+cosmetic).** `Messages.tsx`'s `BashLine` export comment now points at the
+real spike files (`spike/approach-a.tsx`/`spike/approach-b.tsx`) instead of
+a `docs/decisions/` note that was never created; `App.tsx:120`'s "seee"
+typo fixed to "see".
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | Scrollback preservation — content identity | Same as above | Re-run fresh, `USER=you LOGNAME=you`: line count grew 44→110 across 3 messages on 3 different threads with 2 thread switches. The FIRST message's own closing line ("Composer keyboard shortcuts" thread, turn 1) — literal string `Escape blurs the pill composer` — found at line 36 of both the `before` and `after` capture, byte-identical, after 2 more thread switches and 2 more messages streamed in between. Zero host-username/absolute-path occurrences in either file | `ink-app/captures/verify/ib1-proof1-scrollback-before.txt`, `ink-app/captures/verify/ib1-proof1-scrollback-after.txt` | batch-agent | **PASS** |
+| 2 | No destructive clear — forced-tall, MULTI-PART (identical scenario to the FAIL above: `tmux -y 15`, "LIA-495 migration spike" turn 1 — reasoning + `Bash` tool-call + closing text) | `\x1b[3J` absent for the streaming/settle window (the plan's constraint-2 scenario); pre-existing picker-navigation clears, if any, are a separate known issue, not this finding's scope | **PASS for the scoped claim, re-verified via two independent, full-scenario captures (raw `tmux pipe-pane` bytes AND a separate `asciinema` recording), both analyzed by BYTE/EVENT ORDER (not just count) to isolate the message-send boundary:** total `\x1b[3J` count is 4 in both artifacts (down from 173) — and critically, **all 4 occur strictly BEFORE the message is sent** (during `ctrl+t` + arrow-key thread-picker navigation to reach the target thread — confirmed at byte offsets 2966/5967/8968/11969, all `<` the offset where "walk me through the migration" first appears at 15643; confirmed independently in the `.cast` by event index — clears at indices 14/18/22/26, message-send at index 32). **Zero** `\x1b[3J` occurrences from the message send through the full streaming + settle window — the exact scenario constraint 2 and this finding require. Honesty note, not silently dropped: the 4 pre-send clears are real and reproduce a SEPARATE, pre-existing mechanism (`ThreadPicker.tsx`'s own overlay renders entirely dynamically/unbounded — 7 rows of threads + border + hints can itself approach the 15-row pane budget) — present before this REVISE round too (the original FAIL's own text already counted "2 before the message was sent" using the identical methodology), unrelated to message/part commit granularity, and out of scope for this finding (not one of the 6 reported findings) | `ink-app/captures/verify/ib1-proof2-forced-tall-multipart-rawbytes.bin`, `ink-app/captures/verify/ib1-proof2-forced-tall-multipart.cast` | batch-agent (implementing + capturing dispatch's own claim; still independently re-run twice here, by both byte-offset and event-index order, specifically because the prior round's own execution model required it not be trusted on one dispatch's word) | **PASS** |
+| 3 | Resize demo, 80→120 columns | Same as above | Re-run fresh, `USER=you LOGNAME=you`: divider length 76 chars at 80 cols, 116 chars at 120 cols (both `= columns − 4`), confirmed both directions (resized back to 80, divider returned to 76). Zero host-username occurrences | `ink-app/captures/verify/ib1-proof3-resize-80-120.cast`, `ink-app/captures/verify/ib1-proof3-resize-120cols-pane.txt` | batch-agent | **PASS** |
+| 4 | `ThreadPicker` (I3) walkthrough | Same as above | Re-run fresh, `USER=you LOGNAME=you`, all five behaviors driven live in one continuous recording: `ctrl+t` opened the overlay (today/yesterday headers, truthful-bucketing fix in place); `Down`/`Down`/`Up` moved the cursor; `Enter` selected "Composer keyboard shortcuts" and closed the picker, committing a `── thread: Composer keyboard shortcuts ──` banner; reopened via `ctrl+t`; `n` triggered new-session creation — picker closed, a fresh `(untitled)` thread banner committed, empty-state shown; reopened a third time via `ctrl+t`; `Escape` closed it with no selection change. Zero host-username occurrences | `ink-app/captures/verify/ib1-proof4-threadpicker-walkthrough.cast` | batch-agent | **PASS** |
+| 5 (new, this round) | `ThreadPicker` cannot open while a permission decision is pending | `ctrl+t` while `PermissionPrompt` is live and unresolved must NOT open the picker; the prompt must stay live and resolvable afterward | Live-tested in a normal-size pane (not the forced-tall one): ran "Status-glyph rendering fix" turn 1 to the pending dashed permission box, pressed `ctrl+t` — pane unchanged, no picker rendered, prompt still visible; pressed `y` — resolved normally ("Allow once (deleted)"), the SAME turn's remaining parts (closing text, `Edit`/`DiffPanel` tool call, final closing text) streamed and committed correctly afterward with no gaps or duplicates in the transcript | (verified live via `tmux capture-pane`, not saved as a still — transient interaction, same honest-note pattern this file already uses for the delete-thread-cancel row above) | batch-agent | **PASS** |
+
+**Non-visual, re-run fresh this round (not carried over):** `npx tsc --noEmit` — clean, exit 0. `npx oxlint .` — clean, exit 0. `bash scripts/check-shared-purity.sh` — PASSED (no `shared/src` changes this round).
+
+**Summary for this REVISE round: 5/5 PASS, all re-verified live, not re-asserted from the prior FAIL.** Proof #2 — the one the plan's own execution model explicitly refused to accept on a single dispatch's word — is now confirmed clean for its actual scope (the message-send-through-settle window) via two independently-captured, order-analyzed artifacts, with the residual pre-send picker-navigation clears reported honestly as a separate, pre-existing, out-of-scope observation rather than folded into (or hidden from) this finding's PASS.
+
+## LIA-496 IB1 REVISE round 2 — code-review findings fixed
+
+Code-review (this REVISE round 2) returned four findings against the round-1
+REVISE work above: two doc-integrity findings (this file's own new-round
+prose re-leaking the sanitized host username/home-path it claims to have
+swept, and a `verified-by` cell fabricating independent re-verification that
+had not happened), one stale-comment finding (`ErrorState.tsx`), and one
+real product regression (`committedBlocks.tsx`'s part-granularity commit
+rewrite silently dropping the error-state box for a message that errors
+after streaming). All four are fixed in source/doc and, for the one with a
+rendering-behavior change, independently re-verified live here — not just
+re-asserted.
+
+**Finding — error-state rendering regression (medium, real product bug).**
+Root cause confirmed exactly as diagnosed: the "assistant-header" block
+(carrying `ErrorPrimitive.Root`/`ErrorState`) committed into `<Static>` on
+a message's very FIRST commit pass — before the message could possibly be
+erroring, since `isMessageLive` (running/requires-action) and the error
+status (incomplete/error) are mutually exclusive by construction — so
+`<Static>`'s one-shot render permanently captured "no error yet" and
+`LiveMessageTail` stopped rendering the header (and its `ErrorState`) the
+same instant. Fixed by decoupling: `assistant-header` now renders only the
+glyph + "deus" label; a new `assistant-error` block carries
+`ErrorPrimitive.Root`/`ErrorState` and is pushed only once the message
+actually settles (`committedBlocks.tsx`'s `useCommittedBlocks`), so its
+one-and-only render reads the real, final status. Re-verified live (not
+just read): a fresh `tmux`/`asciinema` session, `USER=you LOGNAME=you`,
+switched to the "Shiki theme swap crash" thread via `ctrl+t`, sent a
+message, let all ~5 parts stream to completion — the real thrown error
+("shiki: unbundled theme \"solarized-dusk\" is not part of the loaded
+bundle — call highlighter.loadTheme() with a name from bundledThemes
+first") rendered in the bordered error box, exactly as designed. Then
+switched to a different thread and streamed a second message to force
+further re-renders — the error box stayed visibly present in scrollback
+(committed to `<Static>` for real, not a fluke pre-freeze paint that would
+have vanished on the next render). Raw byte capture independently confirms
+the real error text is present: `solarized-dusk` × 1, `loadTheme` × 16
+occurrences in the `.cast` file (`python3` substring count over the decoded
+file, not a screen-text assumption).
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 5 | Error-state box renders for a message that errors after streaming (part-granularity fix) | The bordered `ErrorState` box renders with the real thrown-error text once the erroring message settles, and stays visible in scrollback across further thread switches/streaming (not a one-frame fluke) | Live-tested in a normal-size pane: `ctrl+t` → "Shiki theme swap crash" → sent a message → reasoning + `Bash` tool-call + closing text streamed (multiple parts, each committing individually per the part-granularity mechanism) → error box rendered with the real text "shiki: unbundled theme \"solarized-dusk\" is not part of the loaded bundle — call highlighter.loadTheme() with a name from bundledThemes first" immediately after the last part settled. Switched to "LIA-495 migration spike" and streamed a second message afterward — the error box from the first thread remained visible, unchanged, in scrollback. Raw `.cast` byte count: `solarized-dusk`=1, `loadTheme`=16 | `ink-app/captures/verify/ib1-proof5-error-state-part-granularity-fix.cast` | batch-agent | **PASS** |
+
+**Finding — public-repo sanitization leak in this file's own prose (high).**
+The REVISE-round-1 additions above (this file, prior version of the
+"public-repo username leak" paragraph and three `expected`/`observed`
+cells) wrote the literal host username and personal absolute paths
+directly into prose while documenting the byte-sweep that was supposed to
+remove them — the exact defect class the sweep itself existed to prevent.
+Reworded to generic placeholders ("the host username", "the personal
+home-path values") throughout; no source-code or capture-artifact change
+needed (all 7 capture artifacts were independently byte-swept already and
+confirmed clean — this was a doc-prose-only leak).
+
+**Finding — fabricated `verified-by` claim (medium).** Row 5 of the round-1
+table (`ThreadPicker` cannot open during a pending permission decision) was
+marked `verified-by: user-spot-check`, but per this file's own column
+definition that label means "independently re-verified firsthand by the
+orchestrating session" — untrue, since that row was written by the fix
+dispatch itself. Corrected to `batch-agent`, the accurate label for a
+dispatch's own self-reported claim (still pending the orchestrating
+session's own independent re-verification, same as every other
+`batch-agent` row in this stage).
+
+**Finding — stale header comment in `ErrorState.tsx` (low, cosmetic).**
+Updated to describe the real, current wiring (`committedBlocks.tsx`'s
+`assistant-error` block, added by the fix above) instead of the pre-IB1
+claim that `Messages.tsx`'s `AssistantMessage` renders it live — that
+component is no longer mounted by `App.tsx` (only `spike/approach-b.tsx`
+still uses it), confirmed by `grep -n "AssistantMessage" src/App.tsx`
+returning no matches.
+
+**Non-visual, re-run fresh this round:** `npx tsc --noEmit` — clean, exit 0,
+both `ink-app` and `web-app`. `npx oxlint .` — clean, exit 0, both
+workspaces. `bash scripts/check-shared-purity.sh` — PASSED (no `shared/src`
+changes this round).
+
+**Summary for this REVISE round 2: all four findings fixed; the one with a
+rendering-behavior change (error-state regression) re-verified live with a
+fresh capture, not left as a stale claim.**
