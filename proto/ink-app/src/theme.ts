@@ -36,6 +36,20 @@ export const STATUS_COLOR: Record<import("@lia496/shared").StatusKey, string> = 
 export const GLYPH_USER = "❯";
 export const GLYPH_ASSISTANT = "●";
 
+// I7 (LIA-496 IB2) — the single tool-call glyph, shared by every tool-part
+// renderer (BashLine, DiffPanel, PermissionPrompt's inert/resolved lines).
+// Before this fix, DiffPanel/PermissionPrompt each hardcoded their own
+// literal "●" — the exact same character as `GLYPH_ASSISTANT` above — while
+// Messages.tsx's BashLine hardcoded a different literal, "⏺". That put two
+// visually-similar-but-distinct glyphs in play for "this is a tool call"
+// AND collided one of them with the assistant speaker gutter. `GLYPH_TOOL`
+// is the one glyph every tool part now imports; it deliberately differs
+// from `GLYPH_ASSISTANT` so a tool line is never visually confusable with
+// an assistant-speaker gutter mark. Always rendered status-colored via
+// `STATUS_COLOR`, never a fixed color — that's the "single glyph" contract,
+// not a single fixed appearance.
+export const GLYPH_TOOL = "⏺";
+
 // Composer prompt glyph. This stage's dispatch is explicit: `"> "` composer
 // prompt — which differs from the design source's literal markup
 // (`<span class="prompt">❯</span>` inside `.c-composer`, the SAME glyph as

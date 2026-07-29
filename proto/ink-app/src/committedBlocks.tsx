@@ -122,6 +122,19 @@
 // `LiveMessageTail` never needs to render `ErrorState` at all — a message
 // that IS live (per `isMessageLive`) can never simultaneously be errored,
 // so it was dead code there even before this fix.
+//
+// LIA-496 IB2 (I6/I10) — found live during this batch's own verification,
+// not anticipated by the original plan: committing a tool-call part the
+// INSTANT its own status settles is correct for ordinary content, but for
+// a CAPPED part (BashLine's "… +N lines" / DiffPanel's diff cap) it made
+// the new ctrl+o expand affordance unmountable within a single React
+// tick — this fixture's tool results resolve in one atomic yield, not
+// incrementally, so there was never a realistic human-reactable window
+// before `<Static>` swallowed the live, interactive instance. The
+// per-part commit loop below now holds a capped part live until its
+// CONTAINING MESSAGE settles (not just the part itself) — see the
+// `isCappedToolPart`/`../toolOutputCap.ts` import and the loop's own
+// comment at the exact line this changes.
 import { useEffect, useRef, useState, type FC } from "react";
 import { Box, Text, Static } from "ink";
 import { MessageByIndexProvider, MessagePrimitive, ErrorPrimitive, useAuiState, type MessageState } from "@assistant-ui/react-ink";
@@ -129,6 +142,7 @@ import { theme, GLYPH_ASSISTANT } from "./theme";
 import { UserMessage, assistantPartComponents } from "./components/Messages";
 import { ErrorState } from "./components/ErrorState";
 import { getUserLabel, getCwdLabel, PRODUCT_NAME, MODEL_NAME } from "./identity";
+import { isCappedToolPart } from "./toolOutputCap";
 
 // A message is "live" (must stay OUT of `<Static>`) while it's actively
 // streaming or waiting on a pending tool-approval decision. Anything else
@@ -237,18 +251,41 @@ function useCommittedBlocks(): { blocks: CommittedBlock[]; tail: LiveTailInfo | 
         lastPushedIndexThisPass = newBlocks.length - 1;
       }
 
+      // Hoisted above the parts loop (was computed after it, pre-IB2) — the
+      // capped-part hold below (I6/I10) needs to know whether the WHOLE
+      // message has settled yet while still walking its individual parts,
+      // not just after.
+      const settled = !isMessageLive(message);
+
       const parts = message.parts ?? [];
       const partsAlready = committedPartCountRef.current.get(msgKey) ?? 0;
       let partsThrough = partsAlready;
       for (let p = partsAlready; p < parts.length; p++) {
-        if (isPartLive(parts[p])) break;
+        const part = parts[p];
+        if (isPartLive(part)) break;
+        // I6/I10 (LIA-496 IB2) — hold a CAPPED tool-call part (BashLine's
+        // "… +N lines" / DiffPanel's diff cap) live a little longer than
+        // "its own status settled": this fixture's tool results resolve in
+        // one atomic yield, not incrementally, so committing it into
+        // `<Static>` the instant it settles would unmount its interactive
+        // ctrl+o `useInput` handler within a single React tick — before any
+        // human could plausibly react, making the collapse/expand
+        // affordance dead on arrival. Holding it until the REST of the
+        // message finishes streaming gives it the same realistic window a
+        // live terminal session actually has: as long as the turn is still
+        // going, its own tool calls are still "current" and interactive;
+        // once the whole turn settles, it commits below exactly like
+        // everything else (frozen in whatever expand state it's in — the
+        // same accepted `<Static>` immutability this file's header comment
+        // already documents for restyled chrome, now applying to expand
+        // state too). See `../toolOutputCap.ts` for `isCappedToolPart`.
+        if (!settled && isCappedToolPart(part)) break;
         newBlocks.push({ key: `part:${msgKey}:${p}`, kind: "assistant-part", threadId: activeThreadId, index: i, partIndex: p });
         lastPushedIndexThisPass = newBlocks.length - 1;
         partsThrough = p + 1;
       }
       if (partsThrough !== partsAlready) committedPartCountRef.current.set(msgKey, partsThrough);
 
-      const settled = !isMessageLive(message);
       if (settled) {
         // Error state is only knowable once the message has fully
         // settled — commit it now, never earlier, so `ErrorPrimitive.Root`
@@ -331,6 +368,16 @@ export const CommittedTranscript: FC<{ width: number; blocks: CommittedBlock[] }
           );
         }
         if (block.kind === "assistant-header") {
+          // I8 (LIA-496 IB2) — no "deus" label. Found live during this
+          // batch's own verification capture (not caught by reading
+          // `components/Messages.tsx` alone): this block is a SEPARATE,
+          // hand-rolled header render from `AssistantMessage`'s own gutter
+          // markup (required because `<Static>` needs the header to commit
+          // at a different instant than the message's own parts — see this
+          // file's header comment), so removing the label from
+          // `AssistantMessage` alone left this copy still printing it into
+          // the committed transcript, which is what most of the app's
+          // visible content actually goes through.
           return (
             <Box key={block.key} flexDirection="row" marginBottom={block.spacer ? 1 : 0}>
               <Box width={2}>
@@ -338,9 +385,7 @@ export const CommittedTranscript: FC<{ width: number; blocks: CommittedBlock[] }
                   {GLYPH_ASSISTANT}
                 </Text>
               </Box>
-              <Box flexDirection="column" flexGrow={1}>
-                <Text color={theme.dim}>deus</Text>
-              </Box>
+              <Box flexDirection="column" flexGrow={1} />
             </Box>
           );
         }
@@ -393,15 +438,18 @@ export const LiveMessageTail: FC<{ tail: LiveTailInfo | undefined }> = ({ tail }
   return (
     <Box flexDirection="column">
       {tail.showHeader ? (
+        // I8 (LIA-496 IB2) — no "deus" label, same fix and same reason as
+        // `CommittedTranscript`'s own "assistant-header" block above: this
+        // is a third, independent copy of the header markup (the
+        // not-yet-committed live case), so the label had to be dropped here
+        // too, not just in `AssistantMessage`.
         <Box flexDirection="row">
           <Box width={2}>
             <Text color={theme.dim} bold>
               {GLYPH_ASSISTANT}
             </Text>
           </Box>
-          <Box flexDirection="column" flexGrow={1}>
-            <Text color={theme.dim}>deus</Text>
-          </Box>
+          <Box flexDirection="column" flexGrow={1} />
         </Box>
       ) : null}
       {Array.from({ length: remaining }, (_, offset) => tail.fromPartIndex + offset).map((partIndex) => (

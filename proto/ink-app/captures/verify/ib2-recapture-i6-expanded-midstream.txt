@@ -1,0 +1,28 @@
+  deus // transcript
+  model: sonnet-5 · you · ink-app
+
+
+  ── thread: LIA-495 migration spike ──
+
+  ❯ recap the import
+
+  ●
+    The honest answer is in the import line, not in anything I'd have to explain — let me just show it.
+    Quick recap — checking the actual import.
+
+
+    ⏺ Bash(grep -n "@assistant-ui/core" ../lia495-assistant-ui-adoption/proto/web-first-demo/src/runtime/adapter.ts)
+      11:import type { ChatModelAdapter, ChatModelRunResult } from "@assistant-ui/react";
+      12:import type { ThreadAssistantMessagePart, ThreadUserMessagePart } from "@assistant-ui/core";
+      13:import type { ThreadAssistantContentPart } from "@assistant-ui/core";
+      19:import type { ThreadMessage } from "@assistant-ui/core";
+      25:import type { RunConfig } from "@assistant-ui/core";
+      31:import type { Unsubscribe } from "@assistant-ui/core";
+
+    There's your answe
+
+    sonnet-5 · ink-app · ctrl+t threads · ctrl+n new
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   >  ask deus to do something… (/threads for sessions)
+
+
