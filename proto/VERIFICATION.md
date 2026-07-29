@@ -714,3 +714,112 @@ independent reproduction of the same result via a different mechanism
 
 **verified-by: user-spot-check — PASS (stop-mid-stream genuinely halts
 output; reproduced independently outside the batch's own driver script).**
+
+## Ink — IB3 (Run-state & discoverability: I11 spinner/elapsed/interrupt,
+I12 hint + `HelpOverlay`, I13 composer placeholder) — CAPTURE stage
+
+`expected` values frozen from `proto/design-source/lia496-fix-plan.md`'s
+`## Full fix inventory` § G and `## Verification & capture strategy (per
+batch)` section (IB3's own two named proofs, plus the round-3-plan-review
+requirement that the help overlay get its own dedicated capture, not
+folded into the spinner/esc one). Real `tmux` pane + real `tmux send-keys`
+keystrokes against the live `USER=you LOGNAME=you npx tsx src/main.tsx`
+process, under `asciinema rec` — no scripted prop injection. Drivers:
+`ink-app/captures/verify-ib3-runstate.sh`, `ink-app/captures/
+verify-ib3-help.sh`. Artifacts in `ink-app/captures/verify/`.
+`verified-by: batch-agent` on every row below — this dispatch's own
+claims; per the plan's own execution model, the orchestrating session
+independently re-verifies IB3's one named highest-risk claim ("esc
+genuinely interrupts a running turn") itself before trusting it, and this
+file records that as a distinct fact, not this dispatch's outcome to
+declare.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | I11 — composed run-state row (spinner + elapsed) renders only while a turn is running, via the real `LoadingPrimitive`/`StatusBarPrimitive` exports (not hand-rolled) | `StatusLine.tsx` shows a spinner glyph + ticking elapsed time + `esc interrupt` hint while `s.thread.isRunning`, and reverts to the idle keybinding hint the instant it settles — composed from `LoadingPrimitive.Root/Spinner/ElapsedTime` + `StatusBarPrimitive.Root/ModelName`, confirmed real via `node_modules/@assistant-ui/react-ink/dist/primitives/loading/index.d.ts` and `.../statusBar.d.ts` | Sent a message on the "LIA-495 migration spike" thread's second turn; while running, the row showed a live spinner glyph, an elapsed counter that visibly ticked from `(0s)` to `(1s)` across consecutive frames, and the `esc interrupt` hint, all inside the tool-call's own still-streaming text (`"Quick recap — checking the act"`, mid-word, confirming the row and the text were captured genuinely mid-stream, not after settling). Confirmed via direct `tmux capture-pane` reads during a manual pre-capture dry run AND in the frozen `.cast`/frame artifacts below | `ink-app/captures/verify/ib3-proof1-runstate-esc-cancel.cast`, `ink-app/captures/verify/ib3-proof1-runstate-running-spinner-elapsed.png` | batch-agent | **PASS** |
+| 2 | I11 — esc genuinely halts a running turn (real `useComposerCancel`, not a visual-only toggle) | Pressing `esc` while running calls the SAME core `useComposerCancel` hook the web target's own W1 stop control wraps, reaching the shared fixture generator's real `abortSignal` threading (`shared/src/adapter.ts`/`stream.ts`, WB1's fix) — no further tokens append after the keypress, and the status row reverts to idle | Escaped ~2s into the second turn's stream. The in-flight tool call (`Bash(grep -n "@assistant-ui/core" ...)`) froze permanently at `running…` — it never received its result/output, proving the generator itself stopped mid-await rather than merely hiding a completed response — and the status row reverted to the idle `ctrl+t threads · ctrl+n new · ? help` hint (spinner/elapsed gone). Held the frame for 4 more real seconds in the same recording: unchanged, byte-identical, confirming no further tokens ever arrived. A separate, tighter manual dry run (outside this capture) escaped mid-sentence and confirmed the exact same freeze: text stopped at `"...exactly th"` immediately after the keypress and was STILL `"...exactly th"` 3 seconds later (`diff` on two `tmux capture-pane` dumps taken 3s apart: identical) | `ink-app/captures/verify/ib3-proof1-runstate-esc-cancel.cast`, `ink-app/captures/verify/ib3-proof1-runstate-post-escape-frozen.png` | batch-agent (**orchestrating session should independently re-run this one before trusting it, per the plan's own execution model — IB3's named highest-risk claim is exactly this**) | **PASS** |
+| 3 | I12 — `HelpOverlay` opens via a raw `?` keypress (composer empty), renders its real keybinding content, and dismisses via `?` again | Dedicated recording (not folded into proof 1/2), per round-3 plan-review's own requirement for this exact class of gap | `?` from an empty composer opened the overlay; its full real content rendered (4 groups: navigation, while-running, permission-prompt, this-overlay — the SAME literal bindings this app actually has, not placeholder text); `?` again closed it, composer confirmed genuinely empty afterward (placeholder text visible, no stray characters) | `ink-app/captures/verify/ib3-proof2-help-overlay.cast`, `ink-app/captures/verify/ib3-proof2-help-opened-via-question-mark.png`, `ink-app/captures/verify/ib3-proof2-help-closed-via-question-mark.png` | batch-agent | **PASS** |
+| 4 | I12 — `/help` opens the same overlay (the Enter-submitted alternate path), `esc` dismisses it | Same recording, continued | `/help` typed and submitted opened the identical overlay content; `esc` closed it, composer confirmed genuinely empty afterward | `ink-app/captures/verify/ib3-proof2-help-overlay.cast`, `ink-app/captures/verify/ib3-proof2-help-opened-via-slash-help.png`, `ink-app/captures/verify/ib3-proof2-help-closed-via-esc.png` | batch-agent | **PASS** |
+| 5 | I13 — composer placeholder teaches both `/` and `?` affordances | Placeholder text mentions both, sourced from a single `theme.ts` constant (`COMPOSER_PLACEHOLDER`), not duplicated inline | Rendered placeholder, confirmed live: `ask deus to do something… (/ for commands · ? for help)` — visible in every idle-composer frame of both recordings above | `ink-app/captures/verify/ib3-proof1-runstate-post-escape-frozen.png` (idle composer visible in the same frame) | batch-agent | **PASS** |
+
+**Honesty note, disclosed rather than hidden (matches this file's own
+convention, e.g. WB1's disclosed personal-name leak, IB1's disclosed
+pre-send picker-navigation clears):** the `?`-opens-help mechanism
+(`Composer.tsx`'s `useComposerHelpToggle`, documented in that file's own
+header comment) genuinely commits the literal `"?"` character to the
+composer's store text for one render before clearing it back to `""` —
+confirmed directly in the raw `.cast` byte stream for proof 3
+(`ib3-proof2-help-overlay.cast` event index 14: `"> ?"` rendered, event
+index 16 two frames later: cleared back to the placeholder). This is a
+real, disclosed consequence of Ink's `useInput` having no
+stopPropagation (documented in that same header comment, confirmed
+against `node_modules/ink/build/hooks/use-input.js` directly) — not a
+hidden bug. It is not visible in the hand-picked PNG stills above (both
+land on frames strictly before/after the transient), and is far too brief
+to be perceptible in real interactive use (confirmed live, not just
+inferred from timing) — the raw `.cast` is the honest record of it, kept
+rather than edited out.
+
+**Non-visual, run fresh for this stage:** `npx tsc --noEmit` — clean, exit
+0, all three workspaces (`shared`, `web-app`, `ink-app`). `npx oxlint .` —
+clean, exit 0 (the same pre-existing, unrelated `web-app/captures/
+verify-wb1.mjs` unused-variable warning as every prior round, not
+introduced by this batch). `bash scripts/check-shared-purity.sh` —
+PASSED (no `shared/src` changes this batch — I11/I12/I13 are entirely
+`ink-app`-local presentation/interaction, per the plan's own scope
+guardrails; no new sanctioned fixture/shared-data change was needed or
+made).
+
+**Summary for this stage: 5/5 PASS**, all backed by real `tmux`/
+`asciinema` captures against the live process, not asserted. Proof 2 (esc
+genuinely halts generation, not just visually toggles) is IB3's own named
+highest-risk claim per the plan's execution model — flagged above for the
+orchestrating session's own independent re-verification before it is
+trusted, same discipline every prior batch's own highest-risk claim
+received.
+
+## A second, independent batch-agent dry run of proof 2 (still
+`verified-by: batch-agent` — NOT the orchestrating session's own
+re-verification)
+
+Per this file's own column definition (corrected once already in this
+build's history — IB1 REVISE round 2's "fabricated `verified-by` claim"
+finding, same section further above), `verified-by: user-spot-check`
+means independently re-verified firsthand by the ORCHESTRATING session
+that dispatched this batch — not a second run performed by this same
+batch dispatch, however independent that second run's method was. This
+section is genuinely a distinct, separately-timed manual dry run (done
+before the scripted capture above existed, to establish real fixture
+timing before writing the driver script), but it is still this batch
+dispatch's own claim — recorded honestly as `batch-agent`, not upgraded.
+
+**Method:** `USER=you LOGNAME=you npx tsx src/main.tsx` in a fresh `tmux`
+pane, `ctrl+t` → arrow-nav → `Enter` onto "LIA-495 migration spike", sent
+a first message and let it settle naturally (~8s, establishing real prior
+scrollback content), then sent a second message and pressed `esc` ~1.8s
+into its stream (while the composed status row was visibly showing the
+spinner/elapsed/`esc interrupt` hint from proof 1 above). Captured the
+pane immediately after the keypress and again 3 seconds later.
+
+**Result:** the two captures are byte-for-byte identical — text frozen at
+`"...async shorthand functions would explain exactly th"` both times
+(`diff` on the two `tmux capture-pane -p` dumps: no output, confirming
+identity). The status row had already reverted to the idle hint (`ctrl+t
+threads · ctrl+n new · ? help`, no spinner/elapsed) by the first capture,
+and the composer's placeholder was back to normal (not the "resolve the
+permission prompt" text — confirming this settled to a genuinely-cancelled
+state, not a coincidental natural completion or an approval-pending
+state). **Zero further tokens appended after the keypress** — the literal
+scoped claim this proof exists to prove.
+
+This is a second, independently-timed reproduction (different thread turn,
+different exact escape moment) of the same result as proof 2's scripted
+capture — not a retest of the identical scenario. It does NOT substitute
+for the orchestrating session's own `user-spot-check` re-verification,
+which this file's execution-model section (top of file) requires before
+IB3's SHIP is trusted.
+
+**verified-by: batch-agent — PASS (a second, independently-timed
+reproduction of esc genuinely halting generation for Ink; still this
+dispatch's own claim, not the orchestrating session's — see this
+section's own header note above).**

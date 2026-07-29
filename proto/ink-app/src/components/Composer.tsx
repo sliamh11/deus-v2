@@ -40,10 +40,10 @@
 // composer buffer. Unmounting it here is safe (no competing App-level
 // focus mechanism to race against, per the fix above), same reasoning
 // LIA-495's ComposerRow used originally.
-import type { FC } from "react";
+import { useEffect, type FC } from "react";
 import { Box, Text } from "ink";
 import { ComposerPrimitive, useAui, useAuiState } from "@assistant-ui/react-ink";
-import { theme, COMPOSER_PROMPT } from "../theme";
+import { theme, COMPOSER_PROMPT, COMPOSER_PLACEHOLDER } from "../theme";
 
 // Exported (LIA-496 IB1 REVISE round — code-review finding, untested
 // interaction) so `App.tsx`'s `useThreadNavigation` can gate opening
@@ -75,9 +75,60 @@ export function useIsAwaitingApproval(): boolean {
 // this is the ONE new place that behavior needs to be duplicated, not
 // drift risk (there's nowhere to share it from without adding a prop
 // `ComposerInput` itself doesn't expose).
-export const Composer: FC<{ onOpenThreadPicker: () => void }> = ({ onOpenThreadPicker }) => {
+// LIA-496 IB3 (I12) — `?`-opens-help wiring. Ink's `useInput` has no
+// stopPropagation: every ACTIVE listener for a given keypress fires,
+// unconditionally (confirmed by reading `node_modules/ink/build/hooks/
+// use-input.js` directly — each hook independently subscribes to the SAME
+// `internal_eventEmitter`'s `'input'` event; there is no priority/consumed
+// concept). `ComposerPrimitive.Input` owns raw keystrokes entirely
+// internally (its `TextInput` has its own private `useInput`, exposing only
+// the resulting `value` via `onChange` — no prop exists to intercept a
+// keystroke before it becomes a buffer edit). A SEPARATE global `useInput`
+// listening for a bare `"?"` would therefore ALWAYS double-fire alongside
+// the composer's own — typing the character AND opening help on every `?`
+// press, not just an empty-composer one.
+//
+// Sidestepped by reacting to the RESULTING store text instead of the raw
+// keystroke: `s.composer.text === "?"` can only be reached by typing `?` as
+// the very first character into an empty composer (any prior non-empty
+// text plus a typed `?` produces a longer string, never the bare literal
+// `"?"`), which is exactly — and only — the "only when composer is empty"
+// trigger this batch's dispatch specifies. `setText("")` immediately
+// afterward keeps the composer from ever holding stray help-toggle text.
+// Honestly disclosed, not hidden: this means the `?` character genuinely
+// commits to the store for one render before being cleared (a real,
+// Ink-primitive-imposed constraint, not a bug) — verified in this batch's
+// own capture whether that transient is visible in practice.
+function useComposerHelpToggle(onToggleHelp: () => void): void {
+  const aui = useAui();
+  const composerText = useAuiState((s) => s.composer.text);
+  useEffect(() => {
+    if (composerText === "?") {
+      aui.composer.setText("");
+      onToggleHelp();
+    }
+  }, [composerText, aui, onToggleHelp]);
+}
+
+export const Composer: FC<{ onOpenThreadPicker: () => void; onToggleHelp: () => void }> = ({
+  onOpenThreadPicker,
+  onToggleHelp,
+}) => {
   const awaitingApproval = useIsAwaitingApproval();
   const aui = useAui();
+  // Called unconditionally, above both `return`s (Rules of Hooks — same
+  // fix `PermissionPrompt.tsx`'s own header comment documents for the
+  // identical reason). Its trigger condition can only become true while
+  // `ComposerPrimitive.Input` is actually mounted below (the
+  // `awaitingApproval` branch renders no live input at all, so no NEW `?`
+  // keystroke can reach the store while that branch is active) — but that
+  // alone is not the only guard: `App.tsx`'s `toggleHelp` independently
+  // re-checks its own `hasPendingApproval` before actually opening the
+  // overlay, the same "two guards, not one" pattern already documented on
+  // `useThreadNavigation`'s `openPicker`/force-close pair, for the same
+  // reason (a decision can become pending at any time relative to the
+  // keystroke that triggers this).
+  useComposerHelpToggle(onToggleHelp);
 
   if (awaitingApproval) {
     return (
@@ -105,12 +156,21 @@ export const Composer: FC<{ onOpenThreadPicker: () => void }> = ({ onOpenThreadP
         <Text color={theme.amber}>{COMPOSER_PROMPT}</Text>
         <ComposerPrimitive.Input
           submitOnEnter
-          placeholder="ask deus to do something… (/threads for sessions)"
+          placeholder={COMPOSER_PLACEHOLDER}
           autoFocus
           onSubmit={(text) => {
             if (text.trim() === "/threads") {
               aui.composer.setText("");
               onOpenThreadPicker();
+              return;
+            }
+            // LIA-496 IB3 (I12) — `/help`, the Enter-submitted twin of the
+            // raw `?` keypress above (`useComposerHelpToggle`). Same
+            // `onOpenThreadPicker`-style interception: the composer never
+            // actually sends this as a message.
+            if (text.trim() === "/help") {
+              aui.composer.setText("");
+              onToggleHelp();
               return;
             }
             const threadState = aui.thread.getState();

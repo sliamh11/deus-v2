@@ -30,10 +30,25 @@
 //     batch — a persistent 34-column rail is geometrically impossible once
 //     transcript lines are printed into real scrollback), toggled by
 //     `ctrl+t` or the composer's `/threads` command.
+//   - `HelpOverlay` (`components/HelpOverlay.tsx`, LIA-496 IB3/I12) ← here,
+//     a second transient overlay, same shape/lifecycle as `ThreadPicker`
+//     (mounted only while open, fully replacing the dynamic tail rather
+//     than competing with it) — toggled by a raw `?` keypress (only while
+//     the composer is empty — see `Composer.tsx`'s `useComposerHelpToggle`
+//     header comment for why that's wired by watching composer TEXT rather
+//     than a second `useInput` listener) or the composer's `/help` command.
+//     `MainPane`'s `overlay` state (below) is a single three-way value
+//     (`"none" | "picker" | "help"`), not two independent booleans — by
+//     construction, only one of the two overlays (or neither) can ever be
+//     mounted at once, so they can never race to unmount `LiveMessageTail`
+//     out from under each other the way the picker's own REVISE-round fix
+//     had to guard against for the permission-prompt case below.
 //   - `StatusLine`/`Composer` ← here, sibling to the dynamic content,
 //     inside the same `ThreadPrimitive.Root` (the exact position LIA-495's
 //     composer regression lived in — see Composer.tsx's own header
-//     comment).
+//     comment). LIA-496 IB3 (I11) — `StatusLine` is also where the
+//     spinner/elapsed-time/esc-to-interrupt run-state row now lives; see
+//     that file's own header comment.
 //
 // I1 — the painted truecolor background (`backgroundColor={theme.bg}` on
 // this file's own outer frame, `backgroundColor={theme.side}` on the old
@@ -74,6 +89,7 @@ import { Composer, useIsAwaitingApproval } from "./components/Composer";
 import { EmptyState } from "./components/EmptyState";
 import { CodeCopyHotkey } from "./components/CodeCopyHotkey";
 import { ThreadPicker } from "./components/ThreadPicker";
+import { HelpOverlay } from "./components/HelpOverlay";
 import { StatusLine } from "./components/StatusLine";
 import { CommittedTranscript, LiveMessageTail, useCommittedBlocks } from "./committedBlocks";
 import { clearFreshDraft, markFreshDraft, useIsFreshDraft } from "./freshDraftTracker";
@@ -132,8 +148,8 @@ function useThreadRuntime() {
 // the picker must never be OPEN while a permission decision is pending.
 // `MainPane`'s JSX (below) swaps its ENTIRE dynamic-tail block — including
 // `LiveMessageTail` (which is what actually renders the live
-// `PermissionPrompt`) — for `ThreadPicker` whenever `pickerOpen` is true;
-// opening the picker mid-decision would unmount the interactive
+// `PermissionPrompt`) — for `ThreadPicker` whenever the picker overlay is
+// active; opening the picker mid-decision would unmount the interactive
 // `useInput`-driven prompt out from under the user, and the picker's own
 // `Enter` could then switch threads with that approval left permanently
 // unresolved (neither committed nor rendered — a real dead end, not just a
@@ -144,17 +160,28 @@ function useThreadRuntime() {
 // interactive input is safe to keep mounted; reusing it here means the two
 // "is it safe to keep this pane's interactive surface mounted" decisions
 // can never drift apart. Two guards, not one, since a decision can become
-// pending at any time relative to when the picker was opened: `openPicker`
+// pending at any time relative to when an overlay was opened: `openPicker`
 // refuses to open while pending (covers `ctrl+t` and the composer's
 // `/threads` path, both of which route through it), and the `useEffect`
-// below force-closes an ALREADY-open picker the instant a decision
+// below force-closes an ALREADY-open overlay the instant a decision
 // arrives mid-open (a running turn's tool call can flip to
 // `requires-action` at any moment, independent of what overlay happens to
 // be open).
+//
+// LIA-496 IB3 (I12) — `overlay` generalizes the old `pickerOpen: boolean`
+// into a single three-way value covering `HelpOverlay` too, rather than a
+// second independent `helpOpen` boolean living alongside it: two booleans
+// can independently be `true` at once (an invalid state — the dynamic tail
+// has exactly one slot to swap), where a single tagged value makes "both
+// overlays open" unrepresentable instead of merely undesired. `toggleHelp`
+// mirrors the `ctrl+t` handler's own open/close-toggle shape (and its
+// `hasPendingApproval` guard) for the same reason.
+type Overlay = "none" | "picker" | "help";
+
 function useThreadNavigation() {
   const aui = useAui();
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [overlay, setOverlay] = useState<Overlay>("none");
   const awaitingFreshDraftRef = useRef(false);
   const hasPendingApproval = useIsAwaitingApproval();
 
@@ -166,13 +193,13 @@ function useThreadNavigation() {
   }, [mainThreadId]);
 
   useEffect(() => {
-    if (hasPendingApproval) setPickerOpen(false);
+    if (hasPendingApproval) setOverlay("none");
   }, [hasPendingApproval]);
 
   const triggerNewThread = () => {
     awaitingFreshDraftRef.current = true;
     aui.threads.switchToNewThread();
-    setPickerOpen(false);
+    setOverlay("none");
   };
 
   useInput(
@@ -182,9 +209,9 @@ function useThreadNavigation() {
         return;
       }
       if (key.ctrl && input === "t") {
-        setPickerOpen((open) => {
-          if (open) return false; // closing always allowed
-          return hasPendingApproval ? open : true;
+        setOverlay((current) => {
+          if (current === "picker") return "none"; // closing always allowed
+          return hasPendingApproval ? current : "picker";
         });
         return;
       }
@@ -193,12 +220,28 @@ function useThreadNavigation() {
   );
 
   return {
-    pickerOpen,
+    overlay,
     openPicker: () => {
       if (hasPendingApproval) return;
-      setPickerOpen(true);
+      setOverlay("picker");
     },
-    closePicker: () => setPickerOpen(false),
+    closeOverlay: () => setOverlay("none"),
+    // LIA-496 IB3 (I12) — the App-level half of the `?`/`/help` toggle.
+    // `Composer.tsx`'s `useComposerHelpToggle` calls this once it has
+    // already confirmed the raw keystroke reached an empty composer (or
+    // once `/help` is submitted); this function re-checks
+    // `hasPendingApproval` itself rather than trusting the caller, same
+    // "two guards" reasoning as `openPicker` above. Toggling closed while
+    // `HelpOverlay` is open is handled by that component's own `esc`/`?`
+    // `useInput` calling `closeOverlay` directly — `toggleHelp` only needs
+    // to cover the OPEN half here, since by the time it's open the composer
+    // (and thus this function) isn't reachable to call it again.
+    toggleHelp: () => {
+      setOverlay((current) => {
+        if (current === "help") return "none";
+        return hasPendingApproval ? current : "help";
+      });
+    },
     triggerNewThread,
   };
 }
@@ -257,8 +300,10 @@ const MainPane: FC<{ width: number }> = ({ width }) => {
       <CommittedTranscript width={width} blocks={blocks} />
       <ThreadPrimitive.Root>
         <Box flexDirection="column" width={width} paddingX={2} paddingY={1}>
-          {nav.pickerOpen ? (
-            <ThreadPicker onClose={nav.closePicker} onNewSession={nav.triggerNewThread} />
+          {nav.overlay === "picker" ? (
+            <ThreadPicker onClose={nav.closeOverlay} onNewSession={nav.triggerNewThread} />
+          ) : nav.overlay === "help" ? (
+            <HelpOverlay onClose={nav.closeOverlay} />
           ) : (
             <>
               {isFreshDraft ? (
@@ -272,7 +317,7 @@ const MainPane: FC<{ width: number }> = ({ width }) => {
                 </>
               )}
               <StatusLine />
-              <Composer onOpenThreadPicker={nav.openPicker} />
+              <Composer onOpenThreadPicker={nav.openPicker} onToggleHelp={nav.toggleHelp} />
             </>
           )}
         </Box>

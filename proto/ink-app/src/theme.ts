@@ -47,6 +47,15 @@ export const GLYPH_ASSISTANT = "●";
 // one design mockup.
 export const COMPOSER_PROMPT = "> ";
 
+// LIA-496 IB3 (I13) — composer placeholder, extracted here (not inlined in
+// `Composer.tsx`) for the same reason `COMPOSER_PROMPT` already lives here:
+// one place for this target's own presentation strings. Teaches BOTH real
+// affordances the empty composer offers today — `/` (slash commands:
+// `/threads`, `/help`) and `?` (the single-keypress help-overlay toggle,
+// `HelpOverlay.tsx`) — the exact discoverability gap I12/I13 name (shortcuts
+// existed but nothing in the UI ever told the user they were there).
+export const COMPOSER_PLACEHOLDER = "ask deus to do something… (/ for commands · ? for help)";
+
 // shiki theme name for this target's TokenLine.tsx. Literal, and lives
 // here — never in shared/src/highlight.ts, which only pre-warms it under
 // the name `INK_PREWARM_THEME` (see that module's own purity comment on
