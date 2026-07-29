@@ -2026,3 +2026,40 @@ history as reason to spot-check this round too (re-run the grep sweep
 directly over the committed file, and re-run `captures/verify-wb4-fix2.mjs`
 against a live dev server) rather than accept it on the strength of the
 prose alone.
+
+## Orchestrating-session independent re-verification (`verified-by: user-spot-check`)
+
+Per the plan's own execution model — WB4's one named highest-risk claim is
+the model-picker dropdown genuinely toggling between its two scripted
+labels via a real click AND a real keyboard interaction — re-verified
+firsthand via a live browser session against the real dev server,
+independent of any batch-agent dispatch, before trusting the SHIP verdict
+above. Given this round's own note that a prior `batch-agent` claim about
+this exact picker was found false, this check used manual interaction
+throughout, not a re-run of the batch's own script.
+
+**Method (click path):** started `vite` fresh, opened the app, clicked the
+"Sonnet 5 ⌄" trigger beneath the composer. Popover opened with both
+labels, "Sonnet 5" highlighted as current. Clicked "Opus 5" directly.
+
+**Result (click path) — CONFIRMED.** The trigger updated to read "Opus 5"
+immediately after the click, popover closed.
+
+**Method (keyboard-only path):** Tab'd to the trigger (real visible focus
+ring appeared around "Opus 5"), pressed Enter — popover opened with a
+focus ring around the list, "Opus 5" highlighted as current. Pressed
+ArrowUp — highlight genuinely moved to "Sonnet 5". Pressed Enter — no
+mouse involved at any point.
+
+**Result (keyboard-only path) — CONFIRMED.** The trigger updated to read
+"Sonnet 5", popover closed, focus returned to the trigger button.
+
+Both real interaction paths genuinely toggle between the two scripted
+labels, independently reproducing the batch's own from-scratch capture-
+stage claim and directly addressing this section's own flagged concern
+about a prior false claim on this same component.
+
+**verified-by: user-spot-check — PASS (model-picker dropdown genuinely
+toggles via both a real click and real keyboard-only interaction;
+reproduced independently outside any batch-agent script, specifically
+because a prior claim about this component had been found false).**
