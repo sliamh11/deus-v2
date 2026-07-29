@@ -1084,3 +1084,32 @@ substitute for that separate, independent check.
 **verified-by: batch-agent — PASS (all 5 WB3 proofs green on a from-scratch
 run of `verify-wb3.mjs` against a live dev server; zero console errors;
 `tsc -b --force` clean on the whole `proto/` workspace).**
+
+## Orchestrating-session independent re-verification (`verified-by: user-spot-check`)
+
+Per the plan's own execution model — WB3's one named highest-risk claim is
+`composer.beginEdit()` genuinely creating a navigable sibling branch (not
+just replacing the message in place) — re-verified firsthand via a live
+browser session against the real dev server, independent of any
+batch-agent dispatch, before trusting the SHIP verdict above.
+
+**Method:** started `vite` fresh, opened the "LIA-495 migration spike"
+thread, sent its real trigger message and let the reply settle fully,
+hovered the user message to reveal the edit pencil, clicked it, replaced
+the text with an edited version, and clicked Save.
+
+**Result:** the branch picker appeared on the edited user message reading
+**"2/2"**, and a fresh assistant reply began streaming for the new branch
+— confirming a genuine new sibling was created, not an in-place text
+swap. Navigating back to **"1/2"** showed the ORIGINAL, unedited question
+and its complete original reply, byte-identical to before the edit — two
+real, distinct branches with different content, both independently
+navigable via the picker's arrows.
+
+This independently confirms `composer.beginEdit()` creates a real forked
+branch and the branch picker correctly surfaces it, matching the batch's
+own from-scratch capture-stage claim.
+
+**verified-by: user-spot-check — PASS (edit-to-branch genuinely forks
+into a navigable "2/2" sibling with distinct content per branch;
+reproduced independently outside the batch's own driver script).**
