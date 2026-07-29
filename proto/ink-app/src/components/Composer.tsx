@@ -32,14 +32,29 @@
 //
 // STILL hides the real input for the one case that genuinely needs it: a
 // permission decision pending. `PermissionPrompt.tsx` uses a plain
-// always-active `useInput` (`{isActive: !resolved}`), NOT `useFocus` — it
-// deliberately bypasses Ink's focus system so `y`/`a`/`n` resolve the
-// prompt regardless of which pane currently has Tab-focus. If
-// `ComposerPrimitive.Input` stayed mounted (and Tab-focused) at the same
-// time, the SAME `y`/`a`/`n` keystroke would ALSO get typed into the
-// composer buffer. Unmounting it here is safe (no competing App-level
-// focus mechanism to race against, per the fix above), same reasoning
-// LIA-495's ComposerRow used originally.
+// always-active `useInput` (`{isActive: approval !== undefined &&
+// !resolved}`, plus the arrow/enter/esc/ctrl+c handling I14 added — see
+// that file's own header comment), NOT `useFocus` — it deliberately
+// bypasses Ink's focus system so its keys resolve the prompt regardless of
+// which pane currently has Tab-focus. If `ComposerPrimitive.Input` stayed
+// mounted (and Tab-focused) at the same time, the SAME keystrokes would
+// ALSO get typed into the composer buffer. Unmounting it here is safe (no
+// competing App-level focus mechanism to race against, per the fix above),
+// same reasoning LIA-495's ComposerRow used originally.
+//
+// LIA-496 IB4 (I14, D1's coexistence resolution) — while awaiting
+// approval this component now renders NOTHING (`null`), not a disabled
+// notice row. D1's decision, verbatim: "while an approval is pending, the
+// dashed approval box is the sole bottom-region interactive surface" —
+// the old notice row duplicated context the box itself now carries in its
+// own hint row (`PermissionPrompt.tsx`), which is exactly the "two
+// surfaces both talking about the same pending decision" GPT's review
+// flagged. Full replacement (nothing rendered here at all) also preserves
+// Fable's original value from the same review round — no live input stays
+// mounted during a pending decision — without reintroducing the
+// duplication. Reference check (per D1): Claude Code's own permission
+// dialog occupies the input slot itself and never renders a second
+// disabled line beneath it; Hermes' approval panel does the same.
 import type { FC } from "react";
 import { Box, Text } from "ink";
 import { ComposerPrimitive, useAui, useAuiState } from "@assistant-ui/react-ink";
@@ -80,23 +95,10 @@ export const Composer: FC<{ onOpenThreadPicker: () => void }> = ({ onOpenThreadP
   const aui = useAui();
 
   if (awaitingApproval) {
-    return (
-      // I4 — `width="100%"` explicit, not left to inherit: this Box's own
-      // `flexDirection` defaults to Ink's "row" (confirmed in
-      // `Sidebar.tsx`'s own header comment on that same default, before
-      // this batch replaced that file), and a row-direction box does NOT
-      // reliably stretch to its column parent's resolved width just
-      // because that ancestor has one — confirmed by running the app
-      // under a real resize (`EmptyState`'s text correctly rewrapped at
-      // the new width; this hairline's own length did NOT, until this
-      // explicit width was added). Every border/divider meant to span the
-      // responsive frame gets the same explicit treatment, not just this
-      // one — see `ThreadPicker.tsx`'s outer box for the other instance.
-      <Box width="100%" borderStyle="single" borderColor={theme.line} borderBottom={false} borderLeft={false} borderRight={false} paddingX={1}>
-        <Text color={theme.amber}>{COMPOSER_PROMPT}</Text>
-        <Text color={theme.dim}>Resolve the permission prompt above to continue…</Text>
-      </Box>
-    );
+    // I14 (D1) — no notice row. See this file's own header comment for
+    // why full replacement (render nothing) is the correct fix, not a
+    // disabled placeholder.
+    return null;
   }
 
   return (

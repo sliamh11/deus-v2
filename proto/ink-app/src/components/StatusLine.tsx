@@ -13,6 +13,14 @@ import { Box, Text } from "ink";
 import { theme, STATUS_COLOR } from "../theme";
 import { getCwdLabel, MODEL_NAME } from "../identity";
 
+// LIA-496 IB4 (I15) — design guardrail, no code change: this must stay a
+// SINGLE line of small, genuinely-live fields (currently: model, cwd, two
+// keybinding hints). Never grow it into a multi-line running-task list,
+// progress bars, or a dashboard-style panel — that would reintroduce the
+// "boxed header + duplicate identity" clutter I1/I5 deliberately removed
+// from the TOP of the frame, just relocated to the bottom instead. See
+// `proto/VERIFICATION.md`'s IB4 section for the durable design note this
+// comment is the code-side half of.
 export const StatusLine: FC = () => (
   <Box paddingX={2}>
     <Text color={theme.dim}>
