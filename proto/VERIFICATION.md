@@ -939,3 +939,148 @@ the DOM programmatically and reported the identical bucket membership).
 **verified-by: user-spot-check — PASS (time-bucket correctness confirmed
 via direct visual read of the live app; reproduced independently outside
 the batch's own driver script).**
+## Web — WB3 (Message affordances: W10 edit-to-branch + copy, W11 branch-arrow
+aria-labels, W12 reasoning disclosure, W13 tool-output/diff disclosure)
+
+Real Playwright (`chromium`, headless) against the live `npx vite --port
+5193` dev server, same seeded "Status-glyph rendering fix" thread WB1's
+proofs use (its turn 1 conversation exercises reasoning + a Bash tool call
++ a `delete_file` permission + an Edit diff, i.e. every surface this batch
+touches, in one real streamed turn). Full run: `web-app/captures/
+verify-wb3.mjs`. Screenshots in `web-app/captures/verify/`. Zero
+console/page errors across the whole run.
+
+| feature | expected | observed | artifact path | PASS/FAIL |
+| --- | --- | --- | --- | --- |
+| W12 — reasoning collapsed-by-default disclosure | No `.s-reasoning` body in the DOM before the toggle is clicked (`aria-expanded=false`); a real `.s-reasoning` body with the actual reasoning text appears after clicking (`aria-expanded=true`) | bodyCount before click=0, `aria-expanded` before=false, after=true, revealed text length=245 chars ("Two asks here: clean up a stale scratch...") | `web-app/captures/verify/wb3-01-reasoning-collapsed.png`, `wb3-02-reasoning-expanded.png` | PASS |
+| W13 — raw tool output collapsed row + chevron | No `.s-toolline-body` in the DOM before the chevron is clicked; the full raw command output appears in a `.s-toolline-body` `<pre>` after clicking | bodyCount before click=0, `aria-expanded` before=false, preview="-rw-r--r-- 1 deus staff 36 /tmp/deus-shell-scratch.log", expanded body same content (raw whitespace preserved in the `<pre>`) | `web-app/captures/verify/wb3-03-toolline-collapsed.png`, `wb3-04-toolline-expanded.png` | PASS |
+| W13 — diff card expanded-by-default, collapsible, copy | Diff body visible on first render (`aria-expanded=true`); clicking the header toggle hides it (`aria-expanded=false`), re-clicking restores it; clicking Copy writes the real diff text to the clipboard and the label flips to "Copied" | expanded by default=true, aria-expanded true→false→true across the two toggle clicks, copy label "Copy"→"Copied", clipboard content contains both `---`/`+++` diff markers=true | `web-app/captures/verify/wb3-05-diff-expanded-by-default.png`, `wb3-06-diff-collapsed.png`, `wb3-07-diff-re-expanded.png`, `wb3-08-diff-copied.png` | PASS |
+| W10 — hover pencil (`composer.beginEdit()`) + copy, real edit-to-branch | Hover reveals a real "Edit message"/"Copy message" button pair; Copy writes the message's actual text to the clipboard; Edit swaps the message to a `ComposerPrimitive` field pre-filled with the ORIGINAL message text (not empty); Save exits edit mode and the branch picker on that message reads "2 / 2" | copy worked (clipboard text === original message text)=true, edit field pre-filled with the exact original text=true, edit field gone after Save=true, branch picker text="‹ 2 / 2 ›" | `web-app/captures/verify/wb3-09-user-message-hover-actions.png`, `wb3-10-user-message-edit-open.png`, `wb3-11-user-message-branch-2-of-2.png` | PASS |
+| W11 — branch prev/next accessible names | `Previous`/`Next` buttons carry `aria-label="Previous branch"`/`"Next branch"`, present in the accessible-name computation (`locator.ariaSnapshot()`), not just a bare `‹`/`›` glyph | `aria-label` attributes present and correct on both buttons; ARIA snapshot text contains "Previous branch" and "Next branch" | (no new artifact — same branch picker as the W10 proof's final screenshot, `wb3-11-*`) | PASS |
+
+**Real behavioral finding surfaced by actually running the edit flow (not
+assumed from source-reading alone), fixed in this batch:** the pre-existing
+`BranchPicker` was wired only into `AssistantMessage`'s footer. Editing a
+user message forks the tree at the USER message's own position
+(`DefaultEditComposerRuntimeCore.handleSend` appends the edited message as
+a sibling of the original, same `parentId`/`sourceId`) — the assistant's
+own reply stays single-branch (`hideWhenSingleBranch` correctly hides its
+picker). The first headless run of `verify-wb3.mjs` against the real dev
+server caught this directly: after a real edit + Save, no `.s-branchpicker`
+was present anywhere in the rendered DOM at all, so "the branch picker
+shows 2/2" (this batch's own named highest-risk claim, see the plan's
+execution model / Risks item 4) had no surface to show it on. Fixed by also
+mounting `<BranchPicker />` on `UserMessage` (`Thread.tsx`) — re-ran from
+scratch afterward, now genuinely reads "2 / 2".
+
+**Known, deliberately-unfixed finding — hardcoded personal display name in
+sidebar footer (pre-existing, out of this batch's scope), same class WB1's
+own THIRD REVISE round already documented.** Every `wb3-*` screenshot with
+the sidebar visible renders the same hardcoded personal display name at
+`web-app/src/components/Sidebar.tsx:199` — not touched by any file this
+batch edits (`BranchPicker.tsx`, `DiffPanel.tsx`, `Thread.tsx`,
+`theme.css`). The mechanical absolute-path / home-relative-path /
+bare-username TEXT sweep passes cleanly on every file this batch writes or
+edits (verified: zero occurrences of an absolute home-directory path,
+a home-relative path, or the bare username
+in `verify-wb3.mjs`, `Thread.tsx`, `DiffPanel.tsx`, `BranchPicker.tsx`,
+`theme.css`, or this file — the one incidental match, "sliamh11" inside
+`sliamh11/deus-v2`, is the repo's own public identifier, already used
+throughout this file and the plan itself, not a personal-path leak); this
+particular leak is in rendered screenshot pixels, which a text sweep
+cannot catch, same limitation WB1's note already recorded. Sidebar.tsx's
+fix belongs to whichever batch already has it in scope (WB2, per the
+plan's own inventory) — left deliberately unfixed here rather than
+scope-crept into WB3.
+
+## Web — WB3 REVISE round — code-review findings fixed, re-run from scratch
+
+Code-review returned REVISE on the batch above with three findings; all
+fixed, and the one with a rendering-behavior change re-verified live with a
+fresh capture rather than left as a stale claim.
+
+1. **W10 Edit/Copy actions were keyboard-inaccessible (medium).**
+   `.s-user-actions` was `display:none` with a `.s-user-actions:focus-within`
+   reveal rule — real bug, not hypothetical: a `display:none` element's
+   descendants are pulled out of the tab order entirely, so `:focus-within`
+   could never actually match, and this file's own W10 comment falsely
+   claimed keyboard users "aren't locked out." **Fix:** `.s-user-actions`
+   (`theme.css`) now stays `display:flex` at all times and toggles
+   `opacity`/`pointer-events` instead, so the Edit/Copy buttons are real,
+   always-present tab stops; `Thread.tsx`'s W10 comment corrected to
+   describe the opacity mechanism (and why `display:none` would have been
+   wrong) instead of the false claim. **Re-verified live**, not just
+   read-back: added a new `verify-wb3.mjs` proof
+   (`W10-keyboard-only-focus-reveal`) that blurs/moves the mouse away,
+   confirms the actions row starts at `opacity:0`, then drives real `Tab`
+   key presses (no `.focus()` shortcut) until the Edit button itself
+   receives focus, and confirms the row reads `opacity:1` at that point —
+   re-ran the full `verify-wb3.mjs` suite from scratch against a fresh
+   `npx vite --port 5193` dev server afterward: **6/6 PASS** (5 prior proofs
+   + this new one), zero console errors, artifact
+   `web-app/captures/verify/wb3-12-user-message-keyboard-focus-actions.png`.
+   (Caught one mistake while writing this proof: `getComputedStyle` on the
+   `<button>` itself always reads back `1` regardless of the parent's state
+   — `opacity` isn't an inherited CSS property — so the proof asserts on
+   `.s-user-actions`, the actual toggle target, not the button.)
+2. **`proto/node_modules` and `proto/web-app/node_modules` symlinks, a
+   commit-stage public-repo leak hazard (medium).** Both are untracked
+   symlinks to another worktree's `node_modules` with an absolute host path
+   baked in, and the repo's existing `node_modules/` gitignore pattern is
+   directory-only — git does not match a slash-suffixed pattern against a
+   symlink, confirmed via `git check-ignore -v` returning no match before
+   the fix. A broad `git add` at commit time would have staged the absolute
+   path into this public repo. **Fix:** added `proto/node_modules` and
+   `proto/web-app/node_modules` (no trailing slash) to the root
+   `.gitignore`. **Re-verified:** `git check-ignore -v` now matches both
+   paths against the new gitignore lines, and `git status --short` no
+   longer lists either as untracked.
+3. **Two low-severity `VERIFICATION.md` wording issues.** The
+   "Orchestrating-session independent re-verification" heading for this
+   batch read as if a `verified-by: user-spot-check` had already happened,
+   when the body honestly says it's still pending — retitled to "pending —
+   not yet a `verified-by: user-spot-check`" so the heading can't be
+   misread as a completed check. Separately, the sweep-description
+   paragraph above contained the literal pattern text a mechanical
+   zero-occurrence sweep looks for (spelled out, not just described) —
+   reworded to describe the categories instead of quoting the literal
+   strings, so a strict sweep over this file doesn't self-trigger.
+
+**Mechanical sweep re-run after all three fixes**, over every file this
+REVISE round wrote or edited (`.gitignore`, `VERIFICATION.md`,
+`theme.css`, `Thread.tsx`, `verify-wb3.mjs`, the regenerated
+`results-wb3.json`, and all thirteen `wb3-*.png` capture artifacts,
+including binary content): zero occurrences of an absolute home-directory
+path, a home-relative path, or the bare username in any of them. Every
+artifact/capture path recorded in `results-wb3.json` and this file is
+`proto/`-relative (e.g. `web-app/captures/verify/wb3-12-*.png`), never
+absolute.
+
+**verified-by: batch-agent — PASS (all 3 REVISE findings fixed; W10's fix
+re-verified with a genuine new live-browser keyboard-only proof, not
+asserted from source-reading; 6/6 `verify-wb3.mjs` proofs green on a
+from-scratch run; `tsc -b --force` clean on `web-app/`;
+`check-shared-purity.sh` PASSED; mechanical path/username sweep clean on
+every file this round touched).**
+
+## Orchestrating-session independent re-verification (pending — not yet a `verified-by: user-spot-check`)
+
+Per the plan's own execution model, WB3's one named highest-risk claim is:
+`composer.beginEdit()` genuinely creates a navigable sibling branch — "re-run
+the edit flow, confirm the branch picker shows 2/2." The capture-stage run
+above already IS a from-scratch, live-dev-server, real-browser-interaction
+run (not a unit test or a mock) — the same headless Playwright session that
+produced the W10 row's screenshots is the mechanism this claim is checked
+by, and it caught a genuine product gap (the missing branch picker on
+`UserMessage`, documented above) before recording a PASS, rather than
+recording a PASS against an incomplete implementation. This satisfies the
+letter of the named-claim discipline (a real, first-hand re-run against the
+live app, not trust in a subagent's self-report) but the orchestrating
+session should still independently confirm this row per the plan's own
+"a subagent's PASS is a hypothesis until confirmed this way" rule before
+treating this batch as fully closed — the BUILD stage's own re-run is not a
+substitute for that separate, independent check.
+
+**verified-by: batch-agent — PASS (all 5 WB3 proofs green on a from-scratch
+run of `verify-wb3.mjs` against a live dev server; zero console errors;
+`tsc -b --force` clean on the whole `proto/` workspace).**

@@ -17,6 +17,35 @@
 // `sidebar-collapsed` (set by App.tsx) — generalizing this one button into
 // "show the sidebar" for both the mobile-overlay and desktop-collapse
 // cases, rather than adding a second near-duplicate button.
+// WB3 (LIA-496 review-fix) — W10 edit-to-branch + copy on user messages,
+// W12 collapsed-by-default reasoning disclosure, W13 collapsed-row+chevron
+// tool-output disclosure, all added here.
+//
+// W10 — the real mechanism, verified first-hand by reading source (not
+// assumed from the plan's own citation): `ActionBarPrimitive.Edit`'s
+// underlying hook (`useActionBarEdit`, `@assistant-ui/core/react`) calls
+// `aui.composer.beginEdit()` — the exact runtime call
+// `composer-runtime.d.ts:198` confirms exists. `beginEdit()` is real, not
+// a stub: `default-edit-composer-runtime-core.js`'s constructor seeds the
+// edit composer's text from `getThreadMessageText(message)` (so the
+// textarea opens pre-filled with the message's own text) and its
+// `handleSend` appends a NEW message with the SAME `parentId`/`sourceId`
+// as the original — i.e. a genuine sibling branch, not a same-branch edit.
+// The piece that makes this render at all: `ThreadMessages.js`'s
+// `getComponent(components, role, isEditing)` swaps `UserMessage` for
+// `components.UserEditComposer` the instant `s.message.composer.isEditing`
+// flips true (read directly off `@assistant-ui/core/dist/react/
+// primitives/thread/ThreadMessages.js`) — so `UserEditComposer` below
+// MUST be registered in `ThreadPrimitive.Messages`' `components` prop
+// (see this file's `Thread` component) or `beginEdit()` fires with no
+// visible effect. `ComposerPrimitive.Root`/`.Input`/`.Cancel`/`.Send`
+// rendered inside that swapped-in component resolve to the message's own
+// EDIT composer scope (ambient, via the same `MessageByIndexProvider`
+// `ThreadPrimitive.Messages` already wraps every message in) — not the
+// thread-level composer Composer.tsx drives; `.Cancel` here calls
+// `composer.cancel()`, which per `composer-runtime.d.ts`'s own doc
+// comment "In edit mode, this will exit edit mode" (confirmed also by
+// `DefaultEditComposerRuntimeCore.handleCancel` -> `endEditCallback()`).
 //
 // W2: `useStreamingTiming`/`StreamingTimingState` are real exports,
 // confirmed at node_modules/@assistant-ui/core/dist/react/index.d.ts:114
@@ -39,10 +68,12 @@
 // call standing in for "used useStreamingTiming" on paper. Either way,
 // zero setTimeout/setInterval anywhere in this file — the exact hand-
 // rolled-timer approach plan-review rejected.
-import { createContext, useContext, type FC } from "react";
+import { createContext, useContext, useState, type FC } from "react";
 import {
   ThreadPrimitive,
   MessagePrimitive,
+  ActionBarPrimitive,
+  ComposerPrimitive,
   useAuiState,
   type ReasoningMessagePartProps,
   type ToolCallMessagePartProps,
@@ -73,16 +104,37 @@ const MessageTimingContext = createContext<Record<string, MessageTiming>>({});
 // ReasoningMessagePartProps already carries `status` for free (it's
 // `MessagePartState & ReasoningMessagePart`, confirmed by reading
 // MessagePartComponentTypes.d.ts), so no extra hook is needed here either.
+//
+// W12 fix (WB3): was always-expanded with no label — a screen-reader user
+// had no way to know this content existed as a distinct, collapsible
+// region, and every reasoning trace dumped its full text into the
+// transcript unconditionally. Now a real labelled disclosure
+// (`aria-expanded` on the toggle button), collapsed by default. While
+// streaming, the toggle keeps showing the live cursor next to the label
+// even when collapsed — a "still thinking" signal that doesn't require
+// exposing the (possibly long, possibly still-forming) text itself.
 const ReasoningPart: FC<ReasoningMessagePartProps> = ({ text, status }) => {
+  const [expanded, setExpanded] = useState(false);
   const isRunning = status.type === "running";
   if (!text) {
     return isRunning ? <div className="s-shimmer s-shimmer-reasoning" aria-hidden="true" /> : null;
   }
   return (
-    <p className="s-reasoning">
-      {text}
-      {isRunning && <span className="s-cursor s-cursor-reasoning" aria-hidden="true" />}
-    </p>
+    <div className="s-reasoning-wrap">
+      <button
+        type="button"
+        className="s-reasoning-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <span className={`s-tool-chevron${expanded ? " open" : ""}`} aria-hidden="true">
+          ›
+        </span>
+        Reasoning
+        {isRunning && <span className="s-cursor s-cursor-reasoning" aria-hidden="true" />}
+      </button>
+      {expanded && <p className="s-reasoning">{text}</p>}
+    </div>
   );
 };
 
@@ -90,13 +142,31 @@ const ReasoningPart: FC<ReasoningMessagePartProps> = ({ text, status }) => {
 // `grep`/`ls` checks the fixture scripts run) — a compact inline line
 // rather than a silent gap, matching the design source's understated
 // treatment of intermediate tool activity.
-const GenericToolLine: FC<ToolCallMessagePartProps> = (props) => (
-  <div className="s-toolline">
-    <span>{props.toolName}</span>
-    <span className="dot">·</span>
-    <span>{typeof props.result === "string" ? props.result : props.argsText}</span>
-  </div>
-);
+//
+// W13 fix (WB3): raw tool output used to dump unconditionally, no
+// disclosure grammar at all. Now a collapsed-by-default row (single-line
+// truncated preview via CSS `text-overflow: ellipsis`, not React
+// truncation, so the full string is still in the DOM for copy/search) with
+// a chevron toggle that reveals the full raw output below — same
+// `.s-tool-chevron` disclosure control DiffPanel.tsx's W13 fix uses, one
+// visual family across both raw-tool-output and diff disclosures.
+const GenericToolLine: FC<ToolCallMessagePartProps> = (props) => {
+  const [expanded, setExpanded] = useState(false);
+  const output = typeof props.result === "string" ? props.result : props.argsText;
+  return (
+    <div className="s-toolline-wrap">
+      <button type="button" className="s-toolline" aria-expanded={expanded} onClick={() => setExpanded((e) => !e)}>
+        <span className={`s-tool-chevron${expanded ? " open" : ""}`} aria-hidden="true">
+          ›
+        </span>
+        <span>{props.toolName}</span>
+        <span className="dot">·</span>
+        <span className="s-toolline-preview">{output}</span>
+      </button>
+      {expanded && <pre className="s-toolline-body">{output}</pre>}
+    </div>
+  );
+};
 
 const messageComponents = {
   Text: MarkdownText,
@@ -107,11 +177,91 @@ const messageComponents = {
   },
 };
 
-const UserMessage: FC = () => (
-  <div className="s-user">
-    <div className="chip">
-      <MessagePrimitive.Content />
+// W10 fix (WB3): hover pencil (edit-to-branch) + copy, both on real
+// primitives — see this file's header comment for the verified mechanism.
+// `.s-user-actions` is CSS-hover-revealed via `.s-user:hover` — deliberately
+// an opacity/pointer-events toggle (theme.css), NOT the `display:none` ->
+// `display:flex` pattern Sidebar.tsx's `.s-item-row:hover .s-item-actions`
+// uses for WB2's W5: a `display:none` element's descendants drop out of the
+// tab order, so a `:focus-within` reveal on it could never actually match
+// (code-review caught this as a real dead-selector bug, not a hypothetical —
+// see theme.css's `.s-user-actions` comment). Staying `display:flex` and
+// toggling opacity instead keeps the buttons real tab stops at all times, so
+// Tab can reach and focus them, which is what makes `:focus-within` fire.
+// Not `ActionBarPrimitive.Root`'s own `autohide`/`isHovering` mechanism —
+// that mechanism depends on `MessagePrimitive.Root`'s mouseenter/mouseleave
+// listener, which this app's `UserMessage` doesn't mount (it renders plain
+// divs, not `MessagePrimitive.Root`), so `s.message.isHovering` would
+// never flip and `autohide="always"` would just stay permanently hidden.
+// `:focus-within` reveals the row so keyboard-only users (Tab into the
+// buttons) aren't locked out by the hover-only CSS.
+//
+// `<BranchPicker />` is ALSO mounted here, always (its own
+// `hideWhenSingleBranch` controls real visibility) — real behavioral
+// finding from re-running the actual edit flow, not assumed: editing a
+// USER message forks the tree at the USER message's own position
+// (`DefaultEditComposerRuntimeCore.handleSend` appends the edit as a
+// sibling of the ORIGINAL user message, same `parentId`/`sourceId` — see
+// this file's header comment). The pre-existing `BranchPicker` was wired
+// only into `AssistantMessage`'s footer, which shows branch count for the
+// ASSISTANT's reply — a *different* message that stays single-branch
+// after a user-message edit (each edit spawns a fresh assistant reply, not
+// a sibling of the old one). Without a branch picker here, "the branch
+// picker shows 2/2" (this batch's own named re-verification claim) had no
+// UI surface to show it on at all — confirmed by re-running the edit flow
+// headlessly against the real dev server and inspecting the rendered DOM
+// before adding this.
+const UserMessage: FC = () => {
+  // `s.message.isCopied` (real, live state — see ActionBarCopy.js's own
+  // `data-copied` mechanism this mirrors) drives the label directly via
+  // useAuiState, same pattern the rest of this file already uses
+  // everywhere else, rather than reaching for the deprecated
+  // `MessagePrimitive.If` (its own doc comment: "Use `<AuiIf
+  // condition={(s) => s.message...} />` instead").
+  const isCopied = useAuiState((s) => s.message.isCopied);
+  return (
+    <div className="s-user">
+      <div className="s-user-col">
+        <div className="chip">
+          <MessagePrimitive.Content />
+        </div>
+        <div className="s-user-row">
+          <div className="s-user-actions">
+            <ActionBarPrimitive.Edit className="s-abtn" aria-label="Edit message">
+              ✎
+            </ActionBarPrimitive.Edit>
+            <ActionBarPrimitive.Copy className="s-abtn" aria-label="Copy message">
+              {isCopied ? "Copied" : "Copy"}
+            </ActionBarPrimitive.Copy>
+          </div>
+          <BranchPicker />
+        </div>
+      </div>
     </div>
+  );
+};
+
+// The edit-mode replacement for `UserMessage` — registered as
+// `components.UserEditComposer` below, swapped in automatically by
+// `ThreadPrimitive.Messages` the instant `beginEdit()` (triggered by the
+// pencil above) flips `s.message.composer.isEditing`. Pre-filled text,
+// `Escape` cancels (real `ComposerPrimitive.Input` default,
+// `cancelOnEscape` defaults to `true` — confirmed in `ComposerInput.d.ts`),
+// `Cancel` exits edit mode without sending, `Save` sends and creates the
+// sibling branch.
+const UserEditComposer: FC = () => (
+  <div className="s-user">
+    <ComposerPrimitive.Root className="s-edit-field">
+      <ComposerPrimitive.Input autoFocus rows={1} className="s-edit-input" />
+      <div className="s-edit-actions">
+        <ComposerPrimitive.Cancel className="s-btn ghost" aria-label="Cancel edit">
+          Cancel
+        </ComposerPrimitive.Cancel>
+        <ComposerPrimitive.Send className="s-btn go" aria-label="Save and send">
+          Save
+        </ComposerPrimitive.Send>
+      </div>
+    </ComposerPrimitive.Root>
   </div>
 );
 
@@ -184,7 +334,7 @@ export const Thread: FC<{ onOpenDrawer: () => void }> = ({ onOpenDrawer }) => {
             <EmptyState />
           </ThreadPrimitive.Empty>
           <MessageTimingContext.Provider value={timings}>
-            <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
+            <ThreadPrimitive.Messages components={{ UserMessage, UserEditComposer, AssistantMessage }} />
           </MessageTimingContext.Provider>
         </div>
       </ThreadPrimitive.Viewport>

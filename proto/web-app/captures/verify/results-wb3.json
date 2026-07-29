@@ -1,0 +1,47 @@
+{
+  "rows": [
+    {
+      "feature": "W12 — reasoning is a labelled, collapsed-by-default disclosure",
+      "expected": "no .s-reasoning body in the DOM before the toggle is clicked (aria-expanded=false), a real .s-reasoning body with the actual reasoning text appears after clicking the toggle (aria-expanded=true)",
+      "observed": "bodyCount before click=0, aria-expanded before=false, aria-expanded after=true, revealed text length=245 chars (\"Two asks here: clean up a stale scratch ...\")",
+      "artifact": "web-app/captures/verify/wb3-01-reasoning-collapsed.png , web-app/captures/verify/wb3-02-reasoning-expanded.png",
+      "pass": true
+    },
+    {
+      "feature": "W13 — raw Bash tool output is a collapsed-by-default row with a chevron, not an unconditional dump",
+      "expected": "no .s-toolline-body in the DOM before the chevron is clicked (aria-expanded=false), the full raw command output appears in a .s-toolline-body pre block after clicking",
+      "observed": "bodyCount before click=0, aria-expanded before=false, preview text=\"-rw-r--r-- 1 deus staff 36 /tmp/deus-shell-scratch.log\", expanded body text=\"-rw-r--r--  1 deus  staff  36 /tmp/deus-shell-scratch.log\", same content modulo whitespace=true",
+      "artifact": "web-app/captures/verify/wb3-03-toolline-collapsed.png , web-app/captures/verify/wb3-04-toolline-expanded.png",
+      "pass": true
+    },
+    {
+      "feature": "W13 — diff card is expanded by default (it IS the point of an Edit tool call), collapsible via the same chevron family, and has a real clipboard copy button",
+      "expected": "diff body (.s-code pre) visible on first render with aria-expanded=true; clicking the header toggle hides it (aria-expanded=false) then re-clicking restores it; clicking Copy writes the real diff text to the clipboard and the button label flips to \"Copied\"",
+      "observed": "expanded by default=true (aria-expanded=true), after collapse click aria-expanded=false, re-expanded ok, copy label before=\"Copy\" after=\"Copied\", clipboard contains diff markers (--- / +++)=true",
+      "artifact": "web-app/captures/verify/wb3-05-diff-expanded-by-default.png , web-app/captures/verify/wb3-06-diff-collapsed.png , web-app/captures/verify/wb3-07-diff-re-expanded.png , web-app/captures/verify/wb3-08-diff-copied.png",
+      "pass": true
+    },
+    {
+      "feature": "W10 — hover pencil genuinely calls composer.beginEdit() (pre-fills the real message text) and Save creates a real, navigable sibling branch",
+      "expected": "hover reveals a real \"Edit message\" + \"Copy message\" button pair; Copy writes the message's actual text to the clipboard; Edit swaps the message to a pre-filled ComposerPrimitive edit field (not empty, not a placeholder); Save exits edit mode and the branch picker reads \"2 / 2\"",
+      "observed": "copy worked=true, edit field pre-filled with original text=true (got \"Two asks: clean the scratch file, tighten the status-glyph comment.\"), edit field gone after save=true, branch picker text=\"‹ 2 / 2 ›\"",
+      "artifact": "web-app/captures/verify/wb3-09-user-message-hover-actions.png , web-app/captures/verify/wb3-10-user-message-edit-open.png , web-app/captures/verify/wb3-11-user-message-branch-2-of-2.png",
+      "pass": true
+    },
+    {
+      "feature": "W11 — branch prev/next controls have a real accessible name, not just a bare glyph",
+      "expected": "Previous button aria-label=\"Previous branch\", Next button aria-label=\"Next branch\", both present in the accessible-name computation (ARIA snapshot)",
+      "observed": "prev aria-label=\"Previous branch\", next aria-label=\"Next branch\", ariaSnapshot contains \"Previous branch\"=true, contains \"Next branch\"=true",
+      "artifact": "(no new artifact — same branch picker as the W10 proof's final screenshot)",
+      "pass": true
+    },
+    {
+      "feature": "W10 (REVISE fix) — Edit/Copy row is a real, reachable Tab stop and becomes visible on keyboard focus, not display:none-locked-out",
+      "expected": "`.s-user-actions` is opacity:0 (visually hidden) before any focus, its Edit button is reachable via real Tab key presses (no .focus() shortcut), and the row is opacity:1 (visible) the instant that focus lands inside it",
+      "observed": "row opacity before focus=\"0\", reached edit button via Tab=true, row opacity while focused=\"1\"",
+      "artifact": "web-app/captures/verify/wb3-12-user-message-keyboard-focus-actions.png",
+      "pass": true
+    }
+  ],
+  "consoleErrors": []
+}
