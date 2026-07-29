@@ -326,7 +326,12 @@ export const Thread: FC<{ onOpenDrawer: () => void }> = ({ onOpenDrawer }) => {
           </button>
           <h2 className="serif">{title ?? "New chat"}</h2>
         </div>
-        <span className="s-model">Sonnet 5</span>
+        {/* WB4 (LIA-496 review-fix) — W16 (D3): the inert
+            `<span className="s-model">Sonnet 5</span>` that used to live
+            here (Fable's "static badge styled as interactive" finding) is
+            retired. Its function is now ModelPicker.tsx, a genuinely
+            interactive dropdown rendered in Composer.tsx's secondary row —
+            see that file's header comment for why it moved there. */}
       </div>
       <ThreadPrimitive.Viewport className="s-thread">
         <div className="s-col">

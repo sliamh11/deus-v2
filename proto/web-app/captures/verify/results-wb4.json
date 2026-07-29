@@ -1,0 +1,97 @@
+{
+  "rows": [
+    {
+      "feature": "W17a: empty-state copy has no internal fixture-spike language",
+      "expected": "Greeting text does not contain \"fixture spike\" or \"LIA-496\" (EmptyState.tsx no longer exposes internal build-process language to the product surface)",
+      "observed": "empty state visible=true, greeting text=\"What are we working on?\n\nPick a thread from the sidebar, or try one of these:\n\nClean up that stale scratch log in /tmp, then tighten the status-glyph comment.\nD\", noFixtureLanguage=true",
+      "artifact": "web-app/captures/verify/wb4-01-empty-state.png",
+      "pass": true
+    },
+    {
+      "feature": "W17b: real flex-parent height bug fixed — .s-empty's flex:1 actually fills .s-thread",
+      "expected": ".s-empty's rendered height tracks .s-thread's real available height (>=90%), not just its own content height — the old bug had .s-col as a non-flex parent so .s-empty's flex:1 was dead CSS",
+      "observed": "threadH=734.0px, colH=694.0px, emptyH=694.0px, emptyH>=90% of threadH=true",
+      "artifact": "web-app/captures/verify/wb4-01-empty-state.png",
+      "pass": true
+    },
+    {
+      "feature": "W17c: composer docked under greeting — no dead space",
+      "expected": "Gap between the bottom of the greeting/.s-empty content and the top of the composer pill (.s-field) is small (<80px, i.e. ordinary padding), not a large unexplained blank stretch",
+      "observed": "gap=24.0px, dockedNoDeadSpace=true",
+      "artifact": "web-app/captures/verify/wb4-01-empty-state.png",
+      "pass": true
+    },
+    {
+      "feature": "W16a: reserved attach-slot is present but genuinely inert (no fake affordance)",
+      "expected": "A `.s-attach-slot` element exists in the composer's secondary row, aria-hidden, with no button/clickable role — reserves geometry without rendering a control that looks actionable but does nothing",
+      "observed": "attachSlotPresent=true, attachSlotHasNoInteractiveRole=true",
+      "artifact": "web-app/captures/verify/wb4-02-model-picker-closed.png",
+      "pass": true
+    },
+    {
+      "feature": "W16b: model-picker trigger is a real dropdown trigger (aria-haspopup=listbox), two scripted labels",
+      "expected": "A real `<button aria-haspopup=\"listbox\">` (not an inert `<span>`) with exactly 2 selectable options",
+      "observed": "initialLabel=\"Sonnet 5\n⌄\", aria-haspopup=listbox: true, optionCount=2, options=[\"Sonnet 5\",\"Opus 5\"]",
+      "artifact": "web-app/captures/verify/wb4-03-model-picker-open.png",
+      "pass": true
+    },
+    {
+      "feature": "W16c: arrow-key navigation moves the active option; Enter selects and closes; label genuinely toggles",
+      "expected": "ArrowDown moves .active from one option to the other; Enter selects the active option, closes the popover, and the trigger's displayed label changes to the newly-selected model",
+      "observed": "activeBefore=\"Sonnet 5\", activeAfter=\"Opus 5\", arrowKeyMoved=true, labelAfterSelect=\"Opus 5\n⌄\", labelChanged=true",
+      "artifact": "web-app/captures/verify/wb4-04-model-picker-selected.png",
+      "pass": true
+    },
+    {
+      "feature": "W16d: Escape and click-outside both dismiss the popover without altering the selection unexpectedly",
+      "expected": "Escape closes the menu and leaves the label as-is; a pointerdown outside the picker's root also closes it",
+      "observed": "menuGoneAfterEscape=true, labelUnchangedAfterEscape=true, menuGoneAfterOutsideClick=true",
+      "artifact": "web-app/captures/verify/wb4-05-model-picker-closed-by-outside-click.png",
+      "pass": true
+    },
+    {
+      "feature": "W18a: multiline pill geometry — border-radius relaxed (no longer a full stadium cap at multiline height)",
+      "expected": "At a grown multiline height, the field's computed border-radius is a fixed, honest value well under half the field's height (previously 999px always clamped to a full stadium cap at ANY height, including multiline)",
+      "observed": "oneLineHeight=54.0px, multiLineHeight=94.0px, grewPastOneLine=true, computed radius=26.0px, half of multiline height=47.0px, radiusRelaxed=true",
+      "artifact": "web-app/captures/verify/wb4-06-composer-one-line.png , web-app/captures/verify/wb4-07-composer-multiline.png",
+      "pass": true
+    },
+    {
+      "feature": "W18b: send button is flex-end (bottom) aligned at multiline heights, not vertically centered",
+      "expected": "The send circle's bottom edge sits within the field's own bottom padding of the field's bottom edge (flex-end), rather than floating in the vertical middle of the grown field (which the old align-items:center produced)",
+      "observed": "fieldBottom=853.0, sendBottom=842.0, gap=11.0px, fieldPaddingBottom=10.0px, sendBottomAligned=true",
+      "artifact": "web-app/captures/verify/wb4-07-composer-multiline.png",
+      "pass": true
+    },
+    {
+      "feature": "W14: composer stays mounted (not unmounted) while a permission decision is pending",
+      "expected": "While `.s-perm` is showing, the real `.s-field` > `<textarea>` structure is still present in the DOM (not replaced by a bare unmounted div), the textarea is genuinely `disabled`, and its placeholder communicates why (mentions 'resolve')",
+      "observed": "fieldPresent=true, textareaPresent=true, textareaDisabled=true, placeholder=\"Resolve the permission prompt above to continue…\", sendDisabled=true, oldWaitingDivStillPresent=false",
+      "artifact": "web-app/captures/verify/wb4-08-permission-pending-composer-state.png",
+      "pass": true
+    },
+    {
+      "feature": "W14b: disabled textarea cannot take focus (stray-keystroke guard preserved without unmounting)",
+      "expected": "A disabled HTML form control cannot become document.activeElement even when .focus() is called on it directly",
+      "observed": "focus() on the disabled textarea resulted in document.activeElement === textarea: false",
+      "artifact": "web-app/captures/verify/wb4-08-permission-pending-composer-state.png",
+      "pass": true
+    },
+    {
+      "feature": "W15: \"Always allow\" button text states its scope (\"this session\")",
+      "expected": "Button text reads \"Always allow (this session)\", not a bare \"Always allow\"",
+      "observed": "button text=\"Always allow (this session)\", statesScope=true",
+      "artifact": "web-app/captures/verify/wb4-09-permission-card-scope-note.png",
+      "pass": true
+    },
+    {
+      "feature": "W15b: explicit scope note explains how broad the grant is",
+      "expected": "A visible note near the buttons states the grant applies for the rest of the session and to every request for this tool, not just this one",
+      "observed": "scope note text=\"Applies to every delete file request for the rest of this session — not just this one.\", present and mentions session=true",
+      "artifact": "web-app/captures/verify/wb4-09-permission-card-scope-note.png",
+      "pass": true
+    }
+  ],
+  "consoleErrors": [],
+  "allPass": true
+}

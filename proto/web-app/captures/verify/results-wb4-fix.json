@@ -1,0 +1,30 @@
+{
+  "rows": [
+    {
+      "feature": ".s-empty at a short (400px) viewport: full greeting reachable by scrolling, nothing stranded above scrollTop=0",
+      "expected": "At a viewport too short for the greeting to fit (.s-thread.scrollHeight > .s-thread.clientHeight, i.e. genuine overflow, not a no-op test), scrolling .s-thread (the real overflow:auto ancestor) to top shows h1/p (the content's own start) fully within the visible rect — proving nothing overflowed upward past scrollTop=0 where it would be permanently unreachable — and scrolling to bottom shows the last suggestion chip (the content's own end) fully within the visible rect, proving the full length is reachable by scrolling down",
+      "observed": "overflowing=true (scrollHeight=297 > clientHeight=234), scrollTopAfterReset=0, h1Within(atTop)=true, pWithin(atTop)=true, lastChipWithin(atTop, expected false — ordinary overflow)=false, lastChipWithin(scrolledToBottom)=true, h1Top=111.0, threadTop=51.0",
+      "artifact": "web-app/captures/verify/fix-wb4-01-empty-state-400h.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    },
+    {
+      "feature": "Regression check: at the normal 900px viewport, the greeting is still bottom-docked under the composer (margin-top:auto reproduces the old justify-content:flex-end look)",
+      "expected": "gap between .s-empty's bottom and .s-field's top stays an ordinary small padding gap, same as before the fix (not reverted to centered/top-anchored)",
+      "observed": "gap=24.0px, docked=true",
+      "artifact": "web-app/captures/verify/fix-wb4-03-empty-state-900h-docked.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    },
+    {
+      "feature": "Composer regains focus automatically once a pending permission resolves (advisory finding investigated: ComposerPrimitive.Input's own reactive autoFocus/disabled composition already handles this, no custom code needed — see Composer.tsx's header comment)",
+      "expected": "After deliberately focusing away onto the permission card's own button, resolving the permission ('Always allow') returns document.activeElement to the composer's real <textarea> — not left on <body> or the now-removed permission button",
+      "observed": "focusedBeforeResolve=\"s-always\", activeIsTextarea=true, activeIsBody=false, activeTag=TEXTAREA, textareaDisabled=false",
+      "artifact": "web-app/captures/verify/fix-wb4-04-composer-refocused-after-approval.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    }
+  ],
+  "consoleErrors": [],
+  "allPass": true
+}
