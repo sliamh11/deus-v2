@@ -1,0 +1,54 @@
+{
+  "rows": [
+    {
+      "feature": "W6 — time-bucket correctness: the sanctioned ~9-day-old seed thread ('Streaming markdown flicker') renders under the correct bucket, NOT 'Yesterday'",
+      "expected": "streaming-markdown-flicker's lastMessageAt (~9 days ago per shared/src/fixtures/threads.ts's daysAgo(9)) must land in 'Older' (>7 calendar days), and must NOT appear under 'Yesterday'. All present bucket headers must appear in Today/Yesterday/Previous 7 days/Older order.",
+      "observed": "bucket map={\"Today\":[\"Status-glyph rendering fix⋯\"],\"Yesterday\":[\"Composer keyboard shortcuts⋯\",\"Shiki theme swap crash⋯\"],\"Previous 7 days\":[\"LIA-495 migration spike⋯\",\"Sidebar layout pass⋯\",\"Diff panel polish⋯\"],\"Older\":[\"Streaming markdown flicker⋯\",\"Y You\"]}; 'Streaming markdown flicker' found under bucket=\"Older\"; in 'Yesterday' (WRONG)=false; in 'Older' or 'Previous 7 days' (right neighborhood)=true; header order=[\"Today\",\"Yesterday\",\"Previous 7 days\",\"Older\"]; order is a valid subsequence of Today/Yesterday/Previous 7 days/Older=true",
+      "artifact": "web-app/captures/verify/wb2-d-01-time-buckets.png",
+      "pass": true
+    },
+    {
+      "feature": "W5 — overflow menu: hover reveals '...' with zero layout reflow; click shows delete-with-confirm gate; Cancel backs out of confirm (not a delete) leaving thread count unchanged; Escape dismisses the popover",
+      "expected": "Row bounding-box width must be identical before/after hover (reserved-width slot, visibility via opacity only — never display:none<->flex). Clicking the '...' trigger opens a popover; clicking 'Delete' inside it shows a confirm step (does NOT delete immediately); clicking 'Cancel' returns to the non-confirming menu without deleting; Escape closes the whole popover.",
+      "observed": "row width before hover=228, after hover=228, unchanged=true; menu opened on trigger click=true; delete option visible pre-confirm=true; confirm prompt appeared after first Delete click (not immediate delete)=true; thread count before=7, after Cancel=7 (unchanged=true); confirm sub-state gone after Cancel=true; popover still open after Cancel (expected — Cancel only exits confirm, not the whole menu)=true; popover closed after Escape=true",
+      "artifact": "web-app/captures/verify/wb2-d-02-overflow-hover-no-reflow.png , web-app/captures/verify/wb2-d-03-overflow-menu-open.png , web-app/captures/verify/wb2-d-04-overflow-menu-confirm-delete.png",
+      "pass": true
+    },
+    {
+      "feature": "W5 — confirmed delete actually removes the thread via the real useThreadListItemDelete() runtime action",
+      "expected": "After the two-step confirm (Delete -> confirm row -> Delete), the thread count decreases by exactly 1 — a genuine runtime deletion, not a cosmetic UI change",
+      "observed": "thread count before real delete=7, after=6, decreased by exactly 1=true",
+      "artifact": "web-app/captures/verify/wb2-d-05-overflow-menu-real-delete-result.png",
+      "pass": true
+    },
+    {
+      "feature": "W8 — search: client-side thread-title filter narrows the list and restores it on clear",
+      "expected": "Typing 'diff' into .s-search narrows the visible thread rows to only titles containing 'diff' (case-insensitive); clearing the query restores the full list",
+      "observed": "count before search=6, count after 'diff'=1, all visible titles match 'diff'=true (titles=[\"Diff panel polish\"]), count after clearing=6, restored=true",
+      "artifact": "web-app/captures/verify/wb2-d-06-search-filtered.png , web-app/captures/verify/wb2-d-07-search-cleared.png",
+      "pass": true
+    },
+    {
+      "feature": "W7 — desktop sidebar collapse at 1440x1000: '«' collapses the sidebar to ~0 width, reused .s-drawer-open expand button restores it to full width",
+      "expected": "At a >=861px desktop viewport, clicking .s-collapse-btn ('«') animates .s-side from 256px down to ~0px width (clipped, not reflow-wrapped); clicking the reused .s-drawer-open ('Show sidebar') button restores it back to full width",
+      "observed": "width before collapse=256, width while/after collapsed=1 (near-zero=true), width after re-expand=226.90625 (back to full=true)",
+      "artifact": "web-app/captures/verify/wb2-d-08-collapse-before.png , web-app/captures/verify/wb2-d-09-collapse-collapsed.png , web-app/captures/verify/wb2-d-10-collapse-re-expanded.png",
+      "pass": true
+    },
+    {
+      "feature": "Identity leak fix: sidebar footer shows a generic placeholder, not a hardcoded personal name",
+      "expected": "The '.s-me' footer text must NOT contain the literal machine-owner username (as a whole word) or any real personal display name — a generic placeholder ('You') is expected",
+      "observed": "footer text=\"Y\nYou\", containsOwnerUsername=false",
+      "artifact": "web-app/captures/verify/wb2-d-11-identity-footer.png",
+      "pass": true
+    },
+    {
+      "feature": "W9 — mobile drawer lifecycle at 390x844: open -> select a thread -> auto-closed",
+      "expected": "Opening the drawer adds the 'open' class to .s-side and makes .s-main inert; selecting a thread (ThreadListItemPrimitive.Trigger onClick -> onCloseDrawer) auto-closes the drawer (removes 'open' class) and removes inert from .s-main, without requiring a manual close-button tap",
+      "observed": "side class before open=\"s-side\", after open=\"s-side open\" (has 'open'=true), .s-main inert while open=true; selected thread=\"Status-glyph rendering fix\"; side class after selecting=\"s-side\" (drawer closed=true), .s-main inert after select=false (should be false)",
+      "artifact": "web-app/captures/verify/wb2-m-01-drawer-closed.png , web-app/captures/verify/wb2-m-02-drawer-open.png , web-app/captures/verify/wb2-m-03-drawer-auto-closed-after-select.png",
+      "pass": true
+    }
+  ],
+  "consoleErrors": []
+}

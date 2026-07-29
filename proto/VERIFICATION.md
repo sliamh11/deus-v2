@@ -856,3 +856,55 @@ message pair.
 
 **verified-by: user-spot-check — PASS (esc genuinely halts generation;
 reproduced independently outside any batch-agent dispatch).**
+## Web — WB2 (Sidebar & navigation package: W5 overflow menu, W6 time-bucket
+correctness, W7 desktop collapse, W8 search, W9 mobile drawer + focus-trap,
+plus the sidebar identity-leak fix) — CAPTURE stage
+
+`expected` values frozen from `proto/design-source/lia496-fix-plan.md`'s
+`## Full fix inventory` § B (W5–W9's own descriptions) and its
+`## Verification & capture strategy (per batch)` section ("WB2: drawer open
+→ select → auto-closed at 390×844 and 1440×1000") plus its `## Execution
+model` § step 2 (the named highest-risk claim for this batch: "the
+time-bucket fix — re-check that the ~9-day-old seed thread ... renders
+under the correct bucket, not 'Yesterday'"). Real Playwright (`chromium`,
+headless) against the live `npx vite --port 5184 --strictPort` dev server
+(this batch's own reserved port). Driver: `web-app/captures/verify-wb2.mjs`
+(new file, same `record()`/`safe()`/`shot()` pattern as
+`verify-wb1.mjs`/`verify-s3.mjs`). Screenshots in
+`web-app/captures/verify/`, raw results in
+`web-app/captures/verify/results-wb2.json`. Zero console/page errors across
+the whole run (`consoleErrors: []`).
+
+**verified-by: batch-agent** on every row below — this capture dispatch's
+own claims. Per the plan's own execution model, WB2's one named
+highest-risk claim is **row 1 below (time-bucket correctness)** — the
+orchestrating session independently re-verifies this one itself before
+trusting it; this file records that as a distinct fact, not this
+dispatch's outcome to declare.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | **Time-bucket correctness — the discriminating proof (named highest-risk claim for this batch).** The sanctioned fixture change (`shared/src/fixtures/threads.ts`'s `streaming-markdown-flicker` thread, `lastMessageAt` moved from `hoursAgo(33)` to `daysAgo(9)`) must render under "Previous 7 days" or "Older" — genuinely NOT "Yesterday" — at a 1440×1000 desktop viewport | **PASS.** Per-bucket membership computed by walking the real DOM (`.s-side-inner`'s children between each `.s-sec` header and the next `.s-gap`), not visual inspection alone. "Streaming markdown flicker" found under bucket **"Older"** (`in 'Yesterday' (WRONG)=false`). Full bucket map: `Today=["Status-glyph rendering fix"]`, `Yesterday=["Composer keyboard shortcuts","Shiki theme swap crash"]`, `Previous 7 days=["LIA-495 migration spike","Sidebar layout pass","Diff panel polish"]`, `Older=["Streaming markdown flicker"]`. All four bucket headers render in the correct Today→Yesterday→Previous 7 days→Older order. | `web-app/captures/verify/wb2-d-01-time-buckets.png` | **batch-agent (orchestrating session must independently re-verify this one before trusting it, per the plan's own execution model — do not accept this PASS on this dispatch's word alone)** | **PASS** |
+| 2 | Overflow menu (W5): hovering a thread row reveals a "…" trigger with **zero layout reflow** (reserved-width slot, opacity-only visibility — not the old `display:none`↔`flex` pair); clicking it opens Rename/Archive/Delete; clicking Delete shows a confirm step (does not delete immediately); Cancel backs out of the confirm step without deleting; Escape dismisses the whole popover | **PASS.** Row bounding-box width identical before/after hover (`228px` both times, `unchanged=true`). Trigger click opens the popover (`menu opened=true`). First Delete click shows the confirm row, does not delete (`confirm prompt appeared=true`, `thread count before=7, after Cancel=7`). Cancel correctly only exits the confirm sub-state, not the whole popover (`confirm sub-state gone after Cancel=true`, `popover still open after Cancel (expected)=true`) — Escape then closes it (`popover closed after Escape=true`), confirming the real dismissal path `Sidebar.tsx`'s own header comment documents. | `web-app/captures/verify/wb2-d-02-overflow-hover-no-reflow.png`, `web-app/captures/verify/wb2-d-03-overflow-menu-open.png`, `web-app/captures/verify/wb2-d-04-overflow-menu-confirm-delete.png` | batch-agent | **PASS** |
+| 3 | Overflow menu (W5), continued: a **confirmed** Delete (second click, inside the confirm row) actually invokes the real `useThreadListItemDelete()` runtime action and removes the thread — not just a cosmetic UI change | **PASS.** Thread count went from 7 → 6 (`decreased by exactly 1=true`) after the two-step confirm (Delete → confirm row → Delete) on a second row. | `web-app/captures/verify/wb2-d-05-overflow-menu-real-delete-result.png` | batch-agent | **PASS** |
+| 4 | Search (W8): typing a query into `.s-search` performs a real client-side title filter; clearing it restores the full list | **PASS.** Typing "diff" narrowed 6 rows → 1 row, the single remaining title ("Diff panel polish") genuinely contains "diff" (`all visible titles match='diff'=true`). Clearing the query restored all 6 rows (`restored=true`). | `web-app/captures/verify/wb2-d-06-search-filtered.png`, `web-app/captures/verify/wb2-d-07-search-cleared.png` | batch-agent | **PASS** |
+| 5 | Desktop collapse (W7) at 1440×1000: clicking the new "«" collapse button animates `.s-side` from 256px to ~0px width (clipped via `.s-side-inner`'s fixed-width inner frame, not reflow-wrapped); clicking the reused `.s-drawer-open` expand button (generalized to also show at desktop widths while collapsed) restores it to full width | **PASS.** Width before collapse=256px. After clicking "«", width settled to 1px (`near-zero=true`). After clicking the reused `.s-drawer-open` button, width returned to ~227px (`back to full=true`) — confirms W7 deliberately reuses Thread.tsx's existing drawer-open control (per `Sidebar.tsx`'s own header comment) rather than a second near-duplicate button. | `web-app/captures/verify/wb2-d-08-collapse-before.png`, `web-app/captures/verify/wb2-d-09-collapse-collapsed.png`, `web-app/captures/verify/wb2-d-10-collapse-re-expanded.png` | batch-agent | **PASS** |
+| 6 | Identity leak fix (flagged by WB1's own review as WB2's responsibility): a fresh screenshot of the sidebar footer (`.s-me`) must show a generic placeholder, not the previously-hardcoded real personal display name | **PASS.** Footer text = `"Y\nYou"` — no personal name, no occurrence of the machine-owner's bare username (`containsOwnerUsername=false`). | `web-app/captures/verify/wb2-d-11-identity-footer.png` | batch-agent | **PASS** |
+| 7 | Mobile drawer lifecycle (W9) at 390×844: **open → select a thread → auto-closed** (per this plan's own named capture-strategy proof), plus the real focus-trap/`inert` background pairing | **PASS.** Opening the drawer (`.s-drawer-open` click) adds `.open` to `.s-side` (`has 'open'=true`) and makes the sibling `.s-main` genuinely `inert` (`.s-main inert while open=true`). Selecting a thread (clicking `.s-item`, which now calls the real `onCloseDrawer` per W9's fix) auto-closes the drawer with **no manual close-button tap** — `.open` class removed (`drawer closed=true`) and `inert` removed from `.s-main` (`inert after select=false`). | `web-app/captures/verify/wb2-m-01-drawer-closed.png`, `web-app/captures/verify/wb2-m-02-drawer-open.png`, `web-app/captures/verify/wb2-m-03-drawer-auto-closed-after-select.png` | batch-agent | **PASS** |
+
+**Summary: 7/7 PASS, 0 FAIL, zero console/page errors across the whole
+run.** All five WB2 findings (W5–W9) plus the flagged sidebar identity-leak
+fix reproduce live against the real dev server, not synthetic DOM
+injection. The one named highest-risk claim for this batch (row 1,
+time-bucket correctness) is a `batch-agent` claim only until the
+orchestrating session independently re-verifies it per this plan's own
+`## Execution model` § step 2 — do not treat this table's row 1 PASS as
+final confirmation on its own.
+
+**Known limitation of this capture run, disclosed for transparency:** proof
+2/3 (overflow menu) exercises the confirmed-delete path on the *second*
+row from the top (index 1), not the "Streaming markdown flicker" row
+itself used for the time-bucket proof — the two proofs operate on
+different rows by design (deleting the row under test would invalidate a
+later re-check of the same bucket), so this does not weaken either
+proof.
