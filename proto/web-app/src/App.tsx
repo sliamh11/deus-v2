@@ -3,6 +3,20 @@
 // adapter: fixtureThreadListAdapter})) around Sidebar + (Thread, Composer)
 // as siblings, exactly per the S1 dispatch's Reading Room section.
 //
+// WB2 (LIA-496 review-fix, batch 4/8) — W7 + W9 wiring lives here:
+//   W7 — `sidebarCollapsed` is the desktop-collapse counterpart to the
+//        existing mobile-only `drawerOpen`: Sidebar.tsx's new "«" button
+//        sets it true, Thread.tsx's existing drawer-open button (reused,
+//        not duplicated — see that file's header comment) sets it false.
+//        Both states are independent and safe to touch together: each
+//        only has a visible effect within its own CSS media-query range
+//        (`sidebarCollapsed` >=861px, `drawerOpen` <=860px), so
+//        `openSidebar` below setting both is harmless, not a conflict.
+//   W9 — `inert` on `.s-main` while the mobile drawer is open: real
+//        background non-interactivity (not just a visual scrim), the
+//        sibling half of Sidebar.tsx's own focus-trap fix (that file owns
+//        the trap itself; this file owns making the OTHER sibling
+//        non-interactive while the drawer covers it).
 // `runtimeHook` mechanism, confirmed by reading
 // node_modules/@assistant-ui/core/dist/react/runtimes/
 // RemoteThreadListHookInstanceManager.js directly (not guessed): each
@@ -42,10 +56,20 @@ function useReadingRoomThreadRuntime() {
 
 const App: FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const runtime = useRemoteThreadListRuntime({
     runtimeHook: useReadingRoomThreadRuntime,
     adapter: fixtureThreadListAdapter,
   });
+
+  // W7 — Thread.tsx's single toggle button opens the mobile drawer AND
+  // expands a collapsed desktop sidebar; only one of the two has any
+  // visible effect at a given viewport width (CSS media-query gated), so
+  // setting both here is correct, not redundant.
+  const openSidebar = () => {
+    setDrawerOpen(true);
+    setSidebarCollapsed(false);
+  };
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -55,9 +79,23 @@ const App: FC = () => {
           onClick={() => setDrawerOpen(false)}
           aria-hidden="true"
         />
-        <Sidebar drawerOpen={drawerOpen} onCloseDrawer={() => setDrawerOpen(false)} />
-        <div className="s-main">
-          <Thread onOpenDrawer={() => setDrawerOpen(true)} />
+        <Sidebar
+          drawerOpen={drawerOpen}
+          onCloseDrawer={() => setDrawerOpen(false)}
+          collapsed={sidebarCollapsed}
+          onCollapse={() => setSidebarCollapsed(true)}
+        />
+        {/* W9 — real background non-interactivity while the mobile drawer
+            overlays this region (not just a visual scrim): `inert` removes
+            `.s-main` from the accessibility tree and blocks pointer/focus
+            interaction with it entirely. React 19 supports `inert` as a
+            native boolean DOM prop (confirmed: this repo's `react`/
+            `react-dom` are ^19.2.7). `undefined` (not `false`) when
+            inactive so the attribute is genuinely absent, matching how the
+            real DOM `inert` attribute works (presence, not value, is what
+            counts). */}
+        <div className={`s-main${sidebarCollapsed ? " sidebar-collapsed" : ""}`} inert={drawerOpen || undefined}>
+          <Thread onOpenDrawer={openSidebar} />
           <Composer />
         </div>
       </div>

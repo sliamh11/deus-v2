@@ -10,6 +10,14 @@
 // WB1 (LIA-496 review-fix) — W2 streaming activity indicator + W3
 // scroll-to-bottom, both added here.
 //
+// WB2 (LIA-496 review-fix, batch 4/8) — W7 desktop sidebar collapse:
+// `.s-drawer-open` below is unchanged in this file (still the same
+// mobile-drawer-open button, same class, same `verify-s3.mjs` selector),
+// but theme.css now ALSO shows it at >=861px while `.s-main` carries
+// `sidebar-collapsed` (set by App.tsx) — generalizing this one button into
+// "show the sidebar" for both the mobile-overlay and desktop-collapse
+// cases, rather than adding a second near-duplicate button.
+//
 // W2: `useStreamingTiming`/`StreamingTimingState` are real exports,
 // confirmed at node_modules/@assistant-ui/core/dist/react/index.d.ts:114
 // (re-exported from @assistant-ui/core/react — NOT from @assistant-ui/react
@@ -163,7 +171,7 @@ export const Thread: FC<{ onOpenDrawer: () => void }> = ({ onOpenDrawer }) => {
     <ThreadPrimitive.Root style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative" }}>
       <div className="s-top">
         <div className="s-top-left">
-          <button className="s-drawer-open" onClick={onOpenDrawer} aria-label="Open sidebar">
+          <button className="s-drawer-open" onClick={onOpenDrawer} aria-label="Show sidebar">
             ☰
           </button>
           <h2 className="serif">{title ?? "New chat"}</h2>

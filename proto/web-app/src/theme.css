@@ -91,11 +91,19 @@ a {
 /* ---------------------------------------------------------------------
    Sidebar (Sidebar.tsx)
    ------------------------------------------------------------------- */
+/* W7 — `.s-side` is now the OUTER collapse frame (width animates,
+   overflow clipped only while `.collapsed`); `.s-side-inner` holds a
+   fixed-width copy of the original padded layout so collapsing never
+   reflow-wraps its contents mid-transition — it just clips. */
 .s-side {
   width: 256px;
   flex: none;
   background: var(--s-side);
   border-right: 1px solid var(--s-line);
+}
+.s-side-inner {
+  width: 256px;
+  height: 100%;
   display: flex;
   flex-direction: column;
   padding: 18px 14px 0;
@@ -108,6 +116,33 @@ a {
   align-items: center;
   justify-content: space-between;
 }
+.s-brand-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* W7 — desktop-only collapse trigger, mirror of the mobile-only
+   `.s-drawer-close` right below (opposite media-query ranges, never both
+   visible at once). */
+.s-collapse-btn {
+  display: none;
+  border: none;
+  background: transparent;
+  color: var(--s-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 5px;
+}
+.s-collapse-btn:hover {
+  background: rgba(35, 40, 31, 0.06);
+  color: var(--s-ink);
+}
+@media (min-width: 861px) {
+  .s-collapse-btn {
+    display: inline-flex;
+  }
+}
 .s-drawer-close {
   display: none;
   border: none;
@@ -116,6 +151,24 @@ a {
   font-size: 18px;
   line-height: 1;
   padding: 2px 6px;
+}
+/* W8 — sidebar thread search. */
+.s-search {
+  border: 1px solid var(--s-line);
+  background: var(--s-field);
+  color: var(--s-ink);
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  margin-bottom: 14px;
+  width: 100%;
+}
+.s-search::placeholder {
+  color: var(--s-faint);
+}
+.s-search:focus {
+  outline: none;
+  border-color: var(--s-pine);
 }
 .s-new {
   border: 1px solid var(--s-pine);
@@ -185,28 +238,92 @@ a {
   background: #fff;
   color: var(--s-ink);
 }
-.s-item-actions {
-  display: none;
-  gap: 2px;
-  padding-right: 4px;
+/* W5 — overflow "..." menu, replacing the old `.s-item-actions` pair
+   whose `display:none` <-> `flex` hover toggle reflowed the row (the
+   trigger below is ALWAYS in the layout; only its opacity/pointer-events
+   toggle on hover/focus/open, so its width is a permanently reserved
+   slot). */
+.s-item-menu {
+  position: relative;
   flex: none;
-}
-.s-item-row:hover .s-item-actions,
-.s-item-row.on .s-item-actions {
+  width: 22px;
   display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.s-item-action {
+.s-item-menu-trigger {
   border: none;
   background: transparent;
   color: var(--s-faint);
-  font-size: 11px;
+  font-size: 13px;
+  line-height: 1;
   padding: 3px 4px;
   border-radius: 4px;
-  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
-.s-item-action:hover {
+.s-item-row:hover .s-item-menu-trigger,
+.s-item-row.on .s-item-menu-trigger,
+.s-item-row.menu-open .s-item-menu-trigger,
+.s-item-menu-trigger:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.s-item-menu-trigger:hover,
+.s-item-menu-trigger[aria-expanded="true"] {
+  color: var(--s-ink);
+  background: rgba(35, 40, 31, 0.08);
+}
+.s-item-menu-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 150px;
+  background: var(--s-field);
+  border: 1px solid var(--s-line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(35, 40, 31, 0.16);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.s-item-menu-option {
+  border: none;
+  background: transparent;
+  color: var(--s-ink);
+  font-size: 12.5px;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 5px;
+  width: 100%;
+}
+.s-item-menu-option:hover {
+  background: rgba(35, 40, 31, 0.06);
+}
+.s-item-menu-danger {
   color: var(--s-err);
+}
+.s-item-menu-danger:hover {
   background: rgba(182, 80, 63, 0.1);
+}
+.s-item-menu-confirm {
+  padding: 6px 8px 4px;
+  font-size: 12px;
+  color: var(--s-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.s-item-menu-confirm-row {
+  display: flex;
+  gap: 4px;
+}
+.s-item-menu-confirm-row .s-item-menu-option {
+  flex: 1;
+  text-align: center;
 }
 .s-gap {
   height: 18px;
@@ -928,5 +1045,32 @@ a {
   }
   .s-col {
     max-width: 100%;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   W7 — desktop sidebar collapse (>=861px), generalized from the mobile
+   overlay drawer transform above: same "hideable sidebar" affordance,
+   different mechanism (a real width-collapse that reclaims layout space
+   for `.s-main`, since there's no scrim/overlay concept at desktop
+   widths — `.s-side` stays in normal flow, it just animates to 0 width).
+   `.s-side-inner` keeps its own fixed 256px width throughout, so the
+   collapse clips rather than reflow-wraps its contents mid-transition.
+   ------------------------------------------------------------------- */
+@media (min-width: 861px) {
+  .s-side {
+    transition: width 0.18s ease, border-color 0.18s ease;
+  }
+  .s-side.collapsed {
+    width: 0;
+    border-right-color: transparent;
+    overflow: hidden;
+  }
+  /* Reuses Thread.tsx's existing mobile drawer-open button (same class,
+     same element — see that file's header comment) as the "expand"
+     affordance once collapsed, rather than adding a near-duplicate
+     button. */
+  .s-main.sidebar-collapsed .s-drawer-open {
+    display: inline-flex;
   }
 }

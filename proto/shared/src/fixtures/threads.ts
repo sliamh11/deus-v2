@@ -5,10 +5,22 @@
 // lookup) and as the key into ./conversations.ts's `SCRIPTS` map — the
 // single identifier a target needs to thread all three together.
 //
-// `lastMessageAt` offsets are relative to module-eval time (hours ago),
-// not fixed calendar timestamps, so re-running the app always produces a
-// sane Today/Yesterday split for Sidebar.tsx's grouping (target-specific,
-// not this module's job) without needing to hand-edit dates.
+// `lastMessageAt` offsets are relative to module-eval time (hours/days
+// ago), not fixed calendar timestamps, so re-running the app always
+// produces a sane Today/Yesterday/Previous-7-days/Older split for
+// Sidebar.tsx's grouping (target-specific, not this module's job) without
+// needing to hand-edit dates.
+//
+// WB2 sanctioned fixture change (LIA-496 review-fix, the ONLY logic/data
+// change allowed in shared/ for this batch — see the plan's "Scope
+// guardrails" section): `streaming-markdown-flicker`'s `lastMessageAt`
+// below is moved from ~33 hours ago to ~9 days ago so the corrected
+// truthful "Previous 7 days" / "Older" bucketing (Sidebar.tsx's W6 fix —
+// every non-today thread used to be mislabeled "Yesterday" regardless of
+// actual age) is visually demonstrable: with no thread older than ~33
+// hours in the original set, the "Older" bucket could never render at
+// all, honest or not. This is a data change, not a presentation value —
+// `check-shared-purity.sh` stays green (fixtures/ is exempt).
 export type SeedThread = {
   readonly id: string;
   readonly title: string;
@@ -16,8 +28,10 @@ export type SeedThread = {
 };
 
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 const NOW = Date.now();
 const hoursAgo = (h: number): Date => new Date(NOW - h * HOUR_MS);
+const daysAgo = (d: number): Date => new Date(NOW - d * DAY_MS);
 
 export const SEED_THREADS: readonly SeedThread[] = [
   // Today
@@ -60,9 +74,12 @@ export const SEED_THREADS: readonly SeedThread[] = [
     title: "Diff panel polish",
     lastMessageAt: hoursAgo(31),
   },
+  // WB2 sanctioned fixture change (see this file's header comment) — was
+  // hoursAgo(33) ("Yesterday"); moved to ~9 days ago so the truthful
+  // "Older" bucket has a real thread to render into.
   {
     id: "streaming-markdown-flicker",
     title: "Streaming markdown flicker",
-    lastMessageAt: hoursAgo(33),
+    lastMessageAt: daysAgo(9),
   },
 ] as const;
