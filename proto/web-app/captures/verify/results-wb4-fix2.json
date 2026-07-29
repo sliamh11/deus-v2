@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "feature": "ModelPicker listbox exposes aria-activedescendant tracking the arrow-key-active option (was: only a visual .active CSS class, no AT-visible signal)",
+      "expected": "Immediately after opening via keyboard, aria-activedescendant on the role=listbox resolves (via id lookup) to the same element carrying the visual .active class; after ArrowDown moves the visual active option, aria-activedescendant updates to a different id that again resolves to the new .active element; DOM focus stays on the listbox itself (not moved onto an option div), matching the roving-activedescendant ARIA pattern this component already implements for keyboard handling",
+      "observed": "before: menuHasAttr=true, activedescId=\"_r_1_-0\", resolvedMatchesActiveOption=true, resolvedText=\"Sonnet 5\" | after ArrowDown: activedescId=\"_r_1_-1\", resolvedMatchesActiveOption=true, resolvedText=\"Opus 5\", idsAreDistinctAcrossArrowPress=true, anyOptionIsDomFocused=false, listboxIsDomFocused=true",
+      "artifact": "web-app/captures/verify/fix2-wb4-01-model-picker-open-keyboard.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    }
+  ],
+  "consoleErrors": [],
+  "allPass": true
+}

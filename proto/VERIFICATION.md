@@ -714,3 +714,404 @@ independent reproduction of the same result via a different mechanism
 
 **verified-by: user-spot-check — PASS (stop-mid-stream genuinely halts
 output; reproduced independently outside the batch's own driver script).**
+
+## Web — WB4 (Composer & empty state: W14, W15, W16 per D3, W17, W18) — final batch
+
+Batch 8 of 8 (the final batch of the plan), built in this batch's own
+isolated worktree, branched from the tip of `lia496-production-ui-spike`
+after WB1 landed — this worktree contains IB1 + WB1's work but not any
+sibling batch built concurrently elsewhere. **Note on WB3 overlap:** `expected`
+values above (`## Full fix inventory` § D) name `Composer.tsx` for both W14
+(this batch) and W10/W13 (WB3's message-affordance work touches `Thread.tsx`,
+not `Composer.tsx`, per the plan's own file list) — no real overlap was found
+in this batch's own read of `Composer.tsx`/`Thread.tsx` at the point this
+worktree branched; the orchestrator should still diff-check at merge time
+per its own sequential-merge reconciliation process, since this worktree
+cannot see WB3's concurrent commits.
+
+Real Playwright (`chromium`, headless, 1280×900) against a live `npx vite
+--port 5191` dev server (a different port from WB1's `5190` — both batches'
+dev servers were live on this machine at different points; `5191` avoids any
+port collision), `web-app/captures/verify-wb4.mjs` (new driver file, same
+`record()`/`safe()`/`shot()` pattern as `verify-wb1.mjs`). Zero console/page
+errors (`consoleErrors: []`).
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | W17a — empty state has no internal fixture-spike language | `EmptyState.tsx`'s greeting no longer says "This is a scripted fixture spike (LIA-496)…" or otherwise exposes internal build-process language to the product surface | Greeting text: "What are we working on? / Pick a thread from the sidebar, or try one of these:" — no "fixture spike", no "LIA-496", no internal build-process language anywhere in the empty state | `web-app/captures/verify/wb4-01-empty-state.png` | batch-agent | **PASS** |
+| 2 | W17b — real flex-parent height bug fixed: `.s-empty`'s `flex:1` actually fills `.s-thread` | `.s-col` (the block-layout parent between `.s-thread` and `.s-empty`) becomes a real flex column so `.s-empty`'s pre-existing `flex:1` — previously dead CSS because its ancestor chain wasn't a flex container — finally takes effect | `.s-thread` height=734.0px, `.s-col` height=694.0px, `.s-empty` height=694.0px — `.s-empty` fills ≥90% of `.s-thread`'s real available height (694/734 = 94.6%), not collapsed to its own content height as before | `web-app/captures/verify/wb4-01-empty-state.png` | batch-agent | **PASS** |
+| 3 | W17c — composer docked under the greeting, no dead space | Gap between the bottom of the greeting content and the top of the composer pill is small (ordinary padding), not a large unexplained blank stretch of page | Measured gap=24.0px (this file's own `.s-empty` padding, not a design-bug-sized gap) — the greeting now sits directly above the composer, matching ChatGPT/Claude.ai's own docked new-chat layout instead of centering in the middle of the pane with dead space below | `web-app/captures/verify/wb4-01-empty-state.png` | batch-agent | **PASS** |
+| 4 | W16a — reserved attach-slot is present but genuinely inert (not a fake affordance) | Per D3: no attach button is built (an attach control that can't attach is the same "visibly actionable but actually disabled" fake affordance the Ink review condemned for `+ new session`) — a `.s-attach-slot` placeholder reserves that geometry instead, aria-hidden, no interactive role | `.s-attach-slot` present=true, has no button/interactive role=true — occupies the left-gutter geometry without rendering a clickable-looking control that does nothing | `web-app/captures/verify/wb4-02-model-picker-closed.png` | batch-agent | **PASS** |
+| 5 | W16b — model-picker trigger is a real dropdown trigger with two scripted labels | A real `<button aria-haspopup="listbox">` (not the old inert `<span className="s-model">`) with exactly the two scripted labels ("Sonnet 5" default, one alternate) | Trigger's initial label="Sonnet 5", `aria-haspopup="listbox"`=true, popover option count=2, options=["Sonnet 5","Opus 5"] | `web-app/captures/verify/wb4-03-model-picker-open.png` | batch-agent | **PASS** |
+| 6 | W16c — arrow-key navigation + Enter genuinely select and toggle the label | ArrowDown moves the active option; Enter selects the active option, closes the popover, and the trigger's displayed label changes to the newly-selected model — not just that the popover opens | activeBefore="Sonnet 5", activeAfter (post-ArrowDown)="Opus 5" (moved), labelAfterSelect="Opus 5" — trigger label genuinely changed from the default | `web-app/captures/verify/wb4-04-model-picker-selected.png` | batch-agent | **PASS** |
+| 7 | W16d — Escape and click-outside both dismiss the popover | Real Escape-key handling and a real `document`-level pointerdown listener both close the popover without altering the current selection unexpectedly | menuGoneAfterEscape=true, labelUnchangedAfterEscape=true (still "Opus 5"), menuGoneAfterOutsideClick=true (real pointerdown outside `.s-model-picker`'s root) | `web-app/captures/verify/wb4-05-model-picker-closed-by-outside-click.png` | batch-agent | **PASS** |
+| 8 | W18a — multiline pill geometry: border-radius relaxed (no longer a full stadium cap) | At a grown multiline height, `.s-field`'s computed `border-radius` is a fixed, honest value well under half the field's height — the old `999px` value always clamped to `min(999, height/2)`, i.e. a full stadium cap at ANY height including multiline, which is exactly what "relax the radius" fixes | oneLineHeight=54.0px, multiLineHeight=94.0px (grew past one line, confirmed), computed radius=26.0px vs. half-height=47.0px — a real, honest rounded-rectangle corner at multiline height, not a re-clamped stadium cap | `web-app/captures/verify/wb4-06-composer-one-line.png`, `web-app/captures/verify/wb4-07-composer-multiline.png` | batch-agent | **PASS** |
+| 9 | W18b — send button is flex-end (bottom) aligned at multiline heights | The send circle's bottom edge sits within the field's own bottom padding of the field's bottom edge (matching the last typed line), not floating in the vertical middle of the grown field the way the old `align-items: center` produced | fieldBottom=853.0px, sendBottom=842.0px, gap=11.0px vs. fieldPaddingBottom=10.0px — send button is bottom-pinned, not mid-field | `web-app/captures/verify/wb4-07-composer-multiline.png` | batch-agent | **PASS** |
+| 10 | W14 — composer stays mounted (not unmounted) while a permission decision is pending | While `.s-perm` is showing, the real `.s-field` > `<textarea>` structure (the actual `ComposerPrimitive.Root`/`Input`) is still present in the DOM — not swapped out for a bare unmounted `<div className="s-composer-waiting">` — genuinely `disabled`, with a placeholder that communicates why | fieldPresent=true, textareaPresent=true, textareaDisabled=true, placeholder="Resolve the permission prompt above to continue…", sendDisabled=true, oldWaitingDivStillPresent=**false** (the old unmount-based div is gone from the codebase, not just hidden) | `web-app/captures/verify/wb4-08-permission-pending-composer-state.png` | batch-agent | **PASS** |
+| 11 | W14b — disabled textarea genuinely cannot take focus (stray-keystroke guard preserved without unmounting) | A disabled HTML form control cannot become `document.activeElement` even when `.focus()` is called on it directly — the replacement guarantee for the old unmount-based stray-keystroke protection | Calling `.focus()` directly on the disabled textarea while `.s-perm` is pending: `document.activeElement === textarea` → **false** | `web-app/captures/verify/wb4-08-permission-pending-composer-state.png` | batch-agent | **PASS** |
+| 12 | W15 — "Always allow" button text states its scope | Button text reads "Always allow (this session)", not a bare "Always allow" that leaves the grant's breadth to be guessed | Button text="Always allow (this session)" | `web-app/captures/verify/wb4-09-permission-card-scope-note.png` | batch-agent | **PASS** |
+| 13 | W15b — explicit scope note explains how broad the grant is | A visible note near the buttons states the grant applies for the rest of the session and to every request for this tool (matching `shared/src/permissions.ts`'s real per-tool-name, session-scoped grant store — not per-path, not permanent) | Scope note text: "Applies to every delete file request for the rest of this session — not just this one." — matches the real grant-store mechanism exactly (per-tool-name, session-scoped) | `web-app/captures/verify/wb4-09-permission-card-scope-note.png` | batch-agent | **PASS** |
+
+**Summary: 13/13 PASS.** `npx tsc -b` — clean, exit 0 (web-app workspace; the
+other two workspaces unaffected by this batch's changes). `npx oxlint .` —
+clean, exit 0 (the one pre-existing unrelated `verify-wb1.mjs:282` unused-var
+warning noted in the WB1 section above persists, not introduced by this
+batch). `npm run build` (web-app) — succeeds. `bash
+scripts/check-shared-purity.sh` — PASSED (this batch touches only
+`web-app/src/**`, no `shared/src` changes — W16's model-picker state is
+web-app-local by construction, never imported from or exported to
+`@lia496/shared`, per D3's explicit guardrail).
+
+**Known, deliberately-unfixed finding — same hardcoded personal display
+name as every prior batch's screenshots (low, out of this batch's scope).**
+Every `wb4-*.png` screenshot above renders the same pre-existing hardcoded
+personal display name in the sidebar footer as WB1's own screenshots (see
+the WB1 THIRD REVISE round's note above for the exact source line and
+rationale) — `Sidebar.tsx` is not in this batch's scope (WB4 is Composer.tsx
++ EmptyState.tsx + theme.css + a new ModelPicker.tsx; the sidebar footer
+fix belongs to WB2, where `Sidebar.tsx` is already in scope). The mechanical
+absolute-path / home-relative-path / bare-username text sweep this repo's
+own public-repo sanitization discipline requires passes cleanly on every
+file this batch writes or edits — verified: zero occurrences of any absolute
+filesystem path, `~`-relative path, or the machine-owner's bare username in
+`Composer.tsx`, `ModelPicker.tsx`, `Thread.tsx`, `PermissionCard.tsx`,
+`EmptyState.tsx`, `theme.css`, `verify-wb4.mjs`, `results-wb4.json`, or this
+file's own new section — this particular leak is in rendered pixels, not
+text content, so the sweep cannot catch it (same class of leak, same
+pre-existing cause, as every prior batch's screenshots).
+
+## Web — WB4 CAPTURE STAGE (independent re-verification of the plan's six named proofs)
+
+Distinct dispatch from the "Web — WB4" build-stage section directly above
+(which already produced its own `verify-wb4.mjs`/port-5191 run). This
+section re-runs the same batch's proofs from scratch, on this batch's own
+reserved capture-stage port (`5186`, `npx vite --port 5186 --strictPort`),
+with a new, independently-written driver
+(`web-app/captures/verify-wb4-capture.mjs`) — not a re-execution of the
+build stage's own script — specifically strengthening two proofs the
+dispatch prompt named explicitly: (1) the model picker's click-vs-keyboard
+discriminating proof, and (2) 6-line composer geometry with an ARIA
+snapshot of the picker open at that height. `expected` values are frozen
+from `proto/design-source/lia496-fix-plan.md`'s `## Verification & capture
+strategy (per batch)` section (the WB4 bullet: "6-line composer geometry,
+picker open with an ARIA snapshot").
+
+Real Playwright (`chromium`, headless, 1280×900) against a live `npx vite
+--port 5186 --strictPort` dev server — `page.click`/`page.keyboard.press`/
+`page.fill`, no synthetic DOM injection or prop scripting. Zero
+console/page errors across the whole run (`consoleErrors: []`). Screenshots
+in `web-app/captures/verify/cap-wb4-*.png`; full raw results in
+`web-app/captures/verify/results-wb4-capture.json`.
+
+**Honesty note on this stage's own process:** the first run of this
+driver produced 4 genuine FAILs, all traced to defects in the CAPTURE
+SCRIPT itself, not the product — kept here rather than silently rerun
+until green: (1) the model-picker click-toggle check compared
+`trigger.innerText()` (which includes the caret glyph's own text, e.g.
+`"Sonnet 5\n⌄"`) directly against the bare string `"Sonnet 5"`, so the
+inequality never matched and the script picked the SAME already-selected
+option instead of the other one — fixed by extracting only the label's
+first line before comparing; (2) the keyboard-toggle check's
+"returned-to-original" assertion failed as a direct downstream consequence
+of (1); (3) the 6-line-geometry check used an arbitrary, un-derived `3x`
+one-line-height growth threshold that the real (correct) auto-resize
+behavior didn't clear — relaxed to `1.8x`, matching the same "grew well
+past one line" definition the build stage's own `verify-wb4.mjs` already
+uses (`fieldHeight > oneLine.height * 1.5`), not loosened arbitrarily past
+that established precedent. All fixes are in the committed script; the
+PASS rows below are from the corrected re-run, and the FAIL details are
+preserved in this paragraph rather than erased.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | Empty state — fresh screenshot | No internal fixture-spike/"LIA-496" language; correct flex height (no dead space); composer docked directly under the greeting | `emptyVisible=true`, `noFixtureLanguage=true`, greeting="What are we working on? / Pick a thread from the sidebar, or try one of these: …"; gap between greeting content and composer=24.0px (ordinary padding, not dead space), `docked=true` | `web-app/captures/verify/cap-wb4-01-empty-state.png` | batch-agent | **PASS** |
+| 2 | Composer mounted during a pending permission approval | Triggering a permission prompt keeps the real `.s-field`>`<textarea>` structure in the DOM (visible), genuinely `disabled`, with the waiting-specific placeholder shown — not unmounted/replaced | `fieldPresent=true`, `textareaPresent=true`, `textareaDisabled=true`, `placeholder="Resolve the permission prompt above to continue…"`, `oldWaitingDivPresent=false`, and calling `.focus()` directly on the disabled textarea leaves `document.activeElement !== textarea` (`focusStolen=false`) | `web-app/captures/verify/cap-wb4-02-permission-pending-composer-mounted.png` | batch-agent | **PASS** |
+| 3 | "Always allow" scope text | Button reads "Always allow (this session)"; a visible note states the grant applies to every request for this tool for the rest of the session | `buttonText="Always allow (this session)"`, `buttonStatesScope=true`; scope note text="Applies to every delete file request for the rest of this session — not just this one.", `scopeNotePresent=true` | `web-app/captures/verify/cap-wb4-03-permission-scope-note.png` | batch-agent | **PASS** |
+| 4 | **Model picker — discriminating proof, part A: real CLICK opens + real CLICK on the other option toggles the label** | A real mouse click on the trigger opens `role=listbox`; a real mouse click on the non-selected option row closes the popover and changes the trigger's displayed label to that option | `labelStart="Sonnet 5"`, clicked option="Opus 5", `labelAfterClickToggle="Opus 5"` — genuinely toggled via click alone | `web-app/captures/verify/cap-wb4-04-model-picker-closed.png`, `cap-wb4-05-model-picker-open-via-click.png`, `cap-wb4-06-model-picker-after-click-toggle.png` | batch-agent | **PASS** |
+| 5 | **Model picker — discriminating proof, part B: real KEYBOARD ONLY (focus, no click; Enter opens; ArrowDown moves; Enter selects) toggles the label back** | With the trigger focused (never clicked) Enter opens the popover, ArrowDown moves the active option, Enter selects and closes; since exactly 2 labels exist, this must land back on the pre-click-test label | `focusedBeforeOpen=true`, `activeBeforeArrow="Opus 5"`, `activeAfterArrow="Sonnet 5"`, `arrowMoved=true`, `labelAfterKeyboardToggle="Sonnet 5"`, `toggled=true`, `returnedToOriginal=true` — genuinely toggled via keyboard alone, independent of the click path in row 4 | `web-app/captures/verify/cap-wb4-07-model-picker-open-via-keyboard.png`, `cap-wb4-08-model-picker-after-keyboard-toggle.png` | batch-agent | **PASS** |
+| 6 | **6-line composer geometry** | Typing 6 literal lines grows the field well past one-line height; border-radius stays a fixed honest value (not re-clamped to a stadium cap); send button stays flex-end (bottom) aligned | `oneLineHeight=54.0px`, `sixLineFieldHeight=128.0px` (2.37× growth), `radius=26.0px` vs `halfHeight=64.0px` (`radiusRelaxed=true`), `sendBottomGap=11.0px` vs `fieldPaddingBottom=10.0px` (`sendBottomAligned=true`) — visually confirmed multiline in the screenshot (6 distinct typed lines rendered) | `web-app/captures/verify/cap-wb4-09-composer-six-line.png` | batch-agent | **PASS** |
+| 7 | **6-line composer geometry — picker open, captured as a real ARIA snapshot** | With the composer grown to 6 lines, opening the model picker produces an accessibility tree with a `listbox` role containing both scripted option labels, alongside the composer's own `textbox` role — via Playwright's real `ariaSnapshot()`, not a DOM/CSS inference | `ariaHasListbox=true`, `ariaHasBothOptions=true`, `ariaHasTextbox=true`. Full snapshot: <br>`- textbox "Ask Deus to do something…": Line one. Line two. Line three. Line four. Line five. Line six — this is the sixth and final line.`<br>`- button "Send": ↑`<br>`- button "Sonnet 5" [expanded]`<br>`- listbox "Model":`<br>`  - option "Sonnet 5" [selected]`<br>`  - option "Opus 5"` | `web-app/captures/verify/cap-wb4-10-composer-six-line-picker-open.png` | batch-agent | **PASS** |
+
+**Summary for this capture stage: 7/7 PASS**, all from a corrected
+second run of a freshly-written driver (the first run's 4 FAILs were script
+defects, disclosed above, not product defects). `consoleErrors: []` across
+the whole run.
+
+**Mechanical sweep (this stage's own artifacts):** the three-pattern sweep
+(absolute paths, home-relative paths, the machine-owner's bare username)
+over `verify-wb4-capture.mjs` and `results-wb4-capture.json` — zero
+occurrences of all three patterns. The same three-pattern sweep
+(binary-safe) over every `cap-wb4-*.png` — zero occurrences. All artifact
+paths in `results-wb4-capture.json` are `proto/`-relative (`web-app/captures/
+verify/...`), never absolute.
+
+**Same known, deliberately-unfixed pixel-level leak as the build-stage
+section above, carried forward honestly:** every `cap-wb4-*.png`
+screenshot in this stage also renders the same pre-existing hardcoded
+personal display name in the sidebar footer (visible in, e.g.,
+`cap-wb4-01-empty-state.png`, `cap-wb4-02-permission-pending-composer-
+mounted.png`) — this is a rendered-pixel leak from `Sidebar.tsx`, which is
+out of WB4's scope (belongs to WB2, per the build-stage section's own
+note); the text-content mechanical sweep above cannot and does not claim
+to catch it, consistent with how the build-stage section already disclosed
+the identical limitation for its own screenshots.
+
+**Verified-by note for the orchestrating session:** every row above is
+`verified-by: batch-agent` — this capture dispatch's own claim, run twice
+(once revealing script bugs, once clean after fixing them) but never
+cross-checked by a second, independent actor. Per the plan's execution
+model and this dispatch's own instructions, the orchestrating session must
+still independently re-verify the model-picker proof (rows 4–5 above)
+itself — a click, and separately a keyboard interaction, toggling the two
+scripted labels — before treating this stage's PASS as ground truth. Do
+not accept this section's word alone for that specific claim.
+
+## Web — WB4 REVISE round — code-review findings fixed
+
+A code-review REVISE round on WB4 raised four findings (one high, one
+medium, two low/advisory). All four investigated and resolved; two turned
+out, on rigorous re-verification, not to reproduce as originally described
+— documented honestly below rather than silently "fixed" with unnecessary
+code, per this repo's own delegated-conclusions discipline (a review
+verdict is a hypothesis to independently re-derive, not ground truth to
+propagate).
+
+**1. High — untracked-but-not-ignored `node_modules` symlinks (sanitization
+risk).** `proto/node_modules` and `proto/web-app/node_modules` were real
+symlinks (created during this batch's own run, `Jul 30 01:23`) pointing at
+the literal absolute path of a *different* worktree
+(`.claude/worktrees/lia496-production-ui-spike/proto/...`). Root cause:
+the root `.gitignore`'s `node_modules/` pattern (trailing slash) matches
+directories only — a symlink is not itself a directory, so `git
+check-ignore -v` exited `1` (not ignored) and `git status` listed both as
+untracked; a `git add -A`/`git add proto` at commit time would have staged
+a personal absolute path into this public repo. Fixed two ways: (a)
+deleted both symlinks and ran a real `npm install` inside `proto/`
+(npm-workspaces hoists `@assistant-ui/*` etc. up to `proto/node_modules`,
+confirmed present after install) so the worktree stays fully functional;
+(b) added a second, non-slash `node_modules` pattern to `.gitignore`
+(alongside the existing `node_modules/`) — the non-slash form matches by
+name regardless of file type, so it also covers symlinks. Verified, not
+assumed: `git check-ignore -v` on both the newly-installed real
+directories AND on a freshly-created throwaway symlink named
+`node_modules` both now exit `0` (ignored) under the new pattern; `git
+status --short | grep node_modules` returns nothing.
+
+**2. Medium — `VERIFICATION.md` quoted the literal sweep patterns,
+including the bare username, inside its own text.** The WB4 CAPTURE STAGE
+section's "Mechanical sweep" paragraph (originally at what is now lines
+~840–841) wrote the sweep's own grep patterns out as quoted literal
+text, spelling out the forbidden strings directly, which is exactly the
+quoted-forbidden-substring defect class this repo's own purity gate
+caught once before (FINDINGS.md §5): the file itself then contained the
+machine-owner's bare username, even though committed HEAD had zero
+occurrences before this batch. Fixed by rewriting both sentences to
+describe the sweep generically (the three-pattern sweep: absolute paths,
+home-relative paths, the machine-owner's bare username) with no literal
+pattern text anywhere in this description. Verified after this edit was
+the last change made to the file: the three-pattern sweep, run generically
+(not quoted here, per the fix above) over `proto/VERIFICATION.md` returns
+zero matches; the same three-pattern sweep was re-run over every file
+this REVISE round touched or created (`.gitignore`, `theme.css`,
+`Composer.tsx`, this file, `verify-wb4-fix.mjs`, and all new
+`.png`/`.json` capture artifacts, binary-safe) — zero occurrences
+anywhere.
+
+**3. Low/advisory — `.s-empty`'s `justify-content: flex-end` at short
+viewports, investigated, does NOT reproduce.** The finding named a
+real, well-known CSS quirk (a flex container with `justify-content:
+flex-end`/`center` under an `overflow: auto` ancestor can strand
+overflowing content above `scrollTop=0`, unreachable by scrolling) as a
+risk for this component, verified only at 1280×900. Investigated properly
+rather than taken on faith: first probed `.s-thread`'s own
+`scrollHeight`/`clientHeight` across several heights against this exact
+build to find where the greeting genuinely overflows (900/700/600/500px:
+no overflow at all, `scrollHeight === clientHeight` — those heights
+*cannot* exercise this bug either way; ≤450px: genuine overflow,
+`scrollHeight` 297 vs. `clientHeight` down to 184). At a real, confirmed
+400px-tall viewport (296 vs 234 — ~63px genuine overflow), the described
+failure does **not** reproduce in Chromium for this exact structure: `.s-
+empty` is not itself the `overflow: auto` element (`.s-thread` is, and
+`.s-thread` never sets a non-start `justify-content`), and `.s-empty` is a
+`flex: 1` item with the default `min-height: auto` — when its content
+exceeds its flex-computed size it simply grows to fit rather than
+clipping, and `justify-content` only has any effect when there is
+leftover space to distribute, which by definition doesn't exist in the
+overflow case. Confirmed both ways, not just the passing direction: the
+*same* Playwright assertion was run against the code with `justify-
+content: flex-end` still in place (pre-fix) at the confirmed-overflowing
+400px height, and it also passed (h1/p fully within the visible rect at
+`scrollTop=0`, last chip fully within the visible rect once scrolled to
+the bottom) — the quirk genuinely does not trigger here, this isn't a case
+of an insufficiently-strict test. Changed to `justify-content: flex-start`
++ `margin-top: auto` on the first child anyway, as a strictly-equivalent
+and marginally more defensive pattern for a bottom-docked `flex: 1` item
+(doesn't rely on `justify-content` inside any `overflow` ancestor chain at
+all, in case a future structural change reintroduces the specific
+combination that does trigger the quirk) — not because a reproducible bug
+was found in the current code. Verified both the fix and the no-regression
+case with a real Playwright run (`captures/verify-wb4-fix.mjs`, results in
+`captures/verify/results-wb4-fix.json`): at 400px (genuinely overflowing),
+`h1`/`p` fully within the visible rect at `scrollTop=0` and the last
+suggestion chip fully within the visible rect once scrolled to the bottom
+— **PASS**; at the normal 900px viewport, the greeting is still
+bottom-docked directly under the composer with the same ~24px ordinary
+padding gap as before (no regression to the original W17 fix) — **PASS**.
+Also re-ran the full pre-existing `verify-wb4-capture.mjs` (7/7) and
+`verify-wb4.mjs` suites unchanged — still 7/7 and 13/13 respectively, no
+regression from the CSS change.
+
+**4. Low/advisory — `Composer.tsx`'s `autoFocus={!awaitingApproval}` after
+a permission resolves, investigated, does NOT reproduce.** The finding
+reasoned that `autoFocus` only fires on mount, and since the W14 fix (see
+the WB4 batch section above) means this composer's `<textarea>` no longer
+unmounts/remounts across an approval cycle, focus would strand on
+`<body>` once a permission resolves instead of returning to the composer
+(the old unmount/remount incidentally re-triggered `autoFocus` every
+cycle). That reasoning is correct for a raw HTML `autofocus` attribute,
+but reading `ComposerPrimitive.Input`'s own source directly
+(`node_modules/@assistant-ui/react/dist/primitives/composer/
+ComposerInput.js`) shows it is not a plain HTML `autofocus`: it computes
+`autoFocusEnabled = autoFocus && !isDisabled`, wraps a `focus` callback in
+`useCallback(..., [autoFocusEnabled])`, and re-runs that `focus()`
+(`textarea.focus()`) via `useEffect(() => focus(), [focus])` — i.e. every
+time `autoFocusEnabled`'s *value* changes, not just on mount. Since this
+component's own `disabled={awaitingApproval}` is necessarily reactive
+(that is the entire point of the W14 fix), `isDisabled` flips
+`true -> false` exactly when a permission resolves, which flips
+`autoFocusEnabled` `false -> true` and re-fires the library's own focus
+effect — with zero custom code. Confirmed empirically, twice, not just by
+reading source: first with a temporary `ref` + `useEffect` fix added and
+removed again to isolate the mechanism, then with `autoFocus` forced to a
+static `true` (removing its own reactivity) to confirm the responsible
+mechanism is specifically `disabled`'s reactivity feeding
+`autoFocusEnabled`, not `autoFocus` itself needing to vary — both
+configurations pass. Final `Composer.tsx` is unchanged in behavior from
+before this round (still `autoFocus={!awaitingApproval}`,
+`disabled={awaitingApproval}`, no added ref/effect) — only the header
+comment was corrected to record the investigated, verified mechanism
+instead of the unverified assumption. Verified with a real Playwright run
+that deliberately moves focus away (onto `PermissionCard`'s own "Always
+allow" button, confirmed via `document.activeElement`'s className before
+resolving) so the test cannot pass by accident, then resolves the
+permission and reads `document.activeElement` afterward:
+`activeIsTextarea=true`, `activeIsBody=false`, `activeTag=TEXTAREA` —
+**PASS** (`captures/verify-wb4-fix.mjs`, `results-wb4-fix.json`).
+
+**Files changed this round:** `.gitignore` (non-slash `node_modules`
+pattern added), `proto/VERIFICATION.md` (this section + the CAPTURE
+STAGE section's sweep-description fix above), `theme.css` (`.s-empty`
+`justify-content` + `margin-top` change), `Composer.tsx` (header comment
+corrected only, no behavioral change), plus a new
+`captures/verify-wb4-fix.mjs` driver and its
+`captures/verify/fix-wb4-*.png` / `results-wb4-fix.json` artifacts. The
+two `node_modules` symlinks were deleted, not replaced with tracked files
+(real `node_modules` directories are regenerable via `npm install` in
+`proto/` and correctly git-ignored, same as every other batch).
+
+**Mechanical sweep (this round's own artifacts):** the three-pattern sweep
+(absolute paths, home-relative paths, the machine-owner's bare username)
+over every file this round touched or created — `.gitignore`, this file,
+`theme.css`, `Composer.tsx`, `captures/verify-wb4-fix.mjs`,
+`results-wb4-fix.json`, and every `fix-wb4-*.png` (binary-safe) — zero
+occurrences of all three patterns. All artifact paths recorded above are
+`proto/`-relative, never absolute.
+
+**Verified-by note for the orchestrating session:** every claim in this
+section is `verified-by: batch-agent` — this fix dispatch's own claim, not
+yet cross-checked by a second, independent actor. In particular, findings
+3 and 4 above conclude the originally-reported defects do not reproduce;
+the orchestrating session should treat that as a claim to spot-check
+(re-run `captures/verify-wb4-fix.mjs` against a live dev server, or read
+the cited `ComposerInput.js` lines directly) before accepting it as
+ground truth, same discipline already applied to the model-picker proof
+above.
+
+## Web — WB4 REVISE round 2 — code-review findings fixed
+
+Code-review (this REVISE round 2) returned two findings against the round-1
+REVISE work above: one high-severity doc-integrity finding (this file's own
+round-1 "fixed the leak" section re-leaking the sanitized patterns it
+claimed to have removed, plus a false "zero matches" verification claim),
+and one low/advisory accessibility gap in `ModelPicker.tsx`. Both are fixed
+here, and the one with rendering/behavioral impact is independently
+re-verified live, not just re-asserted.
+
+**Finding — doc-integrity regression (high, real defect, third recurrence
+of the same class).** The round-1 "Medium" finding writeup above (this
+file's own "2. Medium" paragraph) quoted the forbidden sweep patterns
+themselves as literal backtick-quoted text while describing the fix —
+reintroducing the machine-owner's bare username plus the two forbidden
+path-shaped substrings into a file destined for a public repo, exactly the
+quoted-forbidden-substring class FINDINGS.md §5 already caught once. The
+same paragraph also asserted that a grep for the three patterns now
+returned zero matches, which was false at the time it was written — the
+literal quoting on the same lines guaranteed at least 2 matches. Fixed by
+rewriting that paragraph to describe the sweep only generically (as the
+CAPTURE STAGE section and this round's own "Mechanical sweep" paragraph
+already correctly do, with no literal pattern text anywhere — this
+paragraph you are reading now follows the same rule), and by re-running
+the sweep as the LAST edit made to the file — not before a subsequent edit
+could reintroduce a match, which is what let the false claim through the
+first time. Verified: the three-pattern sweep over `proto/VERIFICATION.md`,
+run after every other edit in this round was already made, returns zero
+matches.
+
+**Finding — `ModelPicker.tsx` listbox has no `aria-activedescendant` (low,
+advisory, real gap).** D3's own requirements for this component (real
+button, `aria-haspopup="listbox"`, arrow keys, Escape, click-outside) were
+already all genuinely met, but the arrow-key-active option was conveyed
+only by a visual `.active` CSS class — the `role="listbox"` element (which
+holds real DOM focus while open, confirmed in source) never told assistive
+technology which `role="option"` was active, and the option `<div>`s are
+intentionally not themselves focusable (this is a roving-`aria-
+activedescendant` pattern, not roving `tabindex`). Fixed by giving each
+option a stable id via React's `useId()` (collision-safe across multiple
+mounted instances, not just a hardcoded string) and setting `aria-
+activedescendant` on the listbox to the currently-active option's id,
+recomputed on every render so it updates on ArrowUp/ArrowDown exactly like
+the existing `.active` class does. No visual or interaction change — same
+click, arrow-key, Enter, Escape, and click-outside behavior as before; only
+an added AT-visible attribute. Re-verified live (not just read) with a
+fresh Playwright run against a live `npx vite --port 5187 --strictPort` dev
+server: opened the picker via keyboard (focus trigger, Enter), confirmed
+`aria-activedescendant` already resolves (by `getElementById` lookup) to
+the same element carrying `.active` immediately on open
+(`resolvedMatchesActiveOption=true`, `resolvedText="Sonnet 5"`), pressed
+ArrowDown, and confirmed the attribute's value changed to a different id
+that again resolves to the new `.active` element
+(`resolvedText="Opus 5"`), while `document.activeElement` stayed on the
+listbox itself the whole time (`listboxIsDomFocused=true`,
+`anyOptionIsDomFocused=false`) — proving the fix tracks live keyboard
+navigation rather than being a static value set once at open time, and
+that DOM focus handling is unchanged. **PASS**
+(`captures/verify-wb4-fix2.mjs`, `results-wb4-fix2.json`,
+`captures/verify/fix2-wb4-01-model-picker-open-keyboard.png`,
+`captures/verify/fix2-wb4-02-model-picker-after-arrowdown.png`).
+
+**Files changed this round:** `proto/VERIFICATION.md` (this section + the
+round-1 "2. Medium" paragraph's sweep-description rewritten to remove the
+re-leaked literal patterns), `ModelPicker.tsx` (`useId` import,
+`optionIdPrefix`, per-option `id`, listbox `aria-activedescendant` — no
+other behavioral change), plus a new `captures/verify-wb4-fix2.mjs` driver
+and its `captures/verify/fix2-wb4-*.png` / `results-wb4-fix2.json`
+artifacts. `npx tsc -b` in `proto/web-app/` re-run clean (no type errors)
+after the `ModelPicker.tsx` change.
+
+**Mechanical sweep (this round's own artifacts), run as the final step
+after every other edit above:** the three-pattern sweep (absolute paths,
+home-relative paths, the machine-owner's bare username) over every file
+this round touched or created — this file, `ModelPicker.tsx`,
+`captures/verify-wb4-fix2.mjs`, `results-wb4-fix2.json`, and both
+`fix2-wb4-*.png` (binary-safe) — zero occurrences of all three patterns.
+All artifact paths recorded above are `proto/`-relative, never absolute.
+
+**Verified-by note for the orchestrating session:** every claim in this
+section is `verified-by: batch-agent` — this fix dispatch's own claim, not
+yet cross-checked by a second, independent actor. Given that the finding
+this round fixes was specifically about a previous `verified-by: batch-
+agent` claim being false, the orchestrating session should treat that
+history as reason to spot-check this round too (re-run the grep sweep
+directly over the committed file, and re-run `captures/verify-wb4-fix2.mjs`
+against a live dev server) rather than accept it on the strength of the
+prose alone.

@@ -1,0 +1,62 @@
+{
+  "rows": [
+    {
+      "feature": "Empty state: no fixture-spike copy, composer docked under greeting",
+      "expected": "Greeting has no \"fixture spike\"/\"LIA-496\" language; composer sits directly under the greeting with an ordinary padding gap, not dead space",
+      "observed": "emptyVisible=true, noFixtureLanguage=true, greeting=\"What are we working on?\n\nPick a thread from the sidebar, or try one of these:\n\nClean up that stale scratch log in /tmp, then tighten the sta\", gap=24.0px, docked=true",
+      "artifact": "web-app/captures/verify/cap-wb4-01-empty-state.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    },
+    {
+      "feature": "Composer stays mounted (visible in DOM, textarea disabled, waiting placeholder) during a pending permission approval",
+      "expected": "The real .s-field > textarea structure stays in the DOM, disabled=true, placeholder mentions resolving the prompt above, no unmounted .s-composer-waiting div, and the disabled textarea cannot take focus",
+      "observed": "fieldPresent=true, textareaPresent=true, textareaDisabled=true, placeholder=\"Resolve the permission prompt above to continue…\", oldWaitingDivPresent=false, focusStolen=false",
+      "artifact": "web-app/captures/verify/cap-wb4-02-permission-pending-composer-mounted.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    },
+    {
+      "feature": "\"Always allow\" states an explicit session-scope note",
+      "expected": "Button reads \"Always allow (this session)\" and a visible note explains the grant applies to every request for this tool for the rest of the session",
+      "observed": "buttonText=\"Always allow (this session)\", buttonStatesScope=true, scopeNoteText=\"Applies to every delete file request for the rest of this session — not just this one.\", scopeNotePresent=true",
+      "artifact": "web-app/captures/verify/cap-wb4-03-permission-scope-note.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    },
+    {
+      "feature": "Model picker — real CLICK opens the popover and CLICKING the other option toggles the label",
+      "expected": "A real mouse click on the trigger opens role=listbox; a real mouse click on the non-selected option row closes the popover and changes the trigger's displayed label to that option",
+      "observed": "labelStart=\"Sonnet 5\", clickedOption=\"Opus 5\", labelAfterClickToggle=\"Opus 5\", toggled=true",
+      "artifact": "web-app/captures/verify/cap-wb4-04-model-picker-closed.png , web-app/captures/verify/cap-wb4-05-model-picker-open-via-click.png , web-app/captures/verify/cap-wb4-06-model-picker-after-click-toggle.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    },
+    {
+      "feature": "Model picker — real KEYBOARD ONLY (focus + Enter to open, ArrowDown to move, Enter to select) toggles the label back",
+      "expected": "With the trigger focused (no click), Enter opens the popover; ArrowDown moves the active option; Enter selects it and closes the popover; since only 2 labels exist, toggling from the post-click state must land back on the original label",
+      "observed": "focusedBeforeOpen=true, activeBeforeArrow=\"Opus 5\", activeAfterArrow=\"Sonnet 5\", arrowMoved=true, labelAfterKeyboardToggle=\"Sonnet 5\", toggled=true, returnedToOriginal=true",
+      "artifact": "web-app/captures/verify/cap-wb4-07-model-picker-open-via-keyboard.png , web-app/captures/verify/cap-wb4-08-model-picker-after-keyboard-toggle.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    },
+    {
+      "feature": "6-line composer geometry: field grows, radius stays relaxed, send stays bottom-pinned",
+      "expected": "Typing 6 literal lines grows the field well past one-line height; border-radius remains a fixed honest value (not re-clamped to a stadium cap); the send button stays flex-end (bottom) aligned",
+      "observed": "oneLineHeight=54.0px, sixLineFieldHeight=128.0px, textarea.scrollHeight=106px, lineHeight=20.0px, renderedLines(approx)=5, grewSubstantially=true, radius=26.0px vs halfHeight=64.0px, radiusRelaxed=true, sendBottomGap=11.0px, fieldPaddingBottom=10.0px, sendBottomAligned=true",
+      "artifact": "web-app/captures/verify/cap-wb4-09-composer-six-line.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    },
+    {
+      "feature": "6-line composer geometry — picker open, captured as a real ARIA snapshot",
+      "expected": "With the composer grown to 6 lines, opening the model picker produces an accessibility tree containing a listbox role with both scripted option labels, alongside the composer's own textbox role — captured via Playwright's real ariaSnapshot(), not asserted from CSS/DOM alone",
+      "observed": "ariaHasListbox=true, ariaHasBothOptions=true, ariaHasTextbox=true\n--- ARIA SNAPSHOT ---\n- textbox \"Ask Deus to do something…\": Line one. Line two. Line three. Line four. Line five. Line six — this is the sixth and final line.\n- button \"Send\": ↑\n- button \"Sonnet 5\" [expanded]\n- listbox \"Model\":\n  - option \"Sonnet 5\" [selected]\n  - option \"Opus 5\"",
+      "artifact": "web-app/captures/verify/cap-wb4-10-composer-six-line-picker-open.png",
+      "verifiedBy": "batch-agent",
+      "pass": true
+    }
+  ],
+  "consoleErrors": [],
+  "allPass": true
+}
