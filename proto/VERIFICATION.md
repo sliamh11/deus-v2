@@ -310,3 +310,39 @@ changes this round).
 **Summary for this REVISE round 2: all four findings fixed; the one with a
 rendering-behavior change (error-state regression) re-verified live with a
 fresh capture, not left as a stale claim.**
+
+## Orchestrating-session independent re-verification (`verified-by: user-spot-check`)
+
+Per the plan's own execution model — IB1's one named highest-risk claim is
+proof #2 (forced-tall, multi-part, no destructive `\x1b[3J`) — re-run
+firsthand in a fresh tmux session (`-x 100 -y 15`), independent of any
+batch-agent dispatch, before trusting the SHIP verdict above.
+
+**Method:** `tmux new-session` at the exact pane size, `script -q
+<file> npx tsx src/main.tsx` for a raw byte capture, `ctrl+t` → arrow-nav →
+`Enter` onto the real "LIA-495 migration spike" seeded thread (confirmed via
+`[7m` inverse-video byte match on the correct row before selecting), typed
+and sent "why did LIA-495 need zero logic changes on web?" (the thread's
+real trigger — matched its scripted reply verbatim: reasoning → intro →
+`Bash` tool call → closing text, byte-for-byte the same content
+`conversations.ts:492-505` defines), waited for full settle.
+
+**Result:** `\x1b[3J` count = 6 in the raw byte log (offsets 5096, 8102,
+11108, 14114, 17120, 20126). The message's own text first appears at byte
+offset 23805 — **all 6 occurrences are strictly before that**, i.e. before
+the message was even sent (during the `ctrl+t` thread-picker navigation
+that preceded it), matching the exact pre-send-only pattern this round's
+own re-verification described (their run found 4 pre-send occurrences,
+mine found 6 — the small count difference is consistent with a slightly
+different navigation path through the picker, not a different mechanism).
+**Zero `\x1b[3J` occurrences from message-send through full settle** — the
+literal scoped claim IB1's proof #2 exists to prove.
+
+This independently confirms: (1) the part-granularity commit fix genuinely
+works for the real send-through-settle window; (2) the disclosed pre-send
+picker-navigation residual is real and reproduces on a fresh run, not a
+one-off artifact of the fix dispatch's own capture.
+
+**verified-by: user-spot-check — PASS (send-through-settle window; pre-send
+picker-navigation clears are the same disclosed, out-of-scope residual
+noted in round-1's own re-verification, reproduced independently here).**
