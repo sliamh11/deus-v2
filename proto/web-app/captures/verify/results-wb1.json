@@ -1,0 +1,61 @@
+{
+  "rows": [
+    {
+      "feature": "Streaming lifecycle: pre-first-token shimmer -> stream-head cursor -> cursor gone on completion",
+      "expected": "requestAnimationFrame-sampled (one sample per real paint frame) sequence shows .s-shimmer/.s-shimmer-reasoning visible before any text, then .s-cursor/.s-cursor-reasoning visible while text is actively appending, then neither present once the part completes",
+      "observed": "590 paint-frame samples; shimmer ever seen=true (first at 19.9ms), cursor ever seen=true (first at 34.2ms), shimmer-before-cursor order ok=true, cursor gone after completion=true",
+      "artifact": "web-app/captures/verify/wb1-01-shimmer-or-early-stream-window.png , web-app/captures/verify/wb1-02-cursor-during-stream.png , web-app/captures/verify/wb1-03-cursor-gone-on-completion.png",
+      "pass": true
+    },
+    {
+      "feature": "Setup: resolve turn 1's permission prompt (Always allow)",
+      "expected": "unblocks the composer for the Stop/retry proofs below — turn1Continue's own run() cycle must genuinely start (Reload count 1→0) and finish (count 0→1) after the click, not just show a pre-click-stale Reload",
+      "observed": "Reload count dipped to 0 after Always-allow click (turn1Continue genuinely running) then returned to 1 (turn1Continue genuinely complete) — turn complete for real",
+      "artifact": "(no screenshot — setup step)",
+      "pass": true
+    },
+    {
+      "feature": "Stop mid-stream — click captured (before/after screenshot pair)",
+      "expected": "Clicking Stop (.s-send-stop, ComposerPrimitive.Cancel) while the LAST message's own in-flight text.length>3 and status.type==='running'",
+      "observed": "clicked at textLen=6 (measured from the LAST of 2 .s-msg-group elements — turn 2's own reply, confirmed sent via the .s-user bubble check above — not the first .s-ast on the page)",
+      "artifact": "web-app/captures/verify/wb1-04-stop-before-click.png , web-app/captures/verify/wb1-05-stop-after-click.png",
+      "pass": true
+    },
+    {
+      "feature": "Stop mid-stream — NO further text appends after click (2s later, byte-identical)",
+      "expected": "Thread text content at the moment of the Stop click and 2 seconds later are identical — no further tokens appended post-cancel",
+      "observed": "textLen immediately after click=1407, textLen 2s later=1407, identical=true. Text sample (last 200 chars) immediately-after-click=\": \"⏺\", color: \"text.muted\" };\n   }\n }\n \n\nThat's both done. Let me know if you'd like anything else.\n\n2.5s · 53 tok/s\n\nDid that leave anything else stale in /tmp?\n\nChecking\n\nCopy\nReload\n0.1s · 28 tok/s\" | 2s-later=\": \"⏺\", color: \"text.muted\" };\n   }\n }\n \n\nThat's both done. Let me know if you'd like anything else.\n\n2.5s · 53 tok/s\n\nDid that leave anything else stale in /tmp?\n\nChecking\n\nCopy\nReload\n0.1s · 28 tok/s\"",
+      "artifact": "web-app/captures/verify/wb1-06-stop-2s-later.png",
+      "pass": true
+    },
+    {
+      "feature": "Post-stop: composer/retry path resumes normal generation",
+      "expected": "After Stop, composer flips back to Send (isRunning=false), a new message can be sent, and it streams to a genuine completion (Stop reappears mid-stream, then Reload/Copy on finish, with new content in the thread)",
+      "observed": "Send visible right after stop=true, Stop control gone=true, new run's Stop button reappeared during retry=true, thread grew with new content=true (before len=1407, after len=1863)",
+      "artifact": "web-app/captures/verify/wb1-07-post-stop-retry-streaming.png , web-app/captures/verify/wb1-08-post-stop-retry-complete.png",
+      "pass": true
+    },
+    {
+      "feature": "Scroll-to-bottom control is hidden (not just disabled) while already at the bottom",
+      "expected": "createActionButton.js mounts the control unconditionally and only toggles `disabled` — theme.css must translate that into real hiding via `.s-scroll-bottom:disabled { display: none }`, per the corrected Thread.tsx header comment",
+      "observed": "control present in DOM=true, disabled=true, computed display!=none (visible)=false",
+      "artifact": "web-app/captures/verify/wb1-09-scroll-to-bottom-hidden-while-at-bottom.png",
+      "pass": true
+    },
+    {
+      "feature": "Scroll-to-bottom control enables while scrolled up during streaming, and clicking it returns to bottom",
+      "expected": "ThreadPrimitive.ScrollToBottom (always mounted, self-disabling per createActionButton.js) becomes ENABLED while the user is scrolled away from the bottom during active streaming, stays enabled as new content streams in, and clicking it scrolls the viewport back to the bottom (control then self-disables again)",
+      "observed": "scrollTop after real wheel scroll-up=0, control enabled right after scroll-up=true, control observed enabled at least once during the following ~1s of further streaming=true, control enabled at click-decision time=true, scrolled to bottom after click=true, control disabled again after click=true",
+      "artifact": "web-app/captures/verify/wb1-10-scroll-to-bottom-button-visible.png , web-app/captures/verify/wb1-11-scroll-to-bottom-still-enabled-after-more-streaming.png , web-app/captures/verify/wb1-12-scroll-to-bottom-after-click.png",
+      "pass": true
+    },
+    {
+      "feature": "Error card inline retry (.s-error-retry, ActionBarPrimitive.Reload) re-issues a real request, not just a re-render",
+      "expected": "Clicking the inline retry control re-invokes the real adapter for this message (same live mechanism ActionBar.tsx's own Reload uses) — the error card genuinely clears because message.status transitions away from error, not because the DOM node was cosmetically hidden. Known documented deviation: the fixture's turnIndex 2+ has no scripted crash-recovery content, so the second attempt lands on the honest empty unscripted() fallback rather than a populated 'recovered' response — that is expected here, not a bug.",
+      "observed": "error card visible before retry, text=\"Something went wrong\nshiki: unbundled theme \"solarized-dusk\" is not part of the loaded bundle — call highlighter.loadThe\"; retry control visible=true; error card cleared after retry click=true",
+      "artifact": "web-app/captures/verify/wb1-13-error-card-before-retry.png , web-app/captures/verify/wb1-14-error-card-after-retry.png",
+      "pass": true
+    }
+  ],
+  "consoleErrors": []
+}

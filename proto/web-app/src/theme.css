@@ -47,16 +47,26 @@
   box-sizing: border-box;
 }
 
+/* WB1 REVISE round (LIA-496 code-review, W3 finding) — html/body/#root/
+   .rr-app/.s-main previously all used `min-height: 100svh` (a floor, not a
+   ceiling), so the flex chain that should height-constrain `.s-thread {
+   flex: 1; overflow-y: auto }` (below) was never actually bounded: the
+   whole page grew to fit content and the BODY scrolled instead of the
+   thread pane, so `.s-thread` never internally overflowed and
+   `ThreadPrimitive.ScrollToBottom` (whose enable/disable logic reads that
+   overflow) could never enable. Switched to `height: 100svh` throughout
+   this chain so it's a real ceiling — confirmed via the same forced-short-
+   viewport diagnostic that found the bug (see VERIFICATION.md). */
 html,
 body {
   margin: 0;
-  min-height: 100svh;
+  height: 100svh;
   background: var(--s-bg);
   color: var(--s-ink);
 }
 
 #root {
-  min-height: 100svh;
+  height: 100svh;
 }
 
 button {
@@ -73,7 +83,7 @@ a {
    ------------------------------------------------------------------- */
 .rr-app {
   display: flex;
-  min-height: 100svh;
+  height: 100svh;
   background: var(--s-bg);
   color: var(--s-ink);
 }
@@ -264,7 +274,7 @@ a {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 100svh;
+  height: 100svh;
 }
 .s-top {
   padding: 14px 26px;
@@ -391,6 +401,69 @@ a {
 }
 .s-toolline .dot {
   color: var(--s-faint);
+}
+
+/* ---------------------------------------------------------------------
+   WB1 (LIA-496 review-fix) — W2 streaming activity indicator.
+   .s-shimmer: pre-first-token placeholder (MarkdownText.tsx / Thread.tsx's
+   ReasoningPart, shown while status.type==="running" and text is still
+   empty). .s-stream-wrap/.s-cursor: stream-head cursor once real content
+   has started arriving. Both driven by real per-part `status` state, zero
+   JS timer — see MarkdownText.tsx's header comment.
+   ------------------------------------------------------------------- */
+@keyframes s-shimmer-sweep {
+  0% {
+    background-position: -120% 0;
+  }
+  100% {
+    background-position: 220% 0;
+  }
+}
+.s-shimmer {
+  height: 15px;
+  width: 62%;
+  margin: 0 0 14px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--s-chip) 25%, var(--s-line) 50%, var(--s-chip) 75%);
+  background-size: 200% 100%;
+  animation: s-shimmer-sweep 1.3s ease-in-out infinite;
+}
+.s-shimmer-reasoning {
+  height: 11px;
+  width: 46%;
+  margin: 0 0 12px;
+}
+.s-stream-wrap {
+  display: block;
+}
+@keyframes s-cursor-blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+.s-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--s-pine);
+  animation: s-cursor-blink 0.9s step-end infinite;
+}
+.s-cursor-reasoning {
+  height: 0.9em;
+  background: var(--s-faint);
+}
+.s-timing {
+  font-family: var(--s-mono);
+  font-size: 11px;
+  color: var(--s-faint);
+  margin-left: auto;
 }
 
 /* ---------------------------------------------------------------------
@@ -630,12 +703,61 @@ a {
   background: var(--s-faint);
   cursor: default;
 }
+/* W1 stop-generating control — ComposerPrimitive.Cancel, swapped in for
+   .s-send while a run is active (Composer.tsx). Same pill/circle shape as
+   Send so the swap doesn't jump the layout; a dimmer ink tone (rather than
+   pine) reads as "interrupt", not "primary action". */
+.s-send-stop {
+  background: var(--s-ink);
+  font-size: 11px;
+}
+.s-send-stop:disabled {
+  background: var(--s-faint);
+  cursor: default;
+}
 .s-composer-waiting {
   max-width: 44rem;
   margin: 0 auto;
   padding: 10px 20px;
   color: var(--s-warn);
   font-size: 13px;
+}
+
+/* W3 scroll-to-bottom — ThreadPrimitive.ScrollToBottom (Thread.tsx),
+   floating over the bottom of the message viewport (Thread.tsx's root has
+   position:relative for exactly this).
+   Code-review fix (WB1 second REVISE round, medium-severity finding): the
+   control is ALWAYS mounted (confirmed by reading createActionButton.js
+   directly — it only toggles the `disabled` attribute, never returns
+   null), so a visibility rule keyed off :disabled IS needed here — Thread.
+   tsx's own header comment above this element previously claimed
+   otherwise and has been corrected. Without this rule the ↓ button floated
+   permanently over the composer even while already at the bottom, unlike
+   ChatGPT/Claude.ai's reference behavior of only showing this control when
+   scrolled up. */
+.s-scroll-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--s-line);
+  background: var(--s-field);
+  color: var(--s-dim);
+  box-shadow: 0 2px 10px rgba(35, 40, 31, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+.s-scroll-bottom:disabled {
+  display: none;
+}
+.s-scroll-bottom:hover {
+  color: var(--s-pine);
+  border-color: var(--s-pine);
 }
 
 /* ---------------------------------------------------------------------
@@ -751,6 +873,26 @@ a {
 .s-error .h {
   font-weight: 700;
   margin-bottom: 4px;
+}
+/* W4 inline retry — ActionBarPrimitive.Reload (ErrorState.tsx), the same
+   real reload mechanism ActionBar.tsx's own Reload button uses. */
+.s-error-retry {
+  display: inline-block;
+  margin-top: 10px;
+  border: 1px solid var(--s-err);
+  background: transparent;
+  color: var(--s-err);
+  border-radius: 7px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.s-error-retry:hover {
+  background: rgba(182, 80, 63, 0.08);
+}
+.s-error-retry:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* ---------------------------------------------------------------------

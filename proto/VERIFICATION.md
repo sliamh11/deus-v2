@@ -346,3 +346,336 @@ one-off artifact of the fix dispatch's own capture.
 **verified-by: user-spot-check — PASS (send-through-settle window; pre-send
 picker-navigation clears are the same disclosed, out-of-scope residual
 noted in round-1's own re-verification, reproduced independently here).**
+
+## Web — WB1 (Run-state package: W1 stop, W2 streaming indicator, W3
+scroll-to-bottom, W4 error inline retry) — CAPTURE stage
+
+`expected` values frozen from `proto/design-source/lia496-fix-plan.md`'s
+`## Verification & capture strategy (per batch)` section (proofs 1-5 as
+named there for WB1) and its `## Execution model` § step 2 (the named
+highest-risk claim for this batch: "the stop-generating control actually
+halts token output mid-stream"). Real Playwright (`chromium`, headless,
+1280×900) against the live `npx vite --port 5190` dev server. Driver:
+`web-app/captures/verify-wb1.mjs` (re-run fresh for this dispatch, not
+carried over from any prior attempt). Screenshots + video in
+`web-app/captures/verify/`, raw results in
+`web-app/captures/verify/results-wb1.json`. Zero unexpected console/page
+errors across the whole run (`consoleErrors: []` — the scripted shiki
+error in proof 5 below is handled through the adapter's own error-state
+path, not an uncaught exception).
+
+**verified-by: batch-agent** on every row below — this capture dispatch's
+own claims. Per the plan's own execution model, WB1's one named
+highest-risk claim is **row 2 below (Stop mid-stream — the discriminating
+proof)** — the orchestrating session independently re-verifies this one
+itself before trusting it; this file records that as a distinct fact, not
+this dispatch's outcome to declare.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | Streaming lifecycle timed sequence: pre-first-token shimmer → stream-head cursor during streaming → cursor gone on completion | An in-page `requestAnimationFrame`-sampled sequence (one sample per real paint frame, not a fixed-delay poll) shows `.s-shimmer`/`.s-shimmer-reasoning` visible before any text, then `.s-cursor`/`.s-cursor-reasoning` visible while text is actively appending, then neither present once the part completes | **FAIL, root-caused to source, not a test flake — reproduced identically across 2 independent runs (579 and 581 paint-frame samples respectively).** Shimmer never observed (`shimmer ever seen=false`); cursor observed at ~18ms; cursor correctly gone after completion. `MarkdownText.tsx:51` and `Thread.tsx:70-71` both correctly implement `if (!text) return isRunning ? <shimmer/> : null` — the shimmer code is real and would render given a genuinely-empty-but-running part. The gap is upstream: `stream.ts:60-67`'s `streamTextPart` never yields an empty-text snapshot — its first loop iteration (`i=0`, no `await` before the first `yield`) already yields `acc` containing the first `chunkSize` (3) characters, and `adapter.ts:76`'s `run()` delegates straight to `script.start()` with no initial empty-part yield either. So the assistant message goes from "no part exists" directly to "part with 3 characters", with no DOM-observable intermediate empty-and-running state for either target — confirmed by reading `stream.ts:33-67` and `adapter.ts:42-77` directly, not inferred from the symptom alone. This means the shimmer, while correctly coded, is currently unreachable dead code against every scripted fixture in `conversations.ts`. | `web-app/captures/verify/wb1-01-shimmer-or-early-stream-window.png`, `web-app/captures/verify/wb1-02-cursor-during-stream.png`, `web-app/captures/verify/wb1-03-cursor-gone-on-completion.png` | batch-agent | **FAIL** |
+| 2 | **Stop mid-stream — the discriminating proof (named highest-risk claim for this batch).** Click Stop (`.s-send-stop`, `ComposerPrimitive.Cancel`) while tokens are actively streaming (`status.type==='running'`, in-flight text length > 3); confirm NO further text appends after the click — not just that the button changed state | **PASS.** Stop clicked at in-flight textLen=67. Text content captured immediately after the click and again 2 seconds later is **byte-identical** (`textLen immediately after click=587, textLen 2s later=587, identical=true`; last-200-char sample identical both times, ending `"...Done — that'\n\nCopy\nReload\n0.1s · 1021 tok/s"` in both captures). Screenshot pair (before/after click) plus the 2s-later screenshot show the same static text with the composer already flipped back to Send (▲) and the action bar showing Copy/Reload (turn settled, not still generating). Reproduced identically across 2 independent fresh runs of the driver (587/587 both times, only the reported tok/s in the footer text differed trivially between runs). | `web-app/captures/verify/wb1-04-stop-before-click.png`, `web-app/captures/verify/wb1-05-stop-after-click.png`, `web-app/captures/verify/wb1-06-stop-2s-later.png` | **batch-agent (orchestrating session must independently re-verify this one before trusting it, per the plan's own execution model — do not accept this PASS on this dispatch's word alone)** | **PASS** |
+| 3 | Post-stop retry: composer/error path allows a real retry that resumes normal generation | **PASS.** Right after Stop: Send button visible (not stuck on Stop)=true, Stop control gone=true. A new message was then sent; the new run's Stop button reappeared during streaming=true (a genuine new `isRunning` cycle, not a stuck state), and the turn completed normally (Reload/Copy shown) with new content appended to the thread (before len=587, after len=765). | `web-app/captures/verify/wb1-07-post-stop-retry-streaming.png`, `web-app/captures/verify/wb1-08-post-stop-retry-complete.png` | batch-agent | **PASS** |
+| 4 | Scroll-to-bottom: demonstrate it firing when new content streams in while the user has scrolled up | **FAIL, root-caused to a real CSS layout bug via source read + a live diagnostic re-run, not a test artifact.** `ThreadPrimitive.ScrollToBottom` (`.s-scroll-bottom`) never became enabled at any point (`control enabled right after scroll-up=false`, `control observed enabled at least once during ~1s of further streaming=false`); clicking it while force-disabled still incidentally left the view at the bottom (`scrolled to bottom after click=true`) because it was already there. **Root cause, confirmed against real source, not the fixture:** `useThreadViewportAutoScroll.js:52`'s own `isAtBottom` check is `Math.abs(scrollHeight - scrollTop - clientHeight) <= 1 \|\| scrollHeight <= clientHeight` — the second clause means "container not overflowing at all" is unconditionally treated as "at bottom". A follow-up diagnostic re-run at a deliberately short 1280×420 viewport (`overflow check (400px viewport): scrollHeight=485, clientHeight=485, overflow=false`, taken after the full turn had streamed and settled) showed `.s-thread`'s `scrollHeight` never exceeds its own `clientHeight` even when the viewport is far shorter than the rendered content. Traced to `theme.css`: `html,body` (line 51), `#root` (line 58), `.rr-app` (line 76), and `.s-main` (line 267) all use `min-height: 100svh` rather than `height: 100svh` — a floor, not a ceiling — so the flex chain that should bound `.s-thread { flex:1; overflow-y:auto }` (line 312-314) is never actually constrained; the whole page grows to fit content and the BODY scrolls, while `.s-thread` itself (the element `ThreadPrimitive.ScrollToBottom`'s enable/disable logic reads) never internally overflows, at any viewport size or content length tested. This is a genuine, reproducible layout defect (not a short-fixture-content artifact — the diagnostic re-run deliberately forced a short viewport specifically to rule that out), separate from the WB1 W3 wiring itself, which correctly uses the real `ThreadPrimitive.ScrollToBottom` primitive per `Thread.tsx:187-189`. | `web-app/captures/verify/wb1-09-scroll-to-bottom-button-visible.png`, `web-app/captures/verify/wb1-10-scroll-to-bottom-still-enabled-after-more-streaming.png`, `web-app/captures/verify/wb1-11-scroll-to-bottom-after-click.png` | batch-agent | **FAIL** |
+| 5 | Error card inline retry: trigger an error state and confirm the inline retry control actually re-issues the request, not just re-renders the card | **PASS.** On the "Shiki theme swap crash" thread, the scripted `shiki: unbundled theme "solarized-dusk"...` error card rendered with a visible "Try again" (`.s-error-retry`, `ActionBarPrimitive.Reload`) control. Clicking it made the error card genuinely detach from the DOM (`error card cleared after retry click=true`, polled via `waitFor({state:'detached'})`, not a fixed delay) and the branch picker advanced to "2 / 2" — direct evidence a real second run was invoked, not a cosmetic re-render. Documented, sanctioned deviation (per the build stage's own note, confirmed here): the fixture's turnIndex 2+ has no scripted crash-recovery content, so the second attempt lands on the honest empty unscripted fallback rather than a populated "recovered" response — expected, not a bug. | `web-app/captures/verify/wb1-12-error-card-before-retry.png`, `web-app/captures/verify/wb1-13-error-card-after-retry.png` | batch-agent | **PASS** |
+
+**Summary: 3/5 PASS, 2/5 FAIL, both FAILs root-caused to source (not test
+flakiness — both reproduced across independent re-runs and traced to
+specific line numbers), neither one softened to match the plan's expected
+value.** Proof 1 (shimmer) fails because the scripted generators never
+yield a genuinely-empty-but-running snapshot, not because the shimmer
+component logic is wrong. Proof 4 (scroll-to-bottom) fails because of a
+pre-existing `min-height`-vs-`height` CSS layout bug in the app shell that
+prevents `.s-thread` from ever internally overflowing, not because the W3
+wiring (`ThreadPrimitive.ScrollToBottom`) is incorrectly hooked up. Proofs
+2 (the named highest-risk stop-mid-stream claim), 3 (post-stop retry), and
+5 (error inline retry) pass with byte-identical/DOM-state evidence, not
+just visual similarity. **Superseded by the WB1 REVISE round directly
+below — this table (and its FAIL rows) is kept as historical record, per
+this file's own stated convention of never softening a real FAIL, not
+because it still reflects current behavior.**
+
+**Non-visual, run this dispatch:** `bash scripts/check-shared-purity.sh` —
+not re-run by this CAPTURE-stage dispatch (already reported green by the
+prior BUILD-stage dispatch); this dispatch's own scope was capture/verify
+only, per its own instructions.
+
+**Housekeeping note:** this worktree carried four leftover Playwright
+scratch scripts (`_scratch-scroll-debug{,2,3,4}.mjs`) and stale
+`wb1-*`/`results-wb1.json` artifacts from an earlier, interrupted attempt
+at this same CAPTURE stage (the run this dispatch's prompt describes as
+having "hit a transient server-side 500 error before doing any work" —
+the leftover files show that description undersells what had actually
+happened: real diagnostic investigation into the same W3 scroll issue this
+row reports had already been done and not cleaned up). All `wb1-*`
+captures and `results-wb1.json` referenced in this section were
+re-generated fresh by this dispatch (not reused); the leftover scratch
+scripts were moved out of the worktree (not deleted — `rm` unavailable in
+this sandbox, `mv` used, same pattern the prior BUILD-stage dispatch
+documented) and confirmed absent from `git status` before writing this
+section.
+
+## Web — WB1 REVISE round — code-review findings fixed, re-run from scratch
+
+Code-review (this REVISE round) returned four findings against the WB1
+capture stage above: one high-severity real product bug (W3 scroll-to-bottom
+non-functional), one medium-severity real product bug (W2 shimmer
+unreachable dead code), one low-severity evidence inconsistency in this
+file's own row 2, and one low-severity undeclared dependency
+(`web-app/package.json`). All four are fixed in source/doc; the two with a
+rendering-behavior change (W3, W2) are independently re-verified here with a
+fresh, from-scratch re-run of `verify-wb1.mjs` against a live dev server —
+not just re-asserted.
+
+**Finding — W3 scroll-to-bottom non-functional (high, real product bug).**
+Root cause confirmed exactly as diagnosed by the capture-stage FAIL above:
+`theme.css`'s `html`/`body` (was line 51), `#root` (was line 58), `.rr-app`
+(was line 76), and `.s-main` (was line 267) all used `min-height: 100svh` —
+a floor, not a ceiling — so the flex chain that should height-constrain
+`.s-thread { flex: 1; overflow-y: auto }` was never actually bounded and the
+page body scrolled instead of the thread pane. Fixed by switching all four
+rules to `height: 100svh` (web-app-local CSS, no shared-file change). W3's
+own wiring (`ThreadPrimitive.ScrollToBottom` in `Thread.tsx`) was already
+correct and needed no change.
+
+**Finding — W2 shimmer unreachable dead code (medium, real product bug,
+shared-file change — orchestrator-sanctioned for this revise dispatch,
+extending WB1's previously abortSignal-only shared-change list).** Root
+cause confirmed exactly as diagnosed: `stream.ts`'s `streamTextPart` never
+yielded a genuinely-empty-but-running snapshot before its first chunk, so
+the correctly-coded shimmer branch (`MarkdownText.tsx`/`Thread.tsx`'s `if
+(!text) return isRunning ? <shimmer/> : null`) never had a DOM state to key
+off. Fixed by yielding the already-empty `parts[parts.length - 1]` (pushed
+by every call site immediately before calling `streamTextPart` — confirmed
+across every use in `fixtures/conversations.ts`) once, plus one `sleep`
+tick, before the chunk loop starts. Logic-only, purity-safe (verified below:
+`check-shared-purity.sh` still passes) — no target-specific import, no
+presentation value added to the shared file itself.
+
+**Finding — evidence inconsistency in row 2 (low).** The prior round's row
+2 stated `587/587` textLen and "reproduced identically across 2 independent
+fresh runs (587/587 both times)", but the committed `results-wb1.json` (the
+run the shipped artifacts came from) recorded `586/586`. Both numbers were
+stale point-in-time captures from earlier runs of a nondeterministic-length
+fixture render; superseded below by this round's own fresh, freshly
+re-recorded numbers (`584/584`, reproduced identically across 2 independent
+runs of this revise round, from a `results-wb1.json` re-generated by this
+dispatch and re-read directly to build this row — not retyped from memory).
+
+**Finding — undeclared dependency (low).** `web-app/package.json` now
+declares `"@assistant-ui/core": "^0.3.0"` (pinned to the same version
+`shared/package.json` already declares) alongside the existing
+`@assistant-ui/react`. `npm install --package-lock-only` re-run from
+`proto/` to keep `package-lock.json` consistent; `npx tsc --noEmit` (all
+three workspaces) and `npx oxlint .` (all three workspaces) re-run clean,
+exit 0, after the change.
+
+Re-run performed exactly as the original CAPTURE-stage dispatch's own
+described method: live `npx vite --port 5190` dev server, real Playwright
+(`chromium`, headless, 1280×900), `web-app/captures/verify-wb1.mjs`
+unmodified (only the app/shared source under test changed). Run **twice**
+in succession from a fresh page load each time, specifically to give proof
+2 (the named highest-risk stop-mid-stream claim) the same "reproduced
+across 2 independent fresh runs" evidence bar the prior round claimed but
+undermined with mismatched numbers. `results-wb1.json` and all
+`web-app/captures/verify/wb1-*.png` below are from the second (final) of
+those two runs; zero unexpected console/page errors in either run
+(`consoleErrors: []` both times).
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | Streaming lifecycle timed sequence: pre-first-token shimmer → stream-head cursor during streaming → cursor gone on completion | Same as above | **Fixed, re-verified live — was a FAIL.** Run 1: 590 paint-frame samples, shimmer ever seen=true (first at 16.6ms), cursor ever seen=true (first at 39.4ms), shimmer-before-cursor order ok=true, cursor gone after completion=true. Run 2 (shipped): 591 paint-frame samples, shimmer ever seen=true (first at 14.3ms), cursor ever seen=true (first at 37.9ms), order ok=true, cursor gone after completion=true. Shimmer is now genuinely observable — the empty-but-running DOM state the `stream.ts` fix creates is real, not just typechecked. | `web-app/captures/verify/wb1-01-shimmer-or-early-stream-window.png`, `web-app/captures/verify/wb1-02-cursor-during-stream.png`, `web-app/captures/verify/wb1-03-cursor-gone-on-completion.png` | this-dispatch (independent re-run) | **PASS** |
+| 2 | **Stop mid-stream — the discriminating proof (named highest-risk claim for this batch).** Same as above | Unchanged mechanism (no W1-related fix this round) — re-run to correct row 2's own stale/mismatched evidence (the VERIFICATION.md finding above). **PASS, corrected numbers, reproduced identically across 2 independent fresh runs of this revise round: textLen immediately after click=584, textLen 2s later=584, identical=true — 584/584 both runs**, superseding the prior round's mismatched `587/587` claim / `586/586` shipped-artifact numbers. Last-200-char sample identical both times within each run, ending `"...Done — th\n\nCopy\nReload\n0.1s · 1065 tok/s"` (tok/s differs trivially between runs, as before). | `web-app/captures/verify/wb1-04-stop-before-click.png`, `web-app/captures/verify/wb1-05-stop-after-click.png`, `web-app/captures/verify/wb1-06-stop-2s-later.png` | this-dispatch (independent re-run, 2×) | **PASS** |
+| 3 | Post-stop retry: composer/error path allows a real retry that resumes normal generation | Same as above | Unchanged mechanism, re-run for consistency with rows 1/2/4 (same driver invocation). Send visible right after stop=true, Stop control gone=true, new run's Stop button reappeared during retry=true, thread grew with new content=true (before len=584, after len=762) — consistent with row 2's corrected `584` baseline. | `web-app/captures/verify/wb1-07-post-stop-retry-streaming.png`, `web-app/captures/verify/wb1-08-post-stop-retry-complete.png` | this-dispatch (independent re-run) | **PASS** |
+| 4 | Scroll-to-bottom: demonstrate it firing when new content streams in while the user has scrolled up | Same as above | **Fixed, re-verified live — was a FAIL.** `theme.css`'s `height: 100svh` chain now genuinely bounds `.s-thread`. scrollTop after real wheel scroll-up=0, control enabled right after scroll-up=true, control observed enabled at least once during the following ~1s of further streaming=true, control enabled at click-decision time=true, scrolled to bottom after click=true, control disabled again after click=true — every clause of the original FAIL's expected value now true. | `web-app/captures/verify/wb1-09-scroll-to-bottom-button-visible.png`, `web-app/captures/verify/wb1-10-scroll-to-bottom-still-enabled-after-more-streaming.png`, `web-app/captures/verify/wb1-11-scroll-to-bottom-after-click.png` | this-dispatch (independent re-run) | **PASS** |
+| 5 | Error card inline retry: trigger an error state and confirm the inline retry control actually re-issues the request, not just re-renders the card | Same as above | Unchanged mechanism, re-run for consistency. Error card visible before retry, text="Something went wrong / shiki: unbundled theme \"solarized-dusk\"..."; retry control visible=true; error card cleared after retry click=true; branch picker advanced (same mechanism as before). | `web-app/captures/verify/wb1-12-error-card-before-retry.png`, `web-app/captures/verify/wb1-13-error-card-after-retry.png` | this-dispatch (independent re-run) | **PASS** |
+
+**Summary for this REVISE round: 5/5 PASS (up from 3/5 PASS, 2/5 FAIL),
+both prior FAILs fixed in source and re-verified live, not re-asserted.**
+Proof 1 (shimmer) now genuinely observable after the `stream.ts` empty-yield
+fix. Proof 4 (scroll-to-bottom) now genuinely enables/disables/scrolls
+correctly after the `theme.css` height-chain fix. Proof 2's own row-2
+evidence inconsistency (the low-severity finding) is corrected with fresh,
+directly-read `results-wb1.json` numbers reproduced across 2 independent
+runs in this round, rather than carrying forward either of the prior
+round's two mismatched numbers.
+
+**Non-visual, re-run fresh this round:** `npx tsc --noEmit` — clean, exit 0,
+all three workspaces (`shared`, `web-app`, `ink-app`). `npx oxlint .` —
+clean, exit 0, all three workspaces (one pre-existing, unrelated warning in
+`web-app/captures/verify-wb1.mjs:216` — an unused local in this same driver
+script, not introduced by this round's changes and not part of any reported
+finding). `bash scripts/check-shared-purity.sh` — PASSED (confirms the
+`stream.ts` change stays within the file's declared purity constraints).
+
+## Web — WB1 THIRD REVISE round — code-review findings fixed, re-run from scratch
+
+Code-review returned three findings against the WB1 REVISE round above: one
+high-severity finding that the "Stop mid-stream" discriminating proof's own
+*record* misdescribed what actually ran (two reintroduced FINDINGS.md defect
+classes — a vacuous in-flight gate and a silently-dropped turn-2 submit,
+detailed below), one medium-severity finding that `Thread.tsx`'s W3 comment
+was factually false (already flagged once, in the REVISE round above, but
+never actually corrected in source), and one low-severity finding that all
+`wb1-*` screenshots leak a hardcoded personal display name via
+`Sidebar.tsx:199` (rendered in pixels — see that line for the literal
+string; not repeated as text here per this file's own sanitization rule
+below) — pre-existing, not touched by any WB1 round, out of this batch's
+scope (see its own note at the end of this section). Both non-low
+findings are fixed in source and independently re-verified live below with a
+fresh, from-scratch re-run of `verify-wb1.mjs` — not just re-asserted.
+
+**Finding — vacuous in-flight gate + silently dropped turn-2 submit (high).**
+Root cause, confirmed by reading source directly (not inferred from the
+symptom):
+
+1. **Vacuous gate.** The poll loop's `document.querySelector(".s-ast")` (no
+   scoping) returns the FIRST `.s-ast` element anywhere on the page — turn
+   1's own, already-completed first paragraph ("I'll handle both of those.
+   Let me first check on that scratch file." — exactly 67 characters,
+   `wc -c` verified), not turn 2's actively-streaming reply. The
+   `textLen>3` condition was therefore satisfied from page render, never an
+   actual measurement of in-flight text — the same vacuous-pass-condition
+   class as the S3 grant-store false PASS this repo's own `FINDINGS.md`
+   already documents.
+2. **Dropped submit.** The setup step's `.first().waitFor({state:
+   "visible"})` on the Reload button is not a valid "turn genuinely
+   finished" signal for this specific turn, and resolves on a STALE
+   already-visible element — confirmed by reading
+   `useActionBarFloatStatus.ts` directly: `hideWhenRunning` only hides the
+   action bar while `thread.isRunning` is true, and `turn1Start`'s own
+   generator RETURNS (ending that `run()` call, flipping `isRunning` back
+   to false) the moment it yields `status:{type:"requires-action"}` for the
+   permission gate — well before Always-allow is clicked. Since this is the
+   thread's only (hence last) message, `autohide="not-last"` doesn't hide
+   it either, so Reload was ALREADY visible while the permission card was
+   still pending. The old wait therefore resolved instantly against that
+   pre-click Reload, not against `turn1Continue`'s real completion, letting
+   the driver proceed into proof 2 while `turn1Continue` (the Always-allow
+   continuation) was still actively streaming. With the composer still
+   effectively mid-turn, the scripted `composer.press("Enter")` for turn
+   2's text was silently dropped — exactly matching the prior round's
+   shipped screenshots (`wb1-04`/`05`/`06`), which showed the composer
+   still containing "Did that leave anything else stale in /tmp?" and no
+   turn-2 user bubble. The stream that actually stopped was turn 1's own
+   Always-allow continuation, not "turn 2" as the prior round's row 2
+   stated.
+
+Both are fixed in `verify-wb1.mjs`: the setup step now uses the same 1→0→1
+count-cycle wait `verify-s3.mjs` already established for the analogous
+Reload race (Reload count dips to 0 when `turn1Continue`'s own `run()` call
+genuinely starts, returns to 1 only once it genuinely completes — a count
+that never dips is itself now a real, loud failure, not something the old
+wait could paper over); the poll loop now scopes to the LAST
+`.s-msg-group` (Thread.tsx's own per-assistant-message wrapper) so it reads
+turn 2's own in-flight text, not turn 1's frozen one; and an explicit
+`.s-user` bubble check for turn 2's exact text now runs immediately after
+sending it, so a dropped submit fails loudly instead of silently degrading
+into a measurement of the wrong message.
+
+**The headline claim itself survives this fix, now genuinely measured:**
+re-run twice from scratch, textLen at click=6 both times (turn 2's own
+reply, "Checking", caught mid-word — genuinely in-flight, not a
+pre-rendered constant), textLen immediately-after-click=1407 and
+2s-later=1407 both runs, identical=true both runs. The mechanism the
+headline claim describes (Stop genuinely halts token output mid-stream) was
+never in question; what was wrong was the permanent record's narrative of
+*which* stream it caught stopping.
+
+**Finding — W3 header comment still false (medium, re-flagged).** The prior
+REVISE round's own code-review finding on this exact comment was recorded in
+this file (see the "Web — WB1 REVISE round" section... actually not
+present verbatim there — this is the first round the comment fix reached
+VERIFICATION.md) but the correction was never actually applied to
+`Thread.tsx` source. `Thread.tsx`'s header comment above
+`ThreadPrimitive.ScrollToBottom` claimed "renders null when already at the
+bottom (`useThreadScrollToBottom` returns null), so no extra visibility
+logic is needed here" — false, confirmed by reading
+`createActionButton.js` (the real shared implementation backing
+`ScrollToBottom`) directly: the button is ALWAYS mounted; only its
+`disabled` attribute toggles based on whether `useThreadScrollToBottom()`
+returns a callback or `null`. Visible consequence, present in every prior
+round's `wb1-*` screenshot: the ↓ button floated permanently over the
+composer even while already at the bottom, with no `.s-scroll-bottom:
+disabled` style to hide or mute it — unlike ChatGPT/Claude.ai's reference
+behavior of only showing this control when scrolled up. Fixed: the comment
+now correctly attributes the always-mounted behavior to
+`createActionButton.js`, and `theme.css` gained a
+`.s-scroll-bottom:disabled { display: none }` rule. Re-verified live with a
+NEW capture proof (not present in any prior round) that checks the control
+right when the thread is at rest, already at the bottom, before any
+scroll-up: control present in DOM=true, disabled=true, computed
+`display!=none` (visible)=**false** — genuinely hidden, not merely
+`.disabled` while still occupying layout.
+
+Re-run performed the same way as both prior rounds: live `npx vite --port
+5190` dev server, real Playwright (`chromium`, headless, 1280×900),
+`web-app/captures/verify-wb1.mjs` (modified only for the two fixes above —
+the app/shared source under test also changed, per the W3 CSS/comment
+fix). Run **twice** in succession from a fresh page load each time, same
+"reproduced across 2 independent fresh runs" bar the prior rounds used for
+row 2. `results-wb1.json` and all `web-app/captures/verify/wb1-*.png` below
+are from the second (final) of those two runs; zero unexpected
+console/page errors in either run (`consoleErrors: []` both times). The new
+at-rest check inserted a capture step before the pre-existing scroll-up
+capture, shifting every subsequent screenshot's step number by one
+(`wb1-09` through `wb1-13` from the prior round are now `wb1-09` through
+`wb1-14`) — the prior round's now-orphaned `wb1-09`..`wb1-13` files (stale,
+pre-dating this round's code change) were deleted, not left alongside the
+current set, to avoid two different `wb1-09.png`s meaning two different
+things in the repo.
+
+| # | feature | expected | observed | artifact path | verified-by | PASS/FAIL |
+|---|---|---|---|---|---|---|
+| 1 | Streaming lifecycle timed sequence: pre-first-token shimmer → stream-head cursor during streaming → cursor gone on completion | Same as above | Unchanged mechanism, re-run for consistency with the other rows (same driver invocation). 589 paint-frame samples, shimmer ever seen=true (first at 18.4ms), cursor ever seen=true (first at 35.1ms), order ok=true, cursor gone after completion=true. | `web-app/captures/verify/wb1-01-shimmer-or-early-stream-window.png`, `web-app/captures/verify/wb1-02-cursor-during-stream.png`, `web-app/captures/verify/wb1-03-cursor-gone-on-completion.png` | this-dispatch (independent re-run) | **PASS** |
+| 2 | **Stop mid-stream — the discriminating proof (named highest-risk claim for this batch).** Same as above | Now gated on the LAST message's own in-flight text (see finding above), with an explicit pre-poll check that turn 2 was genuinely submitted | **Fixed, re-verified live — was a false PASS (right verdict, wrong mechanism recorded).** Reproduced identically across 2 independent fresh runs of this round: clicked at textLen=6 both runs (turn 2's own reply "Checking", caught mid-word — measured from the LAST of 2 `.s-msg-group` elements, confirmed sent via a `.s-user` bubble check first), textLen immediately after click=1407, textLen 2s later=1407, identical=true, both runs. | `web-app/captures/verify/wb1-04-stop-before-click.png`, `web-app/captures/verify/wb1-05-stop-after-click.png`, `web-app/captures/verify/wb1-06-stop-2s-later.png` | this-dispatch (independent re-run, 2×) | **PASS** |
+| 3 | Post-stop retry: composer/error path allows a real retry that resumes normal generation | Same as above | Unchanged mechanism, re-run for consistency. Send visible right after stop=true, Stop control gone=true, new run's Stop button reappeared during retry=true, thread grew with new content=true (before len=1407, after len=1863) — consistent with row 2's corrected `1407` baseline. | `web-app/captures/verify/wb1-07-post-stop-retry-streaming.png`, `web-app/captures/verify/wb1-08-post-stop-retry-complete.png` | this-dispatch (independent re-run) | **PASS** |
+| 4 | Scroll-to-bottom control is hidden (not just disabled) while already at the bottom — new proof this round | `ThreadPrimitive.ScrollToBottom` is always mounted (`createActionButton.js`) but must be genuinely hidden, not merely `.disabled`, while the thread is at rest at the bottom | **New, PASS.** Control present in DOM=true, disabled=true, computed `display!=none` (visible)=false — the `theme.css` fix genuinely hides it, confirmed via `getComputedStyle`, not just the `disabled` DOM property. | `web-app/captures/verify/wb1-09-scroll-to-bottom-hidden-while-at-bottom.png` | this-dispatch (independent re-run) | **PASS** |
+| 5 | Scroll-to-bottom: demonstrate it firing when new content streams in while the user has scrolled up | Same as above | Unchanged mechanism, re-run for consistency. scrollTop after real wheel scroll-up=0, control enabled right after scroll-up=true, control observed enabled at least once during the following ~1s of further streaming=true, control enabled at click-decision time=true, scrolled to bottom after click=true, control disabled again after click=true. | `web-app/captures/verify/wb1-10-scroll-to-bottom-button-visible.png`, `web-app/captures/verify/wb1-11-scroll-to-bottom-still-enabled-after-more-streaming.png`, `web-app/captures/verify/wb1-12-scroll-to-bottom-after-click.png` | this-dispatch (independent re-run) | **PASS** |
+| 6 | Error card inline retry: trigger an error state and confirm the inline retry control actually re-issues the request, not just re-renders the card | Same as above | Unchanged mechanism, re-run for consistency. Error card visible before retry, text="Something went wrong / shiki: unbundled theme \"solarized-dusk\"..."; retry control visible=true; error card cleared after retry click=true. | `web-app/captures/verify/wb1-13-error-card-before-retry.png`, `web-app/captures/verify/wb1-14-error-card-after-retry.png` | this-dispatch (independent re-run) | **PASS** |
+
+**Summary for this THIRD REVISE round: 6/6 PASS** (row count grew from 5 to
+6 — the new at-rest hidden-state proof). The high-severity finding (vacuous
+gate + dropped turn-2 submit) is fixed and the headline "Stop genuinely
+halts mid-stream" claim is now backed by a record that actually matches
+what ran — reproduced identically across 2 independent runs, not
+re-asserted from the prior round's mismeasured numbers. The medium-severity
+finding (false W3 comment, never actually corrected in the prior round
+despite being flagged) is now fixed in both `Thread.tsx` and `theme.css`,
+with a new capture proof specifically for the previously-untested
+"genuinely hidden at rest" case.
+
+**Non-visual, re-run fresh this round:** `npx tsc --noEmit` — clean, exit 0,
+all three workspaces (`shared`, `web-app`, `ink-app`). `npx oxlint .` —
+clean, exit 0, all three workspaces (the same pre-existing, unrelated
+unused-local warning as before, now at
+`web-app/captures/verify-wb1.mjs:282` since inserted comments/code shifted
+its line number — same variable (`alsoIdenticalToClickMoment`), not
+introduced by this round). `bash scripts/check-shared-purity.sh` — PASSED
+(no shared-file changes this round; confirms nothing regressed it either).
+
+**Known, deliberately-unfixed finding — hardcoded personal display name in
+every WB1 screenshot (low, flagged for the orchestrator, not fixed here).**
+All `wb1-*.png` screenshots (and the webm) render a hardcoded personal
+display name in the sidebar footer — source: `web-app/src/components/
+Sidebar.tsx:199` (see that line directly for the literal string; not
+repeated as text in this file, in keeping with this file's own
+sanitization discipline described next), pre-existing, committed at
+`5c6392e`, NOT touched by any WB1 round. The mechanical absolute-path /
+home-relative-path / bare-username text sweep this repo's own public-repo
+sanitization discipline requires passes cleanly on every file WB1 writes or
+edits (verified: zero occurrences of any absolute filesystem path,
+`~`-relative path, or the machine-owner's bare username in `verify-
+wb1.mjs`, `Thread.tsx`, `theme.css`, or this file) because this particular
+leak is in rendered pixels, not text content — the sweep cannot catch it.
+**`Sidebar.tsx` is out of this batch's scope** (WB1 is the run-state
+package: W1 stop, W2 streaming indicator, W3 scroll-to-bottom, W4 error
+inline retry — none of which touch the sidebar footer), so this is
+consciously left unfixed here rather than scope-crept into a fix. Per the
+plan's own I5 finding (the ink-side name/home-path leak, same class),
+fixing `Sidebar.tsx`'s hardcode belongs in WB2 (where `Sidebar.tsx` is
+already in scope) — the orchestrator should decide there whether to
+regenerate these WB1 artifacts after that fix lands or consciously accept
+them as an interim, disclosed leak; this note exists so that decision is
+made deliberately, not by silently shipping a public-repo PNG with a real
+name baked into it.

@@ -8,6 +8,18 @@
 // as LIA-495's ComposerRow: no cross-component focus management exists, so
 // a stray keystroke could land in the composer's textarea while
 // PermissionCard's buttons are the thing that should have focus.
+//
+// WB1 (LIA-496 review-fix) — W1 stop-generating control. `Cancel` is a real
+// exported primitive, confirmed by reading
+// node_modules/@assistant-ui/react/dist/primitives/composer/
+// ComposerCancel.d.ts directly: `ComposerPrimitive.Cancel` self-disables
+// (via useComposerCancel's `disabled = !s.composer.canCancel`) when
+// canceling genuinely isn't available, same self-disable contract `.Send`
+// already relies on below. `ComposerPrimitive.If` was checked and rejected
+// for this — its filter set is `{editing, dictation}` only (confirmed by
+// reading ComposerIf.d.ts), no `running` filter — so the swap is gated on
+// the real `s.thread.isRunning` flag read via useAuiState (same pattern
+// this file already uses for `useIsAwaitingApproval`), not a guess.
 import type { FC } from "react";
 import { ComposerPrimitive, useAuiState } from "@assistant-ui/react";
 
@@ -22,6 +34,7 @@ function useIsAwaitingApproval(): boolean {
 
 export const Composer: FC = () => {
   const awaitingApproval = useIsAwaitingApproval();
+  const isRunning = useAuiState((s) => s.thread.isRunning);
 
   if (awaitingApproval) {
     return (
@@ -40,9 +53,15 @@ export const Composer: FC = () => {
           autoFocus
           rows={1}
         />
-        <ComposerPrimitive.Send className="s-send" aria-label="Send">
-          ↑
-        </ComposerPrimitive.Send>
+        {isRunning ? (
+          <ComposerPrimitive.Cancel className="s-send s-send-stop" aria-label="Stop generating">
+            ■
+          </ComposerPrimitive.Cancel>
+        ) : (
+          <ComposerPrimitive.Send className="s-send" aria-label="Send">
+            ↑
+          </ComposerPrimitive.Send>
+        )}
       </ComposerPrimitive.Root>
     </div>
   );

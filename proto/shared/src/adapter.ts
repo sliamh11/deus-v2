@@ -40,6 +40,7 @@ export function getFixtureAdapter(threadId: string): ChatModelAdapter {
 
   const adapter: ChatModelAdapter = {
     async *run(options) {
+      const { abortSignal } = options;
       const current = options.unstable_getMessage();
       const pendingApproval = current.content.find(
         (c) =>
@@ -53,10 +54,17 @@ export function getFixtureAdapter(threadId: string): ChatModelAdapter {
         handledApprovals.add(pendingApproval.toolCallId);
         const continuation = script.continuations[pendingApproval.toolCallId];
         if (continuation) {
-          yield* continuation({
-            approved: pendingApproval.approval.approved === true,
-            optionId: pendingApproval.approval.optionId,
-          });
+          // WB1 — abortSignal threaded through so a continuation's own
+          // sleeps/streamTextPart calls can halt promptly on Stop, same as
+          // `start` below (see stream.ts's header comment for the
+          // mechanism this fixes).
+          yield* continuation(
+            {
+              approved: pendingApproval.approval.approved === true,
+              optionId: pendingApproval.approval.optionId,
+            },
+            abortSignal,
+          );
           return;
         }
         // A resolved approval with no registered continuation is not
@@ -65,7 +73,7 @@ export function getFixtureAdapter(threadId: string): ChatModelAdapter {
       }
 
       turnIndex += 1;
-      yield* script.start(turnIndex);
+      yield* script.start(turnIndex, abortSignal);
     },
   };
 

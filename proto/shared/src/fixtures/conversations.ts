@@ -108,15 +108,18 @@ function applyDelete(toolCallId: string, path: string, approved: boolean): void 
 async function* appendCleanupAndClose(
   parts: ThreadAssistantMessagePart[],
   approved: boolean,
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatModelRunResult> {
   parts.push({ type: "text", text: "" });
   const intro = approved
     ? "Done — that's cleaned up. Now tightening the status-glyph comment in ToolMessage.tsx."
     : "Understood, I'll leave that file alone. Still tightening the status-glyph comment in ToolMessage.tsx.";
-  for await (const snap of streamTextPart(parts, intro)) {
+  for await (const snap of streamTextPart(parts, intro, "text", { signal })) {
     yield { content: snap };
   }
-  await sleep(220);
+  if (signal?.aborted) return;
+  await sleep(220, signal);
+  if (signal?.aborted) return;
 
   parts.push({
     type: "tool-call",
@@ -126,38 +129,56 @@ async function* appendCleanupAndClose(
     argsText: JSON.stringify({ path: EDIT_PATH }),
   } as ThreadAssistantMessagePart);
   yield { content: [...parts] };
-  await sleep(620);
+  await sleep(620, signal);
+  if (signal?.aborted) return;
 
   const editResult: EditDiffResult = { type: "diff", diffContent: STATUS_GLYPH_PATCH, filename: EDIT_PATH };
   parts[parts.length - 1] = { ...(parts[parts.length - 1] as any), result: editResult, isError: false };
   yield { content: [...parts] };
-  await sleep(220);
+  await sleep(220, signal);
+  if (signal?.aborted) return;
 
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, "That's both done. Let me know if you'd like anything else.")) {
+  for await (const snap of streamTextPart(
+    parts,
+    "That's both done. Let me know if you'd like anything else.",
+    "text",
+    { signal },
+  )) {
     yield { content: snap };
   }
+  if (signal?.aborted) return;
 
   yield { content: [...parts], status: { type: "complete", reason: "stop" } };
 }
 
-async function* turn1Start(): AsyncGenerator<ChatModelRunResult> {
+async function* turn1Start(signal?: AbortSignal): AsyncGenerator<ChatModelRunResult> {
   const parts: ThreadAssistantMessagePart[] = [{ type: "reasoning", text: "" }];
 
   for await (const snap of streamTextPart(
     parts,
     "Two asks here: clean up a stale scratch file, and tighten a status-glyph comment. Deleting a file is destructive, so I should confirm it actually exists before proposing anything — and either way I'll need explicit permission before removing it.",
     "reasoning",
+    { signal },
   )) {
     yield { content: snap };
   }
-  await sleep(180);
+  if (signal?.aborted) return;
+  await sleep(180, signal);
+  if (signal?.aborted) return;
 
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, "I'll handle both of those. Let me first check on that scratch file.")) {
+  for await (const snap of streamTextPart(
+    parts,
+    "I'll handle both of those. Let me first check on that scratch file.",
+    "text",
+    { signal },
+  )) {
     yield { content: snap };
   }
-  await sleep(220);
+  if (signal?.aborted) return;
+  await sleep(220, signal);
+  if (signal?.aborted) return;
 
   parts.push({
     type: "tool-call",
@@ -167,20 +188,29 @@ async function* turn1Start(): AsyncGenerator<ChatModelRunResult> {
     argsText: JSON.stringify({ command: CHECK_COMMAND }),
   } as ThreadAssistantMessagePart);
   yield { content: [...parts] };
-  await sleep(480);
+  await sleep(480, signal);
+  if (signal?.aborted) return;
 
   const checkResult = existsSync(SCRATCH_PATH)
     ? `-rw-r--r--  1 deus  staff  36 ${SCRATCH_PATH}`
     : "ls: no such file";
   parts[parts.length - 1] = { ...(parts[parts.length - 1] as any), result: checkResult, isError: false };
   yield { content: [...parts] };
-  await sleep(200);
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, "Found it — deleting it is a filesystem write, so I need your OK first.")) {
+  for await (const snap of streamTextPart(
+    parts,
+    "Found it — deleting it is a filesystem write, so I need your OK first.",
+    "text",
+    { signal },
+  )) {
     yield { content: snap };
   }
-  await sleep(200);
+  if (signal?.aborted) return;
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   const granted = hasGrant(permissionKey("delete_file"));
   parts.push(buildDeleteToolCallPart("call-delete-scratch", SCRATCH_PATH, granted));
@@ -197,26 +227,28 @@ async function* turn1Start(): AsyncGenerator<ChatModelRunResult> {
   // the headless verification script) — apply inline, same run() call, no
   // approval round-trip and nothing rendered for it.
   applyDelete("call-delete-scratch", SCRATCH_PATH, true);
-  yield* appendCleanupAndClose(parts, true);
+  yield* appendCleanupAndClose(parts, true, signal);
 }
 
-async function* turn1Continue(approval: ResolvedApproval): AsyncGenerator<ChatModelRunResult> {
+async function* turn1Continue(approval: ResolvedApproval, signal?: AbortSignal): AsyncGenerator<ChatModelRunResult> {
   if (approval.optionId === "allow_always") grant(permissionKey("delete_file"));
   applyDelete("call-delete-scratch", SCRATCH_PATH, approval.approved);
-  yield* appendCleanupAndClose([], approval.approved);
+  yield* appendCleanupAndClose([], approval.approved, signal);
 }
 
 // ---------------------------------------------------------------------------
 // Turn 2 — "Did that leave anything else stale in /tmp?" Ported verbatim
 // from LIA-495's turn2.
 // ---------------------------------------------------------------------------
-async function* turn2(): AsyncGenerator<ChatModelRunResult> {
+async function* turn2(signal?: AbortSignal): AsyncGenerator<ChatModelRunResult> {
   const parts: ThreadAssistantMessagePart[] = [{ type: "text", text: "" }];
 
-  for await (const snap of streamTextPart(parts, "Checking now.")) {
+  for await (const snap of streamTextPart(parts, "Checking now.", "text", { signal })) {
     yield { content: snap };
   }
-  await sleep(200);
+  if (signal?.aborted) return;
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   parts.push({
     type: "tool-call",
@@ -226,21 +258,24 @@ async function* turn2(): AsyncGenerator<ChatModelRunResult> {
     argsText: JSON.stringify({ command: VERIFY_COMMAND }),
   } as ThreadAssistantMessagePart);
   yield { content: [...parts] };
-  await sleep(480);
+  await sleep(480, signal);
+  if (signal?.aborted) return;
 
   const remaining = existsSync(SCRATCH_PATH);
   const verifyResult = remaining ? SCRATCH_PATH.split("/").pop()! : "(no matches)";
   parts[parts.length - 1] = { ...(parts[parts.length - 1] as any), result: verifyResult, isError: false };
   yield { content: [...parts] };
-  await sleep(200);
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   parts.push({ type: "text", text: "" });
   const closing = remaining
     ? "There's still one leftover file there from the earlier denial — otherwise clean."
     : "All clean by that pattern — nothing matching `deus` left in /tmp.";
-  for await (const snap of streamTextPart(parts, closing)) {
+  for await (const snap of streamTextPart(parts, closing, "text", { signal })) {
     yield { content: snap };
   }
+  if (signal?.aborted) return;
 
   yield { content: [...parts], status: { type: "complete", reason: "stop" } };
 }
@@ -255,23 +290,28 @@ async function* turn2(): AsyncGenerator<ChatModelRunResult> {
 // allow_once'd), this behaves exactly like turn 1 did: a normal pending
 // approval, resolved by `turn3Continue`.
 // ---------------------------------------------------------------------------
-async function* turn3Start(): AsyncGenerator<ChatModelRunResult> {
+async function* turn3Start(signal?: AbortSignal): AsyncGenerator<ChatModelRunResult> {
   const parts: ThreadAssistantMessagePart[] = [{ type: "reasoning", text: "" }];
 
   for await (const snap of streamTextPart(
     parts,
     "Another stale file, same deletion risk as the last one — worth confirming it's actually there before proposing anything.",
     "reasoning",
+    { signal },
   )) {
     yield { content: snap };
   }
-  await sleep(160);
+  if (signal?.aborted) return;
+  await sleep(160, signal);
+  if (signal?.aborted) return;
 
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, "Checking for that one now.")) {
+  for await (const snap of streamTextPart(parts, "Checking for that one now.", "text", { signal })) {
     yield { content: snap };
   }
-  await sleep(200);
+  if (signal?.aborted) return;
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   parts.push({
     type: "tool-call",
@@ -281,24 +321,28 @@ async function* turn3Start(): AsyncGenerator<ChatModelRunResult> {
     argsText: JSON.stringify({ command: SECOND_CHECK_COMMAND }),
   } as ThreadAssistantMessagePart);
   yield { content: [...parts] };
-  await sleep(420);
+  await sleep(420, signal);
+  if (signal?.aborted) return;
 
   const checkResult2 = existsSync(SECOND_SCRATCH_PATH)
     ? `-rw-r--r--  1 deus  staff  58 ${SECOND_SCRATCH_PATH}`
     : "ls: no such file";
   parts[parts.length - 1] = { ...(parts[parts.length - 1] as any), result: checkResult2, isError: false };
   yield { content: [...parts] };
-  await sleep(180);
+  await sleep(180, signal);
+  if (signal?.aborted) return;
 
   const granted = hasGrant(permissionKey("delete_file"));
   parts.push({ type: "text", text: "" });
   const askText = granted
     ? "Found it — and since you already said always-allow deletions this session, I'll clear it without asking again."
     : "Found it. Same kind of destructive action as before, so I need your OK again.";
-  for await (const snap of streamTextPart(parts, askText)) {
+  for await (const snap of streamTextPart(parts, askText, "text", { signal })) {
     yield { content: snap };
   }
-  await sleep(180);
+  if (signal?.aborted) return;
+  await sleep(180, signal);
+  if (signal?.aborted) return;
 
   parts.push(buildDeleteToolCallPart("call-delete-second", SECOND_SCRATCH_PATH, granted));
 
@@ -309,21 +353,25 @@ async function* turn3Start(): AsyncGenerator<ChatModelRunResult> {
 
   applyDelete("call-delete-second", SECOND_SCRATCH_PATH, true);
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, "Cleared — that's the last of the stale files in /tmp.")) {
+  for await (const snap of streamTextPart(parts, "Cleared — that's the last of the stale files in /tmp.", "text", {
+    signal,
+  })) {
     yield { content: snap };
   }
+  if (signal?.aborted) return;
   yield { content: [...parts], status: { type: "complete", reason: "stop" } };
 }
 
-async function* turn3Continue(approval: ResolvedApproval): AsyncGenerator<ChatModelRunResult> {
+async function* turn3Continue(approval: ResolvedApproval, signal?: AbortSignal): AsyncGenerator<ChatModelRunResult> {
   applyDelete("call-delete-second", SECOND_SCRATCH_PATH, approval.approved);
   const parts: ThreadAssistantMessagePart[] = [{ type: "text", text: "" }];
   const closing = approval.approved
     ? "Cleared — that's the last of the stale files in /tmp."
     : "Understood, I'll leave that one alone too.";
-  for await (const snap of streamTextPart(parts, closing)) {
+  for await (const snap of streamTextPart(parts, closing, "text", { signal })) {
     yield { content: snap };
   }
+  if (signal?.aborted) return;
   yield { content: [...parts], status: { type: "complete", reason: "stop" } };
 }
 
@@ -338,30 +386,33 @@ async function* unscripted(): AsyncGenerator<ChatModelRunResult> {
 // rather than a crash: says plainly that this is a scripted spike and
 // points back at the seeded threads, instead of pretending to be a real
 // model.
-async function* genericNewThreadTurn(): AsyncGenerator<ChatModelRunResult> {
+async function* genericNewThreadTurn(signal?: AbortSignal): AsyncGenerator<ChatModelRunResult> {
   const parts: ThreadAssistantMessagePart[] = [{ type: "text", text: "" }];
   for await (const snap of streamTextPart(
     parts,
     "This is a scripted fixture spike (LIA-496) — new threads don't have a canned conversation. Switch to one of the seeded threads in the sidebar to see the full streaming / tool-call / permission flow.",
+    "text",
+    { signal },
   )) {
     yield { content: snap };
   }
+  if (signal?.aborted) return;
   yield { content: [...parts], status: { type: "complete", reason: "stop" } };
 }
 
 const genericNewThreadScript: ThreadScript = {
-  start(turnIndex) {
-    if (turnIndex === 1) return genericNewThreadTurn();
+  start(turnIndex, signal) {
+    if (turnIndex === 1) return genericNewThreadTurn(signal);
     return unscripted();
   },
   continuations: {},
 };
 
 const statusGlyphFixScript: ThreadScript = {
-  start(turnIndex) {
-    if (turnIndex === 1) return turn1Start();
-    if (turnIndex === 2) return turn2();
-    if (turnIndex === 3) return turn3Start();
+  start(turnIndex, signal) {
+    if (turnIndex === 1) return turn1Start(signal);
+    if (turnIndex === 2) return turn2(signal);
+    if (turnIndex === 3) return turn3Start(signal);
     return unscripted();
   },
   continuations: {
@@ -384,22 +435,26 @@ type SimpleTurnSpec = {
   closing: string;
 };
 
-async function* simpleToolCallTurn(spec: SimpleTurnSpec): AsyncGenerator<ChatModelRunResult> {
+async function* simpleToolCallTurn(spec: SimpleTurnSpec, signal?: AbortSignal): AsyncGenerator<ChatModelRunResult> {
   const parts: ThreadAssistantMessagePart[] = [];
 
   if (spec.reasoning) {
     parts.push({ type: "reasoning", text: "" });
-    for await (const snap of streamTextPart(parts, spec.reasoning, "reasoning")) {
+    for await (const snap of streamTextPart(parts, spec.reasoning, "reasoning", { signal })) {
       yield { content: snap };
     }
-    await sleep(160);
+    if (signal?.aborted) return;
+    await sleep(160, signal);
+    if (signal?.aborted) return;
   }
 
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, spec.intro)) {
+  for await (const snap of streamTextPart(parts, spec.intro, "text", { signal })) {
     yield { content: snap };
   }
-  await sleep(200);
+  if (signal?.aborted) return;
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   parts.push({
     type: "tool-call",
@@ -409,16 +464,19 @@ async function* simpleToolCallTurn(spec: SimpleTurnSpec): AsyncGenerator<ChatMod
     argsText: JSON.stringify(spec.args),
   } as ThreadAssistantMessagePart);
   yield { content: [...parts] };
-  await sleep(480);
+  await sleep(480, signal);
+  if (signal?.aborted) return;
 
   parts[parts.length - 1] = { ...(parts[parts.length - 1] as any), result: spec.result, isError: false };
   yield { content: [...parts] };
-  await sleep(200);
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, spec.closing)) {
+  for await (const snap of streamTextPart(parts, spec.closing, "text", { signal })) {
     yield { content: snap };
   }
+  if (signal?.aborted) return;
 
   yield { content: [...parts], status: { type: "complete", reason: "stop" } };
 }
@@ -443,13 +501,16 @@ async function* simpleToolCallTurn(spec: SimpleTurnSpec): AsyncGenerator<ChatMod
 // of this spike's demoed flow.
 function simpleScript(spec: SimpleTurnSpec): ThreadScript {
   return {
-    start(turnIndex) {
-      if (turnIndex === 1) return simpleToolCallTurn(spec);
+    start(turnIndex, signal) {
+      if (turnIndex === 1) return simpleToolCallTurn(spec, signal);
       if (turnIndex === 2) {
-        return simpleToolCallTurn({
-          ...spec,
-          closing: `${spec.closing} (regenerated — same result on a fresh pass, nothing new to add.)`,
-        });
+        return simpleToolCallTurn(
+          {
+            ...spec,
+            closing: `${spec.closing} (regenerated — same result on a fresh pass, nothing new to add.)`,
+          },
+          signal,
+        );
       }
       return unscripted();
     },
@@ -605,22 +666,29 @@ const streamingMarkdownFlickerScript = simpleScript({
 // fact (loadTheme throws for a theme name outside the loaded bundle), not
 // lorem.
 // ---------------------------------------------------------------------------
-async function* themeSwapCrashTurn1(): AsyncGenerator<ChatModelRunResult> {
+async function* themeSwapCrashTurn1(signal?: AbortSignal): AsyncGenerator<ChatModelRunResult> {
   const parts: ThreadAssistantMessagePart[] = [{ type: "reasoning", text: "" }];
   for await (const snap of streamTextPart(
     parts,
     "Loading an alternate theme to compare against vesper before deciding whether Transcript should default to it.",
     "reasoning",
+    { signal },
   )) {
     yield { content: snap };
   }
-  await sleep(160);
+  if (signal?.aborted) return;
+  await sleep(160, signal);
+  if (signal?.aborted) return;
 
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, "Let me check the loadTheme call site first.")) {
+  for await (const snap of streamTextPart(parts, "Let me check the loadTheme call site first.", "text", {
+    signal,
+  })) {
     yield { content: snap };
   }
-  await sleep(200);
+  if (signal?.aborted) return;
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   parts.push({
     type: "tool-call",
@@ -630,7 +698,8 @@ async function* themeSwapCrashTurn1(): AsyncGenerator<ChatModelRunResult> {
     argsText: JSON.stringify({ command: "grep -n loadTheme shared/src/highlight.ts" }),
   } as ThreadAssistantMessagePart);
   yield { content: [...parts] };
-  await sleep(300);
+  await sleep(300, signal);
+  if (signal?.aborted) return;
 
   parts[parts.length - 1] = {
     ...(parts[parts.length - 1] as any),
@@ -638,13 +707,16 @@ async function* themeSwapCrashTurn1(): AsyncGenerator<ChatModelRunResult> {
     isError: false,
   };
   yield { content: [...parts] };
-  await sleep(200);
+  await sleep(200, signal);
+  if (signal?.aborted) return;
 
   parts.push({ type: "text", text: "" });
-  for await (const snap of streamTextPart(parts, "Now trying the alternate theme directly.")) {
+  for await (const snap of streamTextPart(parts, "Now trying the alternate theme directly.", "text", { signal })) {
     yield { content: snap };
   }
-  await sleep(160);
+  if (signal?.aborted) return;
+  await sleep(160, signal);
+  if (signal?.aborted) return;
 
   // Real throw — NOT a scripted error tool-call result. Propagates out of
   // this generator; local-thread-runtime-core.js's catch converts it to
@@ -656,8 +728,8 @@ async function* themeSwapCrashTurn1(): AsyncGenerator<ChatModelRunResult> {
 }
 
 const themeSwapCrashScript: ThreadScript = {
-  start(turnIndex) {
-    if (turnIndex === 1) return themeSwapCrashTurn1();
+  start(turnIndex, signal) {
+    if (turnIndex === 1) return themeSwapCrashTurn1(signal);
     return unscripted();
   },
   continuations: {},
