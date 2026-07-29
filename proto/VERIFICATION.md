@@ -823,3 +823,36 @@ IB3's SHIP is trusted.
 reproduction of esc genuinely halting generation for Ink; still this
 dispatch's own claim, not the orchestrating session's — see this
 section's own header note above).**
+
+## Orchestrating-session independent re-verification (`verified-by: user-spot-check`)
+
+Per the plan's own execution model — IB3's one named highest-risk claim is
+proof 2 (esc genuinely interrupts a running turn, not a visual-only
+toggle) — re-run firsthand in a fresh tmux session, independent of any
+batch-agent dispatch, before trusting the SHIP verdict above.
+
+**Method:** `script -q <raw-log> npx tsx src/main.tsx` in a fresh `tmux`
+pane (`-x 120 -y 40`), `ctrl+t` → arrow-nav → `Enter` onto the real
+"LIA-495 migration spike" seeded thread, sent its trigger message and let
+it settle naturally (~8s), then sent a second message ("second question —
+keep streaming for a while please") and pressed `Escape` ~2s into its
+stream, while the composed status row showed the spinner/elapsed/`esc
+interrupt` hint live. Captured the pane immediately after the keypress and
+again 4 seconds later.
+
+**Result:** the two captures are byte-for-byte identical. The in-flight
+tool call (`Bash(grep -n "@assistant-ui/core" ...)`) was frozen permanently
+at `running…` in both captures — it never received a result — and the
+status row had already reverted to the idle `ctrl+t threads · ctrl+n new
+· ? help` hint (spinner/elapsed gone) by the first capture. **Zero further
+output appeared between the two captures** — the literal scoped claim IB3's
+proof 2 exists to prove.
+
+This independently confirms the esc-cancel wiring (`useComposerCancel`)
+genuinely halts generation for the Ink target, matching both the batch's
+own scripted capture and its own second dry-run reproduction — this is a
+third, fully independent reproduction via a different navigation path and
+message pair.
+
+**verified-by: user-spot-check — PASS (esc genuinely halts generation;
+reproduced independently outside any batch-agent dispatch).**
