@@ -1,6 +1,16 @@
 # Dependencies
 node_modules/
 .npm-cache/
+# proto/'s node_modules are sometimes symlinks to another worktree's
+# node_modules (npm linker convenience, baked-in absolute host path) rather
+# than real directories. Git only matches a slash-suffixed pattern like
+# `node_modules/` above against directories, NOT against a symlink — so a
+# symlinked proto/node_modules stays untracked-but-NOT-ignored, and a broad
+# `git add` at commit time would stage the absolute host path straight into
+# this public repo (code-review LIA-496 WB3 finding). No trailing slash on
+# these so the pattern matches the symlink entry itself.
+proto/node_modules
+proto/web-app/node_modules
 # Build output
 dist/
 

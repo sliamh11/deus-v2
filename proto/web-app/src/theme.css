@@ -346,6 +346,75 @@ a {
   line-height: 1.5;
   white-space: pre-wrap;
 }
+/* WB3 (LIA-496 review-fix) — W10 hover edit/copy row. `.s-user-col` wraps
+   the chip so the actions row can sit directly under it, right-aligned to
+   match the chip's own alignment (`.s-user` already does `justify-content:
+   flex-end` on its single child). */
+.s-user-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 34rem;
+}
+.s-user-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+/* Revealed via opacity/pointer-events, NOT `display:none` -> `display:flex`:
+   a `display:none` element's descendants are removed from the tab order
+   entirely, so a `:focus-within` reveal selector on it can never match (Tab
+   has nothing inside to land focus on in the first place) — keyboard-only
+   users would be locked out of Edit/Copy. Staying `display:flex` always and
+   toggling opacity/pointer-events instead keeps the buttons real, focusable
+   tab stops at all times; Tab moves focus into them exactly like any other
+   visible button, which is what actually triggers `:focus-within` below. */
+.s-user-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+.s-user:hover .s-user-actions,
+.s-user-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* W10 — `UserEditComposer`'s edit-in-place field, swapped in for the chip
+   at the same `.s-user` slot (see Thread.tsx). Same rounded-corner
+   language as `.s-user .chip` (16px/16px/4px/16px, the "tail" pointing at
+   the message stream), same max-width, so the edit box doesn't jump the
+   layout relative to the bubble it replaces. */
+.s-edit-field {
+  width: 100%;
+  max-width: 34rem;
+  border: 1px solid var(--s-pine);
+  background: var(--s-field);
+  border-radius: 16px 16px 4px 16px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.s-edit-input {
+  border: none;
+  background: transparent;
+  outline: none;
+  resize: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--s-ink);
+  font-family: var(--s-sans);
+  max-height: 240px;
+}
+.s-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .s-msg-group {
   margin-bottom: 8px;
 }
@@ -382,25 +451,87 @@ a {
   font-weight: 600;
   margin: 20px 0 10px;
 }
+/* ---------------------------------------------------------------------
+   WB3 (LIA-496 review-fix) — W12 reasoning disclosure + W13 tool-output /
+   diff disclosure. `.s-tool-chevron` is the one shared chevron treatment
+   used by all three disclosure controls (reasoning toggle, tool-output
+   toggle, DiffPanel.tsx's header toggle) — one visual family, per the
+   plan's "collapsed row + chevron" instruction.
+   ------------------------------------------------------------------- */
+.s-tool-chevron {
+  display: inline-block;
+  color: var(--s-faint);
+  transition: transform 0.15s ease;
+  flex: none;
+}
+.s-tool-chevron.open {
+  transform: rotate(90deg);
+}
+.s-reasoning-wrap {
+  margin: 0 0 12px;
+}
+.s-reasoning-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--s-faint);
+  font-family: var(--s-sans);
+  font-size: 12.5px;
+  font-style: italic;
+  padding: 2px 0;
+}
+.s-reasoning-toggle:hover {
+  color: var(--s-dim);
+}
 .s-reasoning {
   font-family: var(--s-sans);
   font-size: 12.5px;
   color: var(--s-faint);
   font-style: italic;
-  margin: 0 0 12px;
+  margin: 6px 0 0;
   line-height: 1.5;
+}
+.s-toolline-wrap {
+  margin: 0 0 12px;
 }
 .s-toolline {
   font-family: var(--s-mono);
   font-size: 12px;
   color: var(--s-dim);
-  margin: 0 0 12px;
   display: flex;
   gap: 8px;
   align-items: baseline;
+  border: none;
+  background: transparent;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+}
+.s-toolline:hover {
+  color: var(--s-ink);
 }
 .s-toolline .dot {
   color: var(--s-faint);
+}
+.s-toolline-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.s-toolline-body {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  background: var(--s-chip);
+  border-radius: 8px;
+  font-family: var(--s-mono);
+  font-size: 12px;
+  color: var(--s-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ---------------------------------------------------------------------
@@ -514,6 +645,10 @@ a {
   background: transparent;
   color: var(--s-dim);
 }
+.s-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .s-always {
   border: none;
   background: transparent;
@@ -574,6 +709,50 @@ a {
 }
 .s-code-h .minus {
   color: var(--s-diff-del);
+}
+/* WB3 (LIA-496 review-fix) — W13 diff card disclosure + copy. The toggle
+   and the copy button are siblings inside `.s-code-h` (a plain div, kept
+   as-is above), never a button nested inside a button — that's invalid
+   HTML and browsers break out of it, which is exactly the trap a single
+   combined "clickable header" would have fallen into. */
+.s-code-h-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 0;
+}
+.s-code-h-toggle span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.s-code-h-toggle:hover {
+  color: var(--s-code-ink);
+}
+.s-code-h-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.s-diff-copy {
+  border: none;
+  background: transparent;
+  color: #9aa491;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.s-diff-copy:hover {
+  background: rgba(217, 223, 210, 0.12);
+  color: var(--s-code-ink);
 }
 .s-code pre {
   margin: 0;

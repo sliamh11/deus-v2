@@ -8,25 +8,32 @@
 // which re-invokes the real adapter and creates a genuine second branch —
 // see VERIFICATION.md's "Regenerate (Reload)" row, 2/2 confirmed live).
 //
-// Code-review fix (LIA-496 REVISE round): this comment used to claim
+// WB3 (LIA-496 review-fix) — W11 fix: this comment used to claim
 // "edit + resend (ComposerPrimitive's per-message edit affordance ...)
-// creates the sibling branches" — that affordance does not actually exist
-// anywhere in this app. Confirmed by reading `Thread.tsx`'s `UserMessage`
-// directly: it renders only `<div className="s-user"><div
-// className="chip"><MessagePrimitive.Content/></div></div>`, no
-// button/dblclick handler ever calls `composer.beginEdit()`. Corrected
-// here rather than left as a documented-but-nonexistent behavior — see
-// VERIFICATION.md's "Edit a user message, branch picker shows 2/2" row
-// (honest FAIL) for the live-verified detail.
+// creates the sibling branches" — that affordance did not actually exist
+// anywhere in this app at the time. It now does — Thread.tsx's
+// `UserMessage`/`UserEditComposer` (added in WB3, that file's own header
+// comment has the verified mechanism) wires `ActionBarPrimitive.Edit` to
+// the real `composer.beginEdit()` runtime call, and a real edit + Save
+// creates the sibling branch this picker navigates. See
+// VERIFICATION.md's WB3 rows for the live-verified detail (superseding the
+// old honest-FAIL entry this comment used to point at).
+//
+// W11 fix (this batch): `Previous`/`Next` were plain glyph buttons with no
+// accessible name — a screen reader announced them only as "‹"/"›". Real
+// `aria-label`s added; `BranchPickerPrimitive.Previous`/`.Next` both accept
+// standard button props (confirmed: `ButtonHTMLAttributes<HTMLButtonElement>`
+// in `BranchPickerPrevious.d.ts`/`BranchPickerNext.d.ts`), so this is a
+// plain prop pass-through, not a new mechanism.
 import type { FC } from "react";
 import { BranchPickerPrimitive } from "@assistant-ui/react";
 
 export const BranchPicker: FC = () => {
   return (
     <BranchPickerPrimitive.Root className="s-branchpicker" hideWhenSingleBranch>
-      <BranchPickerPrimitive.Previous>‹</BranchPickerPrimitive.Previous>
+      <BranchPickerPrimitive.Previous aria-label="Previous branch">‹</BranchPickerPrimitive.Previous>
       <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
-      <BranchPickerPrimitive.Next>›</BranchPickerPrimitive.Next>
+      <BranchPickerPrimitive.Next aria-label="Next branch">›</BranchPickerPrimitive.Next>
     </BranchPickerPrimitive.Root>
   );
 };
