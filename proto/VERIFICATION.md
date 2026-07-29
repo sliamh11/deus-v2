@@ -1558,3 +1558,71 @@ username — zero occurrences in all five.
 
 **Summary for this round: 2/3 findings required a real fix (both applied
 and re-verified above), 1/3 confirmed informational per its own text.**
+
+## Orchestrating-session independent re-verification (`verified-by: user-spot-check`)
+
+Per the plan's own execution model — IB2's one named highest-risk claim is
+the tool-output collapse/expand proof (a real >5-line Bash result
+collapses to 5 lines, and ctrl+o toggles it while mid-stream) — re-verified
+firsthand in fresh tmux sessions, independent of any batch-agent dispatch,
+before trusting the SHIP verdict above.
+
+**Method:** `env USER=you LOGNAME=you npx tsx src/main.tsx`, navigated to
+"LIA-495 migration spike", sent "recap the import" (the exact scripted
+trigger). A tight ~0.1s poll loop detected the collapsed row
+("… +1 lines · ctrl+o expand") while the message was still genuinely
+mid-stream (closing text visibly cut off), and sent ctrl+o in that same
+iteration.
+
+**Result, part 1 (the literal named claim) — CONFIRMED.** The block
+expanded to all 6 real lines with the cap row gone, and stayed expanded
+across 15 consecutive polls (~2.25s) while the message continued
+streaming — the live mid-stream toggle genuinely works, matching the
+batch's own claim.
+
+**Result, part 2 — a real discrepancy found, not silently passed over.**
+Continuing to poll through to full settle (the message finishing and
+committing), the block **reverted to collapsed the instant the message
+settled** — in the SAME poll transition that flipped `running` false, with
+no second ctrl+o press sent. This contradicts `Messages.tsx`'s own header
+comment (`ink-app/src/components/Messages.tsx:66-68`), which characterizes
+the post-commit state as "renders whatever expanded/collapsed state it had
+at commit time, frozen" — the actual observed behavior is not "frozen at
+whatever it was," it silently resets to the DEFAULT collapsed state,
+discarding a live user toggle. **Mechanism, read directly:** `BashLine`
+(`Messages.tsx:92`) holds `expanded` in local `useState(isError)` —
+evaluated once per mount. Per IB1's part-granularity `<Static>` model, the
+live (dynamic-region) `BashLine` instance and the eventual
+`<Static>`-committed `BashLine` instance are separate React mounts, not
+the same instance persisting across the transition — so the committed
+instance's `useState(isError)` re-initializes from its own default,
+independent of whatever `expanded` value the live instance had reached via
+ctrl+o. This is the SAME root-cause class this round's own REVISE fixed
+for the auto-expand-on-error case (`Finding 2` above, a few paragraphs up
+in this file: "only a fresh remount... picked up `isError=true`", fixed
+with a re-sync `useEffect`) — but no equivalent re-sync exists for the
+MANUAL ctrl+o toggle, so it remains affected by the identical mechanism
+the sibling finding already named and fixed for a different trigger.
+
+**Severity assessment:** low-to-medium, not blocking. The literal named
+claim (ctrl+o toggles live, mid-stream) is genuinely true and confirmed.
+The gap is narrower and more concrete than the plan's already-accepted
+generic Risk #2 ("`<Static>` immutability — completed turns can't be
+restyled after commit") — it's not about a LATER batch failing to
+retroactively restyle an already-committed turn, it's that a single
+message's OWN live user interaction (an expand a user performed to read
+long output) is silently discarded the moment that SAME message finishes
+streaming, which could read as the UI "changing its mind" mid-read. Not
+re-triaged as a blocking finding here (per this file's own convention,
+new post-SHIP discoveries are recorded for the record, not treated as
+grounds to reopen a batch already reviewed and shipped) — flagged for a
+future polish pass if this spike continues past MVP.
+
+**verified-by: user-spot-check — PARTIAL PASS with a disclosed
+discrepancy (the literal named claim — live mid-stream ctrl+o toggle — is
+CONFIRMED true; additionally found and mechanism-traced: the toggle does
+not survive the live→committed transition, silently reverting to
+collapsed on settle, contradicting this file's own header-comment
+description of that behavior — not silently smoothed over, recorded
+honestly per this file's own FAIL-disclosure convention). Filed as a
+tracked follow-up: LIA-497.**
