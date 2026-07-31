@@ -54,6 +54,18 @@ rm "$HERMES_HOME/skills/memory/deus-memory"
 - `requirements.txt` - documents the `mcp` version-compatibility assumption (see comments inline - not pip-installed separately).
 - `skills/deus-memory/SKILL.md` - Option A's model-initiated recall/log convention.
 - `tests/test_deus_memory_provider.py` - network-free pytest suite (monkeypatched MCP client).
+- `ab_compare.py` (LIA-501) - A/B/n compares Hermes model **Profiles** (not
+  `gateway.profile_routes`/`multiplex_profiles` - that's a live-gateway
+  inbound-message routing mechanism, unrelated to this synchronous batch
+  script) on a shared prompt/conversation, scored by Deus's own judge
+  harness (`evolution.judge`). Drives `hermes -p <profile> chat -q ... -Q`
+  as a subprocess per profile; does not create or configure profiles
+  itself - see the script's own docstring for the one-time
+  `hermes profile create` precondition and the memory-pollution warning
+  (keep A/B profiles free of `memory.provider: deus`, or synthetic
+  comparison runs get logged into the evolution store as real interactions).
+- `tests/test_ab_compare.py` - network-free pytest suite (monkeypatched
+  `subprocess.run` and judge resolution).
 
 ## Not covered by this pass
 
