@@ -121,6 +121,17 @@ _EVOLUTION_SERVER = StdioServerParameters(
 _PREFETCH_TIMEOUT_S = 15.0
 _SYNC_TIMEOUT_S = 30.0
 
+# Bounds how many sync_turn() background threads can actually be spawning
+# subprocesses at once, process-wide (not per-session - each Hermes session
+# gets its own provider instance, but the host's subprocess/resource load is
+# a shared, process-wide concern). sync_turn() itself stays non-blocking per
+# the ABC's contract; excess calls queue at this semaphore inside the worker
+# rather than each spawning a concurrent subprocess immediately. A fast
+# back-to-back conversation (or several concurrent sessions) would otherwise
+# spawn one concurrent subprocess-backed thread per turn with no cap.
+_SYNC_TURN_CONCURRENCY_LIMIT = 3
+_sync_turn_semaphore = threading.BoundedSemaphore(_SYNC_TURN_CONCURRENCY_LIMIT)
+
 # Deliberate, explicit value - log_interaction_tool's group_folder is a
 # required MCP-schema field (evolution/mcp_server.py, no default). Confirmed
 # against ../../../groups/ at plan time: no existing channel uses "hermes".
@@ -270,6 +281,17 @@ class DeusMemoryProvider(MemoryProvider):
     def _sync_turn_worker(
         self, user_content: str, assistant_content: str, session_id: str
     ) -> None:
+        # Blocks here (not in sync_turn()) if _SYNC_TURN_CONCURRENCY_LIMIT
+        # subprocess-backed calls are already in flight process-wide - the
+        # thread is already tracked in self._active_sync_threads before it
+        # gets here, so shutdown()'s join() still correctly waits for it
+        # even while it's queued at the semaphore, not yet doing real work.
+        with _sync_turn_semaphore:
+            self._sync_turn_call(user_content, assistant_content, session_id)
+
+    def _sync_turn_call(
+        self, user_content: str, assistant_content: str, session_id: str
+    ) -> None:
         try:
             asyncio.run(
                 mcp_client.call_tool(
@@ -324,6 +346,22 @@ class DeusMemoryProvider(MemoryProvider):
         for thread in threads:
             remaining = max(0.0, deadline - time.monotonic())
             thread.join(timeout=remaining)
+        # A thread can still be alive here in two cases: it was genuinely
+        # queued at _sync_turn_semaphore (never got a slot before the shared
+        # deadline - more likely now that the semaphore can make a thread
+        # wait before it even starts its call) or its own call is still
+        # running past the deadline. Either way its interaction will be
+        # dropped when this daemon thread is killed at process exit - log it
+        # so a burst well above the concurrency limit leaves a visible signal
+        # instead of a silent, unexplained gap in the evolution store.
+        still_alive = [t for t in threads if t.is_alive()]
+        if still_alive:
+            logger.warning(
+                "deus memory provider: shutdown() deadline reached with %d "
+                "sync_turn thread(s) still active - their interactions may "
+                "be dropped",
+                len(still_alive),
+            )
 
     def backup_paths(self) -> List[str]:
         # Deliberately empty. Deus's own stores (~/.deus/) already have an
