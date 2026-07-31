@@ -452,3 +452,65 @@ def test_shutdown_uses_a_shared_deadline_across_multiple_in_flight_threads(
     # Shared deadline (~3.0s) for BOTH threads together, not ~3.0s EACH
     # (~6.0s total) - generous upper bound to stay non-flaky under load.
     assert elapsed < 5.0, f"shutdown() took {elapsed:.1f}s - deadline is not shared across threads"
+
+
+def test_sync_turn_bounds_concurrent_subprocess_spawns(
+    provider: DeusMemoryProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression test for the "Not covered by this pass" fan-out item: a fast
+    # back-to-back conversation must not spawn unbounded concurrent
+    # subprocess-backed calls. Fires more sync_turn() calls than the
+    # configured limit and asserts the observed concurrent-in-flight count
+    # never exceeds it, using a counter guarded by its own lock (independent
+    # of the provider's own semaphore, so this genuinely observes behavior
+    # rather than trivially agreeing with the mechanism under test).
+    import deus_memory_provider as dmp
+
+    provider.initialize("sess-1", hermes_home="/tmp/.hermes", platform="cli")
+
+    limit = dmp._SYNC_TURN_CONCURRENCY_LIMIT
+    assert limit >= 1
+    n_calls = limit + 3
+
+    lock = threading.Lock()
+    in_flight = 0
+    max_observed = 0
+    release = threading.Event()
+
+    async def fake_call_tool(*args, **kwargs):
+        nonlocal in_flight, max_observed
+        with lock:
+            in_flight += 1
+            max_observed = max(max_observed, in_flight)
+        release.wait(timeout=5)
+        with lock:
+            in_flight -= 1
+        return {"id": "x", "status": "logged"}
+
+    monkeypatch.setattr(mcp_client, "call_tool", fake_call_tool)
+
+    for i in range(n_calls):
+        provider.sync_turn(f"prompt {i}", f"response {i}", session_id="sess-1")
+
+    # Settle for a FIXED, generous window before checking - not a break-on-
+    # first-threshold-touch race. A prior version of this test broke out of
+    # its polling loop the instant max_observed first reached the limit, then
+    # immediately set `release` - reproduced (via mutation testing) to
+    # spuriously pass ~20% of the time against genuinely UNBOUNDED code,
+    # because a slow-to-start thread (real asyncio.run()/thread-spawn
+    # overhead ahead of it) could still be arriving after release() already
+    # fired, sailing through without ever overlapping another call. Waiting a
+    # fixed window long enough for every dispatched thread to have had a
+    # chance to enter fake_call_tool closes that race: under genuinely
+    # bounded code, excess threads are stuck at the semaphore's acquire() and
+    # CANNOT enter fake_call_tool no matter how long we wait, so max_observed
+    # stays capped at `limit` regardless of settle time; under unbounded code
+    # every thread reaches fake_call_tool with nothing gating it, so given
+    # enough time max_observed correctly climbs past `limit`.
+    time.sleep(1.0)
+
+    release.set()
+    for thread in list(provider._active_sync_threads):
+        thread.join(timeout=5)
+
+    assert max_observed <= limit, f"observed {max_observed} concurrent calls, limit is {limit}"
