@@ -1,0 +1,14 @@
+# deus_memory_provider/ runs INSIDE Hermes's own Python process (Hermes's
+# plugin loader dynamically imports it via importlib - no separate pip
+# install step). It only needs the `mcp` client library, which Hermes
+# already pins in its own environment (mcp>=1.26.0 per hermes-agent's
+# pyproject.toml, confirmed compatible with the API surface used here).
+#
+# This file exists to document that compatibility assumption, not to be
+# pip-installed separately - do not `pip install -r` this into Hermes's env.
+#
+# The two Deus MCP servers this provider talks to (scripts/deus-memory-mcp,
+# evolution/mcp_server.py) run as their own subprocesses with their own
+# already-pinned environment - see evolution/requirements.txt, unchanged by
+# this integration.
+mcp>=1.26.0
