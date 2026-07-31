@@ -263,9 +263,58 @@ def test_compare_profiles_passes_context_from_multi_turn_conversation(monkeypatc
 
     ab_compare.compare_profiles(["model-a"], ["turn one", "turn two"])
 
-    assert fake_judge.calls[0]["prompt"] == "turn one"
+    # The judge must be shown the LAST turn as `prompt` (it pairs with
+    # `final_answer`, the response to that turn) - the earlier turn is
+    # already carried via `context`, not re-passed as `prompt`.
+    assert fake_judge.calls[0]["prompt"] == "turn two"
     assert fake_judge.calls[0]["response"] == "final answer"
     assert fake_judge.calls[0]["context"] == "User: turn one\nAssistant: first answer"
+
+
+def test_compare_profiles_isolates_judge_evaluation_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A judge-backend error (network blip, Ollama down) for one profile must
+    not abort the run for the remaining profiles - mirrors the existing
+    hermes-subprocess failure isolation in
+    test_compare_profiles_scores_each_profile_and_isolates_failures."""
+
+    class _FlakyJudge:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def evaluate(self, *, prompt, response, context=None, tools_used=None, user_profile=None):
+            self.calls.append({"prompt": prompt, "response": response})
+            if response == "answer-a":
+                raise TimeoutError("Ollama backend timed out")
+            return JudgeResult(
+                score=0.7,
+                quality=0.7,
+                safety=1.0,
+                tool_use=0.5,
+                personalization=0.5,
+                rationale="fine",
+            )
+
+    flaky_judge = _FlakyJudge()
+    monkeypatch.setattr(ab_compare, "make_runtime_judge", lambda provider=None: flaky_judge)
+
+    def fake_run_profile_turns(hermes_bin, profile, turns, *, timeout_s):
+        answer = "answer-a" if profile == "model-a" else "answer-b"
+        return answer, None, 1.5, None
+
+    monkeypatch.setattr(ab_compare, "run_profile_turns", fake_run_profile_turns)
+    monkeypatch.setattr(ab_compare, "resolve_profile_model", lambda profile, hermes_home=None: f"{profile}-model-id")
+
+    results = ab_compare.compare_profiles(["model-a", "model-b"], ["What is the capital of France?"])
+
+    model_a, model_b = results
+    assert model_a.error == "judge evaluation failed: Ollama backend timed out"
+    assert model_a.judge is None
+
+    # model-b must still be scored - the failure did not abort the run.
+    assert model_b.error is None
+    assert model_b.judge is not None
+    assert model_b.judge.score == 0.7
+    assert len(flaky_judge.calls) == 2
 
 
 # ---------------------------------------------------------------------------

@@ -2,18 +2,13 @@
 """A/B/n compare Hermes model profiles on a shared prompt, scored by Deus's
 own judge harness (``evolution.judge``).
 
-LIA-501. Not "wired through `gateway.profile_routes`/`multiplex_profiles`" as
-the ticket originally named it - those are a live-gateway inbound-message
-routing mechanism (Discord/Telegram/HTTP chat_id -> profile), unrelated to a
-synchronous batch script issuing prompts and reading replies. The actual
-per-model isolation primitive this script drives is Hermes **Profiles**
-themselves (``hermes profile create <name>``, each with its own
-``config.yaml`` -> ``model.default``/``model.model``), invoked
-non-interactively via ``hermes -p <profile> chat -q "<prompt>" -Q``. This is
-the same mechanism this integration's own README already points at for
-per-*contact* isolation (see ../hermes/README.md's Security model section,
-point 1), applied here to per-*model* isolation instead. No gateway process
-needs to run for this rig.
+The per-model isolation primitive this script drives is Hermes **Profiles**
+(``hermes profile create <name>``, each with its own ``config.yaml`` ->
+``model.default``/``model.model``), invoked non-interactively via
+``hermes -p <profile> chat -q "<prompt>" -Q``. This is the same mechanism
+this integration's own README already points at for per-*contact* isolation
+(see ../hermes/README.md's Security model section, point 1), applied here to
+per-*model* isolation instead. No gateway process needs to run for this rig.
 
 PRECONDITION (not automated by this script): the profiles named on
 --profiles must already exist, each with a different `model.default` (or
@@ -299,7 +294,14 @@ def compare_profiles(
     """
     judge = make_runtime_judge(provider=judge_provider)
 
-    first_turn_prompt = turns[0] if turns else ""
+    # The judge grades `final_answer`, which is the response to the LAST
+    # turn (see run_profile_turns) - so `prompt` must be the last turn too,
+    # matching every other judge caller in this repo's prompt/response
+    # pairing convention (evolution/cc_backfill.py, evolution/backfill.py,
+    # evolution/benchmark_judge.py) and `_build_eval_prompt`'s rendering
+    # ("User prompt: <prompt>" immediately before "Agent response:
+    # <response>"). Earlier turns are already carried via `context`.
+    last_turn_prompt = turns[-1] if turns else ""
     results: list[ProfileResult] = []
 
     for profile in profiles:
@@ -314,9 +316,27 @@ def compare_profiles(
             )
             continue
 
-        judge_result = judge.evaluate(
-            prompt=first_turn_prompt, response=final_answer or "", context=context
-        )
+        try:
+            judge_result = judge.evaluate(
+                prompt=last_turn_prompt, response=final_answer or "", context=context
+            )
+        except Exception as exc:
+            # Mirrors evolution/cc_backfill.py and evolution/backfill.py: a
+            # judge-backend hiccup (network blip, Ollama down) for THIS
+            # profile must not abort the remaining profiles - same
+            # per-profile failure isolation as the hermes-subprocess errors
+            # handled above.
+            results.append(
+                ProfileResult(
+                    profile=profile,
+                    model=model,
+                    latency_s=latency_s,
+                    error=f"judge evaluation failed: {exc}",
+                    final_answer=final_answer,
+                )
+            )
+            continue
+
         results.append(
             ProfileResult(
                 profile=profile,
