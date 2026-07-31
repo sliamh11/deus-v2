@@ -7,7 +7,9 @@ Hermes's own `agent.memory_provider.MemoryProvider` ABC isn't importable
 outside a real Hermes install, so a minimal stub covering the methods this
 provider actually uses is injected into sys.modules before the real package
 is imported - this is what lets these tests run standalone in the Deus
-repo's own CI.
+repo's own CI. The stub itself lives in ``_stub_memory_provider_abc.py``
+(shared with ``check_memory_reconciliation.py``, which needs the exact same
+injection to import ``DeusMemoryProvider`` standalone).
 """
 from __future__ import annotations
 
@@ -15,77 +17,16 @@ import asyncio
 import sys
 import threading
 import time
-import types
-from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-def _install_stub_memory_provider_abc() -> None:
-    if "agent.memory_provider" in sys.modules:
-        return
-
-    agent_pkg = types.ModuleType("agent")
-    agent_pkg.__path__ = []  # mark as a package
-    memory_provider_mod = types.ModuleType("agent.memory_provider")
-
-    class MemoryProvider(ABC):
-        @property
-        @abstractmethod
-        def name(self) -> str: ...
-
-        @abstractmethod
-        def is_available(self) -> bool: ...
-
-        @abstractmethod
-        def initialize(self, session_id: str, **kwargs) -> None: ...
-
-        def system_prompt_block(self) -> str:
-            return ""
-
-        def prefetch(self, query: str, *, session_id: str = "") -> str:
-            return ""
-
-        def sync_turn(
-            self,
-            user_content: str,
-            assistant_content: str,
-            *,
-            session_id: str = "",
-            messages: Optional[List[Dict[str, Any]]] = None,
-        ) -> None:
-            pass
-
-        @abstractmethod
-        def get_tool_schemas(self) -> List[Dict[str, Any]]: ...
-
-        def shutdown(self) -> None:
-            pass
-
-        def on_session_switch(
-            self,
-            new_session_id: str,
-            *,
-            parent_session_id: str = "",
-            reset: bool = False,
-            rewound: bool = False,
-            **kwargs,
-        ) -> None:
-            pass
-
-        def backup_paths(self) -> List[str]:
-            return []
-
-    memory_provider_mod.MemoryProvider = MemoryProvider
-    sys.modules["agent"] = agent_pkg
-    sys.modules["agent.memory_provider"] = memory_provider_mod
-
+from _stub_memory_provider_abc import install as _install_stub_memory_provider_abc  # noqa: E402
 
 _install_stub_memory_provider_abc()
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from deus_memory_provider import DeusMemoryProvider, mcp_client  # noqa: E402
 

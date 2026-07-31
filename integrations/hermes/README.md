@@ -51,9 +51,22 @@ rm "$HERMES_HOME/skills/memory/deus-memory"
 
 - `deus_memory_provider/__init__.py` - the `MemoryProvider` adapter (Option B).
 - `deus_memory_provider/mcp_client.py` - the MCP-client helper it wraps.
+- `_stub_memory_provider_abc.py` - shared stub for Hermes's `agent.memory_provider.MemoryProvider` ABC, used by both `tests/test_deus_memory_provider.py` and `check_memory_reconciliation.py` so the adapter is importable standalone outside a real Hermes install.
+- `check_memory_reconciliation.py` - reconciliation check between a real write through the adapter and a direct read-back from `evolution.db` (LIA-499). See "Memory write/read reconciliation" below.
 - `requirements.txt` - documents the `mcp` version-compatibility assumption (see comments inline - not pip-installed separately).
 - `skills/deus-memory/SKILL.md` - Option A's model-initiated recall/log convention.
 - `tests/test_deus_memory_provider.py` - network-free pytest suite (monkeypatched MCP client).
+- `tests/test_check_memory_reconciliation.py` - network-free pytest suite for `check_memory_reconciliation.py`'s own pass/fail logic (monkeypatched write and read sides).
+
+## Memory write/read reconciliation
+
+`check_memory_reconciliation.py` writes one real interaction through the actual `DeusMemoryProvider` adapter lifecycle (`sync_turn()` immediately followed by `shutdown()` - deliberately reproducing the exact real-world shape of PR #79's shutdown-drop bug), then asserts it landed intact by reading it back.
+
+**It reads back directly from `evolution.db`, not via `memory_recall`.** This is a deliberate deviation from the more obvious-sounding "write it, then recall it" shape, found while grounding the plan in the actual code: `memory_recall` reads `memory.db` (vault-derived, indexed from `Session-Logs/*.md` by `scripts/memory_indexer.py`), while `log_interaction_tool` (what `sync_turn()` calls) writes `evolution.db` - two deliberately separate files with **no cross-database joins** (see `docs/decisions/evolution-db-split.md`; `memory_tree.py` actively aborts if it ever sees evolution tables mixed into `memory.db`). There is no code path, eventual or lagged, that makes a freshly-logged interaction visible to `memory_recall` - a check built against that surface would report drift on every single run since inception regardless of whether anything is broken, and it would not have caught PR #79's actual bug either (a row never reaching `evolution.db` at all, unrelated to vault/semantic-recall visibility). The MCP surface exposes no read tool for interactions (only `log_interaction_tool`, `get_reflections_tool`, and friends are registered in `evolution/mcp_server.py`), so the check imports `evolution.ilog.interaction_log` directly, in-process - the closest available thing to a "provider read" for this data. **If you're tempted to "fix" this back to using `memory_recall`, re-read this paragraph first** - it isn't an oversight.
+
+Where this runs: **manual/on-demand, not wired into CI or a cron in this pass.** Every run costs one real judge-LLM call (`log_interaction_tool` unconditionally schedules `_async_judge_and_reflect` - see `evolution/mcp_server.py`) plus real subprocess spawns, and needs live credentials/config the same way the rest of this integration does - not the "embedding-free" shape of `scripts/memory_health.py`'s session-start probes. Highest value is right after touching the write path this integration cares about (`deus_memory_provider/__init__.py`, `mcp_client.py`, `evolution/mcp_server.py`, `evolution/ilog/interaction_log.py`, `evolution/storage/**`). A daily cron/launchd job (following the `scripts/evolution_backup.py` precedent) is a reasonable follow-up, deliberately deferred - see "Not covered by this pass" below.
+
+Run it directly: `python3 integrations/hermes/check_memory_reconciliation.py` (exit `0` reconciled, `1` a real omission/drift finding, `2` an environment/usage error - kept distinguishable on purpose, mirroring `scripts/ci/wait_for_checks.py`'s convention).
 
 ## Not covered by this pass
 
@@ -62,3 +75,5 @@ rm "$HERMES_HOME/skills/memory/deus-memory"
 - Soak testing / parity benchmarking against the Claude Code hook experience.
 - Docs + upstreaming decision.
 - **Container isolation for live chat channels** (see Security model above) - required before this goes beyond a single-operator local session, even once separate Profiles are used for per-contact isolation.
+- **Reconciliation check scheduling** (CI wiring or a periodic cron for `check_memory_reconciliation.py`) - see "Memory write/read reconciliation" above for why this pass keeps it manual-only.
+- A secondary "`prefetch()` does not leak the reconciliation tag" isolation assertion was considered for `check_memory_reconciliation.py` (a cheap regression guard that the two stores stay separated as designed) but deferred as a separable follow-up rather than bundled into this pass's core write/read-back signal, which tests a different property (reconciliation, not isolation).
