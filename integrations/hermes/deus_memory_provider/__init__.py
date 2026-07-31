@@ -244,7 +244,20 @@ class DeusMemoryProvider(MemoryProvider):
         *,
         session_id: str = "",
         messages: Optional[List[Dict[str, Any]]] = None,
+        diagnostic: bool = False,
     ) -> None:
+        # `diagnostic` is deliberately NOT part of Hermes's MemoryProvider ABC
+        # (see agent.memory_provider.MemoryProvider.sync_turn's signature,
+        # stubbed in ../_stub_memory_provider_abc.py) - it's an extra,
+        # optional, keyword-only param this concrete adapter accepts beyond
+        # the ABC's contract. Hermes itself never passes it (defaults to
+        # False, production behavior unchanged); only an in-process caller
+        # that holds a concrete DeusMemoryProvider instance directly - e.g.
+        # check_memory_reconciliation.py - can opt a specific write into
+        # diagnostic mode. See log_interaction_tool's own docstring
+        # (evolution/mcp_server.py) for why this exists: synthetic/self-test
+        # content must never be able to trigger a real judge call + reflection
+        # write into the shared, real `_GROUP_FOLDER` reflections store.
         if self._agent_context != "primary":
             return
         # Capture the session_id synchronously, here, before the thread
@@ -264,7 +277,7 @@ class DeusMemoryProvider(MemoryProvider):
         # a thread with nowhere to propagate to.
         thread = threading.Thread(
             target=self._sync_turn_worker,
-            args=(user_content, assistant_content, effective_session_id),
+            args=(user_content, assistant_content, effective_session_id, diagnostic),
             daemon=True,
         )
         # Tracked so shutdown() can wait for in-flight logs before the
@@ -279,7 +292,11 @@ class DeusMemoryProvider(MemoryProvider):
         thread.start()
 
     def _sync_turn_worker(
-        self, user_content: str, assistant_content: str, session_id: str
+        self,
+        user_content: str,
+        assistant_content: str,
+        session_id: str,
+        diagnostic: bool = False,
     ) -> None:
         # Blocks here (not in sync_turn()) if _SYNC_TURN_CONCURRENCY_LIMIT
         # subprocess-backed calls are already in flight process-wide - the
@@ -287,10 +304,14 @@ class DeusMemoryProvider(MemoryProvider):
         # gets here, so shutdown()'s join() still correctly waits for it
         # even while it's queued at the semaphore, not yet doing real work.
         with _sync_turn_semaphore:
-            self._sync_turn_call(user_content, assistant_content, session_id)
+            self._sync_turn_call(user_content, assistant_content, session_id, diagnostic)
 
     def _sync_turn_call(
-        self, user_content: str, assistant_content: str, session_id: str
+        self,
+        user_content: str,
+        assistant_content: str,
+        session_id: str,
+        diagnostic: bool = False,
     ) -> None:
         try:
             asyncio.run(
@@ -302,6 +323,7 @@ class DeusMemoryProvider(MemoryProvider):
                         "response": assistant_content,
                         "group_folder": _GROUP_FOLDER,
                         "session_id": session_id,
+                        "diagnostic": diagnostic,
                     },
                     timeout_s=_SYNC_TIMEOUT_S,
                 )
