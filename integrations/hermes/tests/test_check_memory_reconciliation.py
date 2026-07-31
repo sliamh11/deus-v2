@@ -36,15 +36,29 @@ def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(check.time, "sleep", lambda _seconds: None)
 
 
-@pytest.fixture(autouse=True)
-def _fake_write_side(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture()
+def _call_tool_arguments(monkeypatch: pytest.MonkeyPatch) -> dict:
     # sync_turn()'s background thread calls mcp_client.call_tool() - stub it
     # out the same way test_deus_memory_provider.py does, so no real
-    # subprocess/MCP handshake happens.
+    # subprocess/MCP handshake happens. Captures the arguments actually sent
+    # so tests can assert on them (notably `diagnostic`).
+    state: dict = {}
+
     async def fake_call_tool(server_params, tool_name, arguments, *, timeout_s=None):
+        state["arguments"] = arguments
         return {"id": "fake-interaction-id", "status": "logged"}
 
     monkeypatch.setattr(deus_memory_provider.mcp_client, "call_tool", fake_call_tool)
+    return state
+
+
+@pytest.fixture(autouse=True)
+def _fake_write_side(_call_tool_arguments: dict) -> None:
+    # Autouse wrapper so every test in this module gets the stubbed write
+    # side without needing to request the fixture explicitly (mirrors the
+    # previous behavior); tests that care about the captured arguments can
+    # request `_call_tool_arguments` directly instead.
+    return None
 
 
 @pytest.fixture()
@@ -59,12 +73,20 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict:
     state: dict = {}
     real_sync_turn = deus_memory_provider.DeusMemoryProvider.sync_turn
 
-    def capturing_sync_turn(self, user_content, assistant_content, *, session_id="", messages=None):
+    def capturing_sync_turn(
+        self, user_content, assistant_content, *, session_id="", messages=None, diagnostic=False
+    ):
         state["session_id"] = session_id
         state["prompt"] = user_content
         state["response"] = assistant_content
+        state["diagnostic"] = diagnostic
         return real_sync_turn(
-            self, user_content, assistant_content, session_id=session_id, messages=messages
+            self,
+            user_content,
+            assistant_content,
+            session_id=session_id,
+            messages=messages,
+            diagnostic=diagnostic,
         )
 
     monkeypatch.setattr(deus_memory_provider.DeusMemoryProvider, "sync_turn", capturing_sync_turn)
@@ -158,6 +180,26 @@ def test_group_folder_override_is_passed_to_get_recent(
 
     assert check.main(["--group-folder", "custom-folder"]) == 0
     assert seen_group_folders == ["custom-folder"]
+
+
+def test_write_is_marked_diagnostic_to_avoid_reflection_contamination(
+    monkeypatch: pytest.MonkeyPatch, captured: dict, _call_tool_arguments: dict
+) -> None:
+    # LIA-499 REVISE finding: this script's synthetic write must never be
+    # able to trigger a real judge call + reflection write into the live
+    # "hermes" reflections store. Assert the check's own sync_turn() call
+    # sets diagnostic=True (captured fixture) AND that it actually reaches
+    # log_interaction_tool's real arguments (_call_tool_arguments) - both,
+    # since a captured-but-not-threaded flag would pass the first check
+    # while still leaving the real contamination risk live.
+    def fake_get_recent(*, group_folder, limit, eval_suite):
+        return [_row_for(captured["session_id"], captured["prompt"], captured["response"])]
+
+    monkeypatch.setattr(interaction_log, "get_recent", fake_get_recent)
+
+    assert check.main([]) == 0
+    assert captured["diagnostic"] is True
+    assert _call_tool_arguments["arguments"]["diagnostic"] is True
 
 
 def test_default_group_folder_matches_adapters_write_target(

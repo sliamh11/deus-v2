@@ -165,6 +165,40 @@ def test_sync_turn_logs_interaction_with_hermes_group_folder(
     assert calls["arguments"]["group_folder"] == "hermes"
     assert calls["arguments"]["prompt"] == "hello"
     assert calls["arguments"]["response"] == "hi there"
+    # Default (real Hermes call shape, no diagnostic kwarg) must NOT skip the
+    # real judge/reflection path - only an explicit diagnostic=True opt-in
+    # (see check_memory_reconciliation.py) should ever do that.
+    assert calls["arguments"]["diagnostic"] is False
+
+
+def test_sync_turn_diagnostic_flag_reaches_log_interaction_tool(
+    provider: DeusMemoryProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # LIA-499 REVISE finding: a caller that knows its content is synthetic
+    # (check_memory_reconciliation.py) must be able to opt a specific
+    # sync_turn() write out of the real judge-eval + reflection-generation
+    # path, without this being reachable from Hermes's own ABC-conforming
+    # calls (which never pass this kwarg and default to False above).
+    provider.initialize("sess-1", hermes_home="/tmp/.hermes", platform="cli")
+    calls = {}
+    done = {"flag": False}
+
+    async def fake_call_tool(server_params, tool_name, arguments, *, timeout_s=None):
+        calls["arguments"] = arguments
+        done["flag"] = True
+        return {"id": "abc123", "status": "logged"}
+
+    monkeypatch.setattr(mcp_client, "call_tool", fake_call_tool)
+
+    provider.sync_turn("hello", "hi there", session_id="sess-1", diagnostic=True)
+
+    for _ in range(50):
+        if done["flag"]:
+            break
+        time.sleep(0.02)
+
+    assert done["flag"] is True
+    assert calls["arguments"]["diagnostic"] is True
 
 
 def test_sync_turn_skips_non_primary_agent_context(

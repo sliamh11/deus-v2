@@ -62,6 +62,7 @@ def _run_mcp_server() -> None:
         session_id: Optional[str] = None,
         interaction_id: Optional[str] = None,
         metrics: Optional[dict] = None,
+        diagnostic: bool = False,
     ) -> dict:
         """
         Log one agent interaction.  Triggers async judge evaluation.
@@ -70,6 +71,19 @@ def _run_mcp_server() -> None:
         metrics: optional flat dict of task outcomes (e.g. tests_passed,
         breaks, confidence, warden_rounds). Values must be scalars or lists
         of scalars. Seen by reflection generation, never by the judge.
+
+        diagnostic: when True, the interaction row is still written (and
+        remains readable via a direct store read), but the judge evaluation
+        and reflection-generation step below are skipped entirely for this
+        call. For synthetic/self-test content (e.g. a reconciliation check
+        writing placeholder text just to prove the write/read path works),
+        the real judge would score it low on nothing but its own emptiness
+        and generate a nonsense "lesson" into the real, shared reflections
+        store under `group_folder` -- the same store real future
+        interactions retrieve from via get_reflections_tool(). diagnostic=True
+        makes that structurally impossible (no judge call is even made) for
+        callers that know their content isn't a real interaction, without
+        touching the judging path for any real caller (default stays False).
         """
         # Invalid metrics raise ValueError out of log_interaction on purpose:
         # MCP callers get a real error signal (unlike the CLI fire-and-forget
@@ -84,10 +98,17 @@ def _run_mcp_server() -> None:
             interaction_id=interaction_id,
             metrics=metrics,
         )
-        # Fire-and-forget async judge eval
-        asyncio.create_task(_async_judge_and_reflect(
-            iid, prompt, response, tools_used, group_folder, metrics=metrics,
-        ))
+        if diagnostic:
+            log.debug(
+                "evolution: diagnostic=True for interaction %s - skipping judge "
+                "eval and reflection generation",
+                iid,
+            )
+        else:
+            # Fire-and-forget async judge eval
+            asyncio.create_task(_async_judge_and_reflect(
+                iid, prompt, response, tools_used, group_folder, metrics=metrics,
+            ))
         return {"id": iid, "status": "logged"}
 
     @mcp.tool()

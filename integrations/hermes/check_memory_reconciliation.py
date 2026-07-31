@@ -8,6 +8,21 @@ one-shot session's final turn followed almost immediately by shutdown), then
 reads back the same row directly from ``evolution.db`` and asserts it landed
 with the exact content that was written.
 
+Contamination guard: this call passes ``diagnostic=True`` through to
+``sync_turn()`` (threaded to ``log_interaction_tool``'s own ``diagnostic``
+param - see its docstring in ``evolution/mcp_server.py``). Without it, this
+script's synthetic tagged text (``"[reconciliation check <uuid>] prompt"``)
+would still go through the REAL judge-eval + reflection-generation path like
+any other interaction: the judge would very likely score meaningless
+placeholder text below ``REFLECTION_THRESHOLD`` and write a nonsense
+"lesson" into the real, shared reflections store under
+``deus_memory_provider._GROUP_FOLDER`` ("hermes") - the exact store real
+future Hermes conversations retrieve from via ``get_reflections_tool``.
+``diagnostic=True`` makes the judge call and reflection generation not
+happen at all for this write, while the interaction row itself is still
+written and read back normally, so the reconciliation check keeps testing
+the real write/read path it exists to test.
+
 Why this reads ``evolution.db`` directly and NOT via ``memory_recall``: the
 two are deliberately separate stores with no cross-database joins
 (docs/decisions/evolution-db-split.md; memory_tree.py actively ABORTs if it
@@ -145,7 +160,13 @@ def main(argv: Optional[list] = None) -> int:
     tagged_response = f"[reconciliation check {tag}] response"
 
     provider.initialize(session_id=session_id, agent_context="primary")
-    provider.sync_turn(tagged_prompt, tagged_response, session_id=session_id)
+    # diagnostic=True: see the module docstring's "Contamination guard"
+    # section - this is the one thing standing between this script and a
+    # synthetic reflection landing in the real, shared "hermes" reflections
+    # store on every manual run.
+    provider.sync_turn(
+        tagged_prompt, tagged_response, session_id=session_id, diagnostic=True
+    )
     # Reproduces the exact real-world shape of PR #79's bug: a one-shot
     # session's final turn followed almost immediately by shutdown().
     provider.shutdown()
