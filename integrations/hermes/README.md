@@ -49,8 +49,20 @@ rm "$HERMES_HOME/skills/memory/deus-memory"
 
 ## File manifest
 
-- `deus_memory_provider/__init__.py` - the `MemoryProvider` adapter (Option B).
-- `deus_memory_provider/mcp_client.py` - the MCP-client helper it wraps.
+- `deus_memory_provider/__init__.py` - the `MemoryProvider` adapter (Option B). As of LIA-500,
+  the actual MCP protocol work (interpreter resolution, env allowlisting, server-parameter
+  construction, the raw stdio call) lives in the top-level `deus_memory_client/` package (repo
+  root, sibling to `evolution/`) - this file is now a thin Hermes-ABC-lifecycle wrapper around
+  it (threading, session tracking, `is_available()`/`shutdown()`). There is no longer a
+  `deus_memory_provider/mcp_client.py` file - `from deus_memory_provider import mcp_client`
+  still works via a re-export of `deus_memory_client.mcp_client`, unchanged for existing
+  callers/tests. Reached from inside Hermes's own process via `sys.path.insert(0, str(_REPO_ROOT))`
+  (the existing `_REPO_ROOT`, resolved through the `$HERMES_HOME/plugins/deus` symlink back to
+  the real checkout) - **if you're tempted to "fix" that sys.path insert as a stray leftover,
+  it isn't**: `deus_memory_client` has zero dependency on `evolution/` or any other heavy Deus
+  internal, only on the `mcp` library already present in Hermes's own pinned environment, so
+  this doesn't reintroduce a Deus-application dependency inside Hermes's process. See
+  `deus_memory_client/README.md` for that package on its own.
 - `_stub_memory_provider_abc.py` - shared stub for Hermes's `agent.memory_provider.MemoryProvider` ABC, used by both `tests/test_deus_memory_provider.py` and `check_memory_reconciliation.py` so the adapter is importable standalone outside a real Hermes install.
 - `check_memory_reconciliation.py` - reconciliation check between a real write through the adapter and a direct read-back from `evolution.db` (LIA-499). See "Memory write/read reconciliation" below.
 - `requirements.txt` - documents the `mcp` version-compatibility assumption (see comments inline - not pip-installed separately).
