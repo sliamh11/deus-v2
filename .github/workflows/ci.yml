@@ -120,6 +120,21 @@ jobs:
       - name: Evolution tests
         run: python3 -m pytest evolution/tests/ -v
 
+      - name: Install deus_memory_client test dependencies
+        # `mcp` is deus_memory_client's only runtime dependency (StdioServerParameters,
+        # ClientSession) and isn't covered by the earlier pytest/httpx install. Pinned
+        # to match evolution/requirements.txt so tests exercise the exact env-merge
+        # behavior production ships with (build_memory_env/build_evolution_env's
+        # allowlist reasoning depends on that specific version's StdioServerParameters
+        # env-merge semantics).
+        run: python3 -m pip install mcp==1.27.1
+
+      - name: deus_memory_client tests (LIA-500, LIA-512)
+        # The shared memory/evolution MCP-server facade: interpreter resolution,
+        # env-allowlist construction (build_evolution_env/build_memory_env), and
+        # server-param wiring. Previously not wired into CI at all (LIA-512).
+        run: python3 -m pytest deus_memory_client/tests/ -v
+
       - name: Validate commits
         uses: wagoid/commitlint-github-action@v6
         with:

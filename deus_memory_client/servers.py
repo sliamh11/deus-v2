@@ -72,21 +72,28 @@ def resolve_python_executable(repo_root: Path = REPO_ROOT) -> str:
 # conversation turn.
 PYTHON_EXECUTABLE = resolve_python_executable()
 
-# mcp.StdioServerParameters's `env` REPLACES the subprocess environment
-# entirely (plain subprocess.Popen(env=...) semantics, no merge) - unlike
-# Hermes's OWN mcp_servers config-side env handling, which safely merges
-# onto a FILTERED os.environ. Passing only {"PYTHONPATH": ...} here silently
-# wiped HOME and everything else, which shifted where the evolution DB
-# resolved on disk - confirmed: log_interaction_tool returned a real UUID,
-# but the row was nowhere in the expected ~/.deus/evolution.db. Must merge
-# explicitly - but mirror the choice to allowlist rather than pass the full
-# environment through: evolution/config.py's load_api_key() falls back to
-# bare os.environ.get("GEMINI_API_KEY", "") when no .env file has a value,
-# so blanket-merging the FULL parent env would let the evolution subprocess
+# mcp.StdioServerParameters's `env` is unioned OVER the mcp SDK's own narrow
+# default (get_default_environment(): HOME/LOGNAME/PATH/SHELL/TERM/USER) when
+# `env` is not None - it does not replace the subprocess environment outright
+# (verified directly against the pinned mcp==1.27.1's
+# mcp/client/stdio/__init__.py, LIA-512). Passing only {"PYTHONPATH": ...}
+# here silently wiped everything else `server.env` would otherwise have
+# contributed, which shifted where the evolution DB resolved on disk -
+# confirmed: log_interaction_tool returned a real UUID, but the row was
+# nowhere in the expected ~/.deus/evolution.db. Must merge explicitly - but
+# mirror the choice to allowlist rather than pass the full environment
+# through: evolution/config.py's load_api_key() falls back to bare
+# os.environ.get("GEMINI_API_KEY", "") when no .env file has a value, so
+# blanket-merging the FULL parent env would let the evolution subprocess
 # silently authenticate with whatever GEMINI_API_KEY happens to sit in the
 # caller's own ambient environment (a different security context) instead of
 # failing loudly. Allowlist only what the subprocess actually needs to run
-# correctly.
+# correctly. Note this doesn't fully exclude non-allowlisted vars from the
+# subprocess: SHELL/TERM still reach it via the SDK's own default union,
+# regardless of ENV_ALLOWLIST's contents - benign for both servers today
+# (neither reads either var), but a var later added to that SDK default
+# would bypass this allowlist entirely and should be checked against, not
+# assumed excluded.
 ENV_ALLOWLIST = {"HOME", "PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ"}
 
 
@@ -101,11 +108,30 @@ def build_evolution_env(repo_root: Path = REPO_ROOT) -> Dict[str, str]:
     return env
 
 
+def build_memory_env(repo_root: Path = REPO_ROOT) -> Dict[str, str]:
+    """Build the allowlisted, merged (never replaced) env for the memory server.
+
+    Same ENV_ALLOWLIST-merge shape as `build_evolution_env` (LIA-512) - deus-memory
+    was the one server still spawned with no `env=` at all, silently falling back to
+    the `mcp` SDK's own narrower default allowlist (HOME/LOGNAME/PATH/SHELL/TERM/USER)
+    instead of this repo's curated one. Deliberately does NOT set `PYTHONPATH`, unlike
+    the evolution server: `memory_mcp_server.py` is invoked by its own script path
+    (never `python -m ...`) and does its own `sys.path.insert(0, str(_SCRIPTS_DIR))`
+    at import time, so it never needs `PYTHONPATH` to resolve its sibling modules.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key in ENV_ALLOWLIST or key.startswith("XDG_")
+    }
+
+
 def memory_server_params(repo_root: Path = REPO_ROOT) -> StdioServerParameters:
     """Params for the deus-memory MCP server - always [python, <script>.py], never the shell launcher."""
     return StdioServerParameters(
         command=PYTHON_EXECUTABLE,
         args=[str(repo_root / "scripts" / "memory_mcp_server.py")],
+        env=build_memory_env(repo_root),
     )
 
 
