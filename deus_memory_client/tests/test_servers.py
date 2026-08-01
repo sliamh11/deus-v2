@@ -65,11 +65,47 @@ def test_build_evolution_env_passes_through_xdg_prefixed_vars(
     assert env["XDG_CONFIG_HOME"] == "/xdg/config"
 
 
+def test_build_memory_env_merges_onto_allowlist_not_full_passthrough(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setenv("GEMINI_API_KEY", "should-not-leak-through")
+    env = servers.build_memory_env(tmp_path)
+    assert env["HOME"] == "/home/test"
+    assert "GEMINI_API_KEY" not in env
+
+
+def test_build_memory_env_does_not_set_pythonpath(tmp_path: Path) -> None:
+    # Unlike build_evolution_env: memory_mcp_server.py is invoked by script path
+    # (never `python -m ...`) and does its own sys.path.insert at import time.
+    env = servers.build_memory_env(tmp_path)
+    assert "PYTHONPATH" not in env
+
+
+def test_build_memory_env_passes_through_xdg_prefixed_vars(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/xdg/config")
+    env = servers.build_memory_env(tmp_path)
+    assert env["XDG_CONFIG_HOME"] == "/xdg/config"
+
+
 def test_memory_server_params_invokes_python_script_never_shell_launcher(tmp_path: Path) -> None:
     params = servers.memory_server_params(tmp_path)
     assert params.command == servers.PYTHON_EXECUTABLE
     assert params.args == [str(tmp_path / "scripts" / "memory_mcp_server.py")]
     assert "deus-memory-mcp" not in " ".join(params.args)
+
+
+def test_memory_server_params_env_merges_allowlist_not_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setenv("SOME_SECRET", "should-not-leak-through")
+    params = servers.memory_server_params(tmp_path)
+    assert params.env is not None
+    assert params.env["HOME"] == "/home/test"
+    assert "SOME_SECRET" not in params.env
 
 
 def test_evolution_server_params_invokes_module_form(tmp_path: Path) -> None:
