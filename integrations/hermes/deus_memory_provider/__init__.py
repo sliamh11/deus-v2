@@ -6,12 +6,15 @@ Hermes gets the same automatic per-turn recall + interaction logging that
 Claude Code already gets via its own hooks - without duplicating any Deus
 memory/evolution code and without ever importing it directly.
 
-This is an Adapter (over Hermes's ``MemoryProvider`` ABC) wrapping an
-MCP-client Strategy (``mcp_client.call_tool``, one call per Deus server) that
-does the actual protocol work. Runs inside Hermes's own Python process (this
-directory gets symlinked into ``$HERMES_HOME/plugins/deus/`` - see
-../README.md) - its only dependency is the ``mcp`` client library, already
-present in Hermes's own pinned environment.
+This is an Adapter (over Hermes's ``MemoryProvider`` ABC) wrapping
+``deus_memory_client`` (LIA-500) - the shared Facade that does the actual
+MCP protocol work (interpreter resolution, env allowlisting, server-param
+construction, the raw stdio call). Runs inside Hermes's own Python process
+(this directory gets symlinked into ``$HERMES_HOME/plugins/deus/`` - see
+../README.md). Never imports Deus's application code (``evolution/``,
+``scripts/``) directly - only ``deus_memory_client`` (deliberately
+lightweight, itself only depending on the ``mcp`` client library already
+present in Hermes's own pinned environment) and that same ``mcp`` library.
 
 Deus's stores stay append/read-only from this side: ``memory_recall`` reads,
 ``log_interaction_tool`` appends, nothing here ever mutates the vault, atoms,
@@ -21,102 +24,36 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mcp import StdioServerParameters
-
 from agent.memory_provider import MemoryProvider
-
-from . import mcp_client
 
 logger = logging.getLogger(__name__)
 
 # This file lives at <deus repo>/integrations/hermes/deus_memory_provider/__init__.py
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+# `deus_memory_client` is a top-level sibling package at the repo root, not a
+# subpackage of this symlinked-into-Hermes directory - `_REPO_ROOT` resolves
+# through the Hermes symlink back to the real checkout (Path.resolve()
+# follows symlinks), same mechanism already used above to locate
+# scripts/memory_mcp_server.py. If you're tempted to "fix" this sys.path
+# insert as a stray leftover - it isn't; deus_memory_client has zero
+# dependency on evolution/ or any other heavy Deus internal, only on the
+# `mcp` library already present in Hermes's env, so reaching it this way
+# doesn't reintroduce the "no Deus dependency in Hermes's env" constraint
+# this module's docstring describes.
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-def _python_has_mcp(python_path: str) -> bool:
-    try:
-        result = subprocess.run(
-            [python_path, "-c", "import mcp"],
-            capture_output=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+import deus_memory_client  # noqa: E402
+from deus_memory_client import mcp_client  # noqa: E402 - re-exported for existing callers/tests
 
-
-def _resolve_python_executable() -> str:
-    """Find a Python interpreter with the Deus server dependencies installed.
-
-    This adapter runs INSIDE Hermes's own interpreter (Hermes's own
-    sys.executable/pinned env) - the two server subprocesses need a
-    DIFFERENT interpreter, one with google-genai/sqlite-vec/sentence-
-    transformers installed (evolution/requirements.txt), not Hermes's env.
-    Bare "python3" resolved via inherited PATH is not reliable here -
-    confirmed this session it can resolve to a system interpreter with
-    neither Deus's deps nor even the `mcp` package, silently breaking the
-    subprocess handshake ("Connection closed") with no clear error surfaced
-    to the caller. Mirrors scripts/deus-memory-mcp's own choose_python():
-    explicit override, then this repo's own .venv (verified importable, not
-    just present - a partial/broken venv would otherwise be silently
-    selected and reproduce the exact failure this resolution exists to
-    avoid), then bare "python3" as a last resort.
-    """
-    override = os.environ.get("DEUS_MEMORY_MCP_PYTHON")
-    if override:
-        return override
-
-    venv_python = _REPO_ROOT / ".venv" / "bin" / "python3"
-    if venv_python.is_file() and _python_has_mcp(str(venv_python)):
-        return str(venv_python)
-
-    return "python3"
-
-
-_PYTHON_EXECUTABLE = _resolve_python_executable()
-
-_MEMORY_SERVER = StdioServerParameters(
-    command=_PYTHON_EXECUTABLE,
-    args=[str(_REPO_ROOT / "scripts" / "memory_mcp_server.py")],
-)
-# mcp.StdioServerParameters's `env` REPLACES the subprocess environment
-# entirely (plain subprocess.Popen(env=...) semantics, no merge) - unlike
-# Hermes's OWN mcp_servers config-side env handling, which safely merges
-# onto a FILTERED os.environ (confirmed by reading hermes-agent's
-# tools/mcp_tool.py::_build_safe_env - it passes through only a safe
-# baseline, not everything). Passing only {"PYTHONPATH": ...} here silently
-# wiped HOME and everything else, which shifted where the evolution DB
-# resolved on disk - confirmed this session: log_interaction_tool returned a
-# real UUID, but the row was nowhere in the expected ~/.deus/evolution.db.
-# Must merge explicitly - but mirror Hermes's own choice to allowlist rather
-# than pass the full environment through: evolution/config.py's
-# load_api_key() falls back to bare os.environ.get("GEMINI_API_KEY", "")
-# when no .env file has a value, so blanket-merging the FULL parent env
-# would let the evolution subprocess silently authenticate with whatever
-# GEMINI_API_KEY happens to sit in Hermes's own ambient environment (a
-# different security context) instead of failing loudly. Allowlist only
-# what the subprocess actually needs to run correctly.
-_ENV_ALLOWLIST = {"HOME", "PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ"}
-_EVOLUTION_ENV = {
-    key: value
-    for key, value in os.environ.items()
-    if key in _ENV_ALLOWLIST or key.startswith("XDG_")
-}
-_EVOLUTION_ENV["PYTHONPATH"] = str(_REPO_ROOT)
-
-_EVOLUTION_SERVER = StdioServerParameters(
-    command=_PYTHON_EXECUTABLE,
-    args=["-m", "evolution.mcp_server"],
-    cwd=str(_REPO_ROOT),
-    env=_EVOLUTION_ENV,
-)
+_EVOLUTION_ENV = deus_memory_client.servers.build_evolution_env(_REPO_ROOT)
 
 _PREFETCH_TIMEOUT_S = 15.0
 _SYNC_TIMEOUT_S = 30.0
@@ -207,11 +144,8 @@ class DeusMemoryProvider(MemoryProvider):
         def _worker() -> None:
             try:
                 outcome["value"] = asyncio.run(
-                    mcp_client.call_tool(
-                        _MEMORY_SERVER,
-                        "memory_recall",
-                        {"query": query, "k": 3, "source": "hermes"},
-                        timeout_s=_PREFETCH_TIMEOUT_S,
+                    deus_memory_client.recall(
+                        query, k=3, source="hermes", timeout_s=_PREFETCH_TIMEOUT_S
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - any failure here must
@@ -315,16 +249,12 @@ class DeusMemoryProvider(MemoryProvider):
     ) -> None:
         try:
             asyncio.run(
-                mcp_client.call_tool(
-                    _EVOLUTION_SERVER,
-                    "log_interaction_tool",
-                    {
-                        "prompt": user_content,
-                        "response": assistant_content,
-                        "group_folder": _GROUP_FOLDER,
-                        "session_id": session_id,
-                        "diagnostic": diagnostic,
-                    },
+                deus_memory_client.log_interaction(
+                    user_content,
+                    assistant_content,
+                    group_folder=_GROUP_FOLDER,
+                    session_id=session_id,
+                    diagnostic=diagnostic,
                     timeout_s=_SYNC_TIMEOUT_S,
                 )
             )
