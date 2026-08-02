@@ -30,8 +30,15 @@ def make_judge(model: Optional[str] = None) -> DeepEvalBaseLLM:
     - EVAL_JUDGE=mock   -> MockProvider
     - EVAL_JUDGE=ollama -> OllamaProvider
     - EVAL_JUDGE=gemini -> GeminiProvider
-    - EVAL_JUDGE=claude -> ClaudeProxyProvider
+    - EVAL_JUDGE=claude -> ClaudeCliJudgeProvider
     - If not set, auto-detect by priority (ollama > gemini > claude)
+
+    NOTE: this function predates JudgeProvider's current interface — no provider
+    (built-in or otherwise) implements `make_deepeval_judge()`, and the fallback below
+    imports a `ClaudeProxyJudge` that no longer exists (the class this module used to
+    reference, `claude_proxy.py`, was replaced by `claude_cli.py`'s `ClaudeCliJudgeProvider`
+    — see Research/2026-08-02-judge-provider-implementation-plan-v10.md). Both paths were
+    already broken before that change; left as-is, out of scope for this fix.
     """
     eval_judge = os.environ.get("EVAL_JUDGE", "").lower()
     preference = eval_judge if eval_judge else None

@@ -37,6 +37,7 @@ _SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _UPDATABLE_INTERACTION_COLS = frozenset({
     "judge_score",
     "judge_dims",
+    "judge_provider",
     "parse_error",
     "latency_ms",
     "timestamp",
@@ -265,6 +266,11 @@ class SQLiteStorageProvider(StorageProvider):
             ("has_code", "INTEGER DEFAULT 0"),
             ("correction_mined_at", "TEXT"),
             ("judge_schema_version", "INTEGER DEFAULT NULL"),
+            # Name of the JudgeProvider that produced judge_score/judge_dims (e.g.
+            # "gemini", "ollama", "claude", "codex") — lets a future consumer discount a
+            # same-family-judge window (e.g. a Claude-backed agent scored by the Claude
+            # judge). Null on old rows scored before this column existed.
+            ("judge_provider", "TEXT"),
             # JSON array of structured tool-call records (LIA-154 observability;
             # captured live but not yet scored — activation deferred).
             ("tool_calls", "TEXT"),

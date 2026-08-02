@@ -87,6 +87,7 @@ def update_score(
     dims: dict,
     parse_error: bool = False,
     schema_version: int = 1,
+    provider: Optional[str] = None,
 ) -> None:
     """Attach judge score and dimension breakdown to a logged interaction.
 
@@ -95,15 +96,24 @@ def update_score(
     (maintenance), async MCP, and backfill all route through here — so crediting
     here, gated on an atomic one-shot claim, fixes the log-time temporal race
     (the judge score was still NULL ~97% of the time) without double-crediting.
+
+    provider is the JudgeProvider registry name that produced this score (e.g.
+    "gemini"/"claude"/"codex") — callers that resolved their judge via
+    evolution.judge.make_runtime_judge() can read it back off the returned judge's
+    `provider_name` attribute. Omitted (None) when the caller doesn't know it, which
+    leaves any existing judge_provider value on the row untouched rather than
+    clobbering it with NULL.
     """
     store = get_storage()
-    store.update_interaction(
-        interaction_id,
+    fields = dict(
         judge_score=score,
         judge_dims=json.dumps(dims),
         parse_error=int(parse_error),
         judge_schema_version=schema_version,
     )
+    if provider is not None:
+        fields["judge_provider"] = provider
+    store.update_interaction(interaction_id, **fields)
     _credit_retrieved_reflections(store, interaction_id, score)
 
 

@@ -219,13 +219,40 @@ class TestBuiltInProviders:
         with patch.dict(os.environ, {"EVAL_JUDGE": "mock"}):
             assert p.is_available()
 
-    def test_claude_proxy_provider_has_correct_name(self):
-        from evolution.judge.providers.claude_proxy import ClaudeProxyProvider
-        p = ClaudeProxyProvider()
+    def test_claude_cli_provider_has_correct_name(self):
+        from evolution.judge.providers.claude_cli import ClaudeCliJudgeProvider
+        p = ClaudeCliJudgeProvider()
         assert p.name == "claude"
+        assert p.priority == 30
+
+    def test_codex_proxy_provider_has_correct_name(self):
+        from evolution.judge.providers.codex_proxy import CodexProxyProvider
+        p = CodexProxyProvider()
+        assert p.name == "codex"
         assert p.priority == 30
 
     def test_default_model_reads_from_config(self):
         from evolution.judge.providers.ollama import OllamaProvider
         p = OllamaProvider()
         assert p.default_model == "gemma4:e4b"  # current default in config
+
+
+class TestMakeRuntimeJudgeProviderName:
+    """evolution.judge.make_runtime_judge() attaches provider_name so callers can
+    persist which provider produced a score (see update_score's `provider` param)."""
+
+    def test_resolved_judge_carries_provider_name(self):
+        from evolution.judge import make_runtime_judge
+
+        reg = JudgeRegistry.default()
+        reg.register(FakeProvider("only", priority=1, available=True))
+        judge = make_runtime_judge(provider="only")
+        assert judge.provider_name == "only"
+
+    def test_auto_detect_also_attaches_provider_name(self):
+        from evolution.judge import make_runtime_judge
+
+        reg = JudgeRegistry.default()
+        reg.register(FakeProvider("fast", priority=5, available=True))
+        judge = make_runtime_judge()
+        assert judge.provider_name == "fast"

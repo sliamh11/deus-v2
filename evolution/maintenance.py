@@ -104,7 +104,10 @@ def _score_single(row: dict, judge) -> dict | None:
             "tool_use": result.tool_use,
             "personalization": result.personalization,
         }
-        update_score(row["id"], result.score, dims, parse_error=result.is_parse_error, schema_version=result.schema_version)
+        update_score(
+            row["id"], result.score, dims, parse_error=result.is_parse_error,
+            schema_version=result.schema_version, provider=getattr(judge, "provider_name", None),
+        )
         return {
             "row": row,
             "score": result.score,
