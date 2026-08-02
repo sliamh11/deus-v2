@@ -40,6 +40,12 @@ def mock_judge(monkeypatch):
     )
     judge_mock = MagicMock()
     judge_mock.evaluate = MagicMock(return_value=result)
+    # make_runtime_judge() normally attaches provider_name (see
+    # evolution/judge/__init__.py); an unconstrained MagicMock auto-vivifies any
+    # attribute access instead of raising, so getattr(judge, "provider_name", None)
+    # in _score_single would silently get back a phantom MagicMock (not None) and
+    # fail to bind as a SQL parameter. Set it explicitly to mirror real behavior.
+    judge_mock.provider_name = "mock"
 
     monkeypatch.setattr(
         "evolution.judge.make_runtime_judge",
@@ -61,6 +67,12 @@ def mock_low_score_judge(monkeypatch):
     )
     judge_mock = MagicMock()
     judge_mock.evaluate = MagicMock(return_value=result)
+    # make_runtime_judge() normally attaches provider_name (see
+    # evolution/judge/__init__.py); an unconstrained MagicMock auto-vivifies any
+    # attribute access instead of raising, so getattr(judge, "provider_name", None)
+    # in _score_single would silently get back a phantom MagicMock (not None) and
+    # fail to bind as a SQL parameter. Set it explicitly to mirror real behavior.
+    judge_mock.provider_name = "mock"
 
     monkeypatch.setattr(
         "evolution.judge.make_runtime_judge",
@@ -300,6 +312,12 @@ def mock_high_score_judge(monkeypatch):
     )
     judge_mock = MagicMock()
     judge_mock.evaluate = MagicMock(return_value=result)
+    # make_runtime_judge() normally attaches provider_name (see
+    # evolution/judge/__init__.py); an unconstrained MagicMock auto-vivifies any
+    # attribute access instead of raising, so getattr(judge, "provider_name", None)
+    # in _score_single would silently get back a phantom MagicMock (not None) and
+    # fail to bind as a SQL parameter. Set it explicitly to mirror real behavior.
+    judge_mock.provider_name = "mock"
     monkeypatch.setattr(
         "evolution.judge.make_runtime_judge",
         lambda *args, **kwargs: judge_mock,
@@ -320,6 +338,12 @@ def mock_mid_score_judge(monkeypatch):
     )
     judge_mock = MagicMock()
     judge_mock.evaluate = MagicMock(return_value=result)
+    # make_runtime_judge() normally attaches provider_name (see
+    # evolution/judge/__init__.py); an unconstrained MagicMock auto-vivifies any
+    # attribute access instead of raising, so getattr(judge, "provider_name", None)
+    # in _score_single would silently get back a phantom MagicMock (not None) and
+    # fail to bind as a SQL parameter. Set it explicitly to mirror real behavior.
+    judge_mock.provider_name = "mock"
     monkeypatch.setattr(
         "evolution.judge.make_runtime_judge",
         lambda *args, **kwargs: judge_mock,
@@ -880,6 +904,12 @@ def test_main_log_interaction_dispatch(monkeypatch, tmp_path):
     )
     judge_mock = MagicMock()
     judge_mock.evaluate = MagicMock(return_value=result)
+    # make_runtime_judge() normally attaches provider_name (see
+    # evolution/judge/__init__.py); an unconstrained MagicMock auto-vivifies any
+    # attribute access instead of raising, so getattr(judge, "provider_name", None)
+    # in _score_single would silently get back a phantom MagicMock (not None) and
+    # fail to bind as a SQL parameter. Set it explicitly to mirror real behavior.
+    judge_mock.provider_name = "mock"
     monkeypatch.setattr(
         "evolution.judge.make_runtime_judge",
         lambda *args, **kwargs: judge_mock,

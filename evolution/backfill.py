@@ -345,7 +345,7 @@ def run_backfill(
             "safety": result.safety,
             "tool_use": result.tool_use,
             "personalization": result.personalization,
-        }, schema_version=result.schema_version)
+        }, schema_version=result.schema_version, provider=getattr(judge, "provider_name", None))
 
         if verbose:
             print(f"  score={result.score:.2f}  q={result.quality:.2f}  "

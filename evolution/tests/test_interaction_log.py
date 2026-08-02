@@ -144,6 +144,48 @@ def test_update_score_writes_score_and_dims():
     assert parsed_dims["quality"] == 0.9
 
 
+def test_update_score_persists_provider_name():
+    iid = log_interaction(prompt="Test", response="Resp", group_folder="g")
+    update_score(iid, 0.85, {}, provider="claude")
+
+    conn = open_db()
+    row = conn.execute(
+        "SELECT judge_provider FROM interactions WHERE id = ?", [iid]
+    ).fetchone()
+    conn.close()
+    assert row["judge_provider"] == "claude"
+
+
+def test_update_score_without_provider_leaves_column_null():
+    # provider is optional — omitting it must not error, and must not write a
+    # bogus non-null placeholder.
+    iid = log_interaction(prompt="Test", response="Resp", group_folder="g")
+    update_score(iid, 0.85, {})
+
+    conn = open_db()
+    row = conn.execute(
+        "SELECT judge_provider FROM interactions WHERE id = ?", [iid]
+    ).fetchone()
+    conn.close()
+    assert row["judge_provider"] is None
+
+
+def test_update_score_rescore_without_provider_does_not_clobber_existing():
+    # A rescore call that doesn't know the provider (provider=None) must leave a
+    # previously-recorded judge_provider value untouched, not blank it to NULL.
+    iid = log_interaction(prompt="Test", response="Resp", group_folder="g")
+    update_score(iid, 0.5, {}, provider="codex")
+    update_score(iid, 0.6, {})  # rescore, provider unknown at this call site
+
+    conn = open_db()
+    row = conn.execute(
+        "SELECT judge_score, judge_provider FROM interactions WHERE id = ?", [iid]
+    ).fetchone()
+    conn.close()
+    assert abs(row["judge_score"] - 0.6) < 1e-5
+    assert row["judge_provider"] == "codex"
+
+
 # ── LIA-214: credit retrieved reflections at scoring time ────────────────────
 
 

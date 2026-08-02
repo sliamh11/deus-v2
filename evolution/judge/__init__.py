@@ -13,8 +13,17 @@ from typing import Optional
 
 
 def make_runtime_judge(model: Optional[str] = None, provider: Optional[str] = None) -> BaseJudge:
-    """Resolve best provider and return a runtime judge."""
-    return JudgeRegistry.default().resolve(provider).make_runtime_judge(model)
+    """Resolve best provider and return a runtime judge.
+
+    The returned judge carries a `provider_name` attribute (the resolved provider's
+    registry name, e.g. "gemini"/"claude"/"codex") so callers can persist which provider
+    produced a score (see evolution/ilog/interaction_log.py's update_score `provider`
+    param) without re-resolving the registry themselves.
+    """
+    resolved = JudgeRegistry.default().resolve(provider)
+    judge = resolved.make_runtime_judge(model)
+    judge.provider_name = resolved.name
+    return judge
 
 
 __all__ = [

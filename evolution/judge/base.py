@@ -48,3 +48,25 @@ class BaseJudge(ABC):
     ) -> JudgeResult:
         """Async variant — default falls back to sync evaluate."""
         return self.evaluate(prompt, response, tools_used, context, user_profile)
+
+    async def _a_evaluate_off_thread(
+        self,
+        prompt: str,
+        response: str,
+        tools_used: Optional[list[str]] = None,
+        context: Optional[str] = None,
+        user_profile: Optional[str] = None,
+    ) -> JudgeResult:
+        """Opt-in helper for judges whose sync evaluate() is a blocking subprocess call
+        (e.g. claude_cli.py, codex_proxy.py — a call can take up to 120-300s) — running it
+        via the default a_evaluate() above would block the event loop for that whole span.
+        Subclasses call this from their own a_evaluate() override; it is NOT the ABC
+        default so judges that don't need it (Gemini/Ollama/LlamaCpp each already
+        implement their own true-async a_evaluate) are unaffected.
+        """
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.evaluate(prompt, response, tools_used, context, user_profile),
+        )

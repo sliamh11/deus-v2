@@ -224,7 +224,10 @@ async def _async_judge_and_reflect(
             "tool_use": result.tool_use,
             "personalization": result.personalization,
         }
-        update_score(interaction_id, result.score, dims, schema_version=result.schema_version)
+        update_score(
+            interaction_id, result.score, dims, schema_version=result.schema_version,
+            provider=getattr(judge, "provider_name", None),
+        )
 
         if result.score < REFLECTION_THRESHOLD:
             generated_contents: set[str] = set()

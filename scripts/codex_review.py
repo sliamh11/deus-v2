@@ -208,8 +208,16 @@ def _classify_failure(stderr: str) -> str:
     return ""
 
 
-def call_codex_exec(prompt: str, cfg: "CodexReviewConfig", cwd: str) -> CodexResult:
+def call_codex_exec(
+    prompt: str, cfg: "CodexReviewConfig", cwd: str, schema: dict = FINDINGS_SCHEMA,
+) -> CodexResult:
     """Run `codex exec` over `prompt`, returning the parsed structured findings.
+
+    `schema` defaults to FINDINGS_SCHEMA (code-review findings envelope) — every existing
+    caller gets today's behavior unchanged. Pass a different schema to reuse this same
+    subprocess/temp-file/error-classification machinery for a different structured-output
+    shape (e.g. the judge providers' JUDGE_SCHEMA), as long as it keeps the same top-level
+    {"verdict", "results", "summary"} envelope this function's parsing below expects.
 
     This is the ONLY boundary that spends subscription quota; tests mock it wholesale.
     Temp files use delete=False + explicit close + finally-unlink so the second open
@@ -220,7 +228,7 @@ def call_codex_exec(prompt: str, cfg: "CodexReviewConfig", cwd: str) -> CodexRes
     os.close(out_fd)
     try:
         with os.fdopen(schema_fd, "w", encoding="utf-8") as fh:
-            json.dump(FINDINGS_SCHEMA, fh)
+            json.dump(schema, fh)
 
         cmd = [
             "codex", "exec",
