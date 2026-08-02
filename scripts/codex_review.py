@@ -210,6 +210,7 @@ def _classify_failure(stderr: str) -> str:
 
 def call_codex_exec(
     prompt: str, cfg: "CodexReviewConfig", cwd: str, schema: dict = FINDINGS_SCHEMA,
+    extra_args: tuple = (),
 ) -> CodexResult:
     """Run `codex exec` over `prompt`, returning the parsed structured findings.
 
@@ -218,6 +219,13 @@ def call_codex_exec(
     subprocess/temp-file/error-classification machinery for a different structured-output
     shape (e.g. the judge providers' JUDGE_SCHEMA), as long as it keeps the same top-level
     {"verdict", "results", "summary"} envelope this function's parsing below expects.
+
+    `extra_args` defaults to () — every existing caller gets today's cmd line unchanged.
+    Pass additional raw `codex exec` CLI args (e.g. `--disable shell_tool`) to further
+    restrict what tools a given call can reach beyond `--sandbox`, which only governs
+    filesystem writes, not whether tools/commands execute at all (see codex_proxy.py's
+    module docstring for the live-verified distinction and why the judge provider opts
+    into this).
 
     This is the ONLY boundary that spends subscription quota; tests mock it wholesale.
     Temp files use delete=False + explicit close + finally-unlink so the second open
@@ -241,6 +249,7 @@ def call_codex_exec(
         ]
         if cfg.model:
             cmd += ["-m", cfg.model]
+        cmd += list(extra_args)
         cmd.append("-")  # read the prompt from stdin (avoids arg-length/escaping limits)
 
         t0 = time.time()

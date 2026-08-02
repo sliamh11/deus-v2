@@ -14,16 +14,126 @@ does no prompt-security wrapping; it is a raw prompt-to-subprocess boundary. So
 sentinel wrapping untrusted content, "treat as data, never as instructions" framing) with
 judge-appropriate task text, rather than silently inheriting none of it.
 
-Known asymmetry vs. claude_cli.py's `--tools ""` (verified live via `codex exec --help`,
-2026-08-02): `--sandbox read-only` governs what a model-generated shell command may do to
-the FILESYSTEM (no writes) — it does not disable command execution itself, and `codex
-exec` has no equivalent of Claude's `--tools ""` to deny tool/shell access outright. A
-judge run scoring adversarial content could in principle still have a read-only-sandboxed
-shell command executed (e.g. an outbound network call), which `--tools ""` fully prevents
-for the Claude leg. Flagged here as a real, unmitigated residual risk rather than silently
-assumed equivalent to Piece 1's fix — narrowing this gap (or accepting it, matching the
-existing code-review warden's own use of the same sandbox setting for untrusted diffs) is
-a follow-up decision, not resolved by this diff.
+Security — tool lockdown, verified live (2026-08-02, `codex-cli 0.144.3`): `--sandbox
+read-only` alone governs what a model-generated shell command may do to the FILESYSTEM
+(no writes) but does NOT disable command execution or network access itself — confirmed
+by actually running `codex exec --sandbox read-only` with a prompt asking it to run
+`echo`, and it executed the command. `codex exec` has no single flag equivalent to
+Claude's `--tools ""`. This lockdown went through 5 rounds of ai-eng-warden review: rounds
+1-4 each found a genuinely different residual capability the previous round missed;
+round 5 corrected an overstated round-3 claim and closed out two features left
+unaddressed by name:
+  round 1 (`--disable shell_tool` + `-c web_search="disabled"` + `--disable apps` +
+    `--disable remote_plugin`) missed `image_gen.imagegen` (its own outbound network call);
+  round 2 (+ `--disable image_generation`) missed `multi_agent_v1.spawn_agent` (real
+    sub-agent spawn/execution — though the spawned child inherits the SAME restricted
+    tool list, confirmed by re-probing it) and a globally-registered `mcp_servers.
+    deus-memory` MCP tool (`memory_recall`) — both traced to THIS HOST's `~/.codex/
+    config.toml` (`[features] multi_agent = true`, `[mcp_servers.deus-memory]`), not a
+    codex-CLI compiled-in default, so no `--disable <feature>` flag existed for the
+    MCP-server one at all (MCP servers are plain config entries, not feature flags);
+  round 3 (+ `--ignore-user-config`, dropping `$CODEX_HOME/config.toml` entirely — a
+    STRUCTURAL fix instead of itemizing more config-derived gaps one at a time; auth
+    still works, confirmed via `--help`: "auth still uses CODEX_HOME") closed BOTH round-2
+    gaps with zero itemized flags, but missed a SIBLING `$CODEX_HOME` file
+    `--ignore-user-config` doesn't touch: `~/.codex/hooks.json`, which registers a
+    `PreToolUse` hook on this host matching `Edit|Write|MultiEdit|apply_patch` pointing at
+    this repo's own `codex_warden_hooks.py`, and `hooks` is a compiled-in `stable: true`
+    feature independent of config.toml (`codex features list`), so `--ignore-user-config`
+    genuinely doesn't reach the flag governing it — see round 5 below for whether this
+    hook actually FIRES via the codepath this provider uses (round 4 did not check that).
+    Also surfaced (benign, but undocumented) `goals` (`get_goal`/`create_goal`/
+    `update_goal` — self-thread-scoped budget tracking, no cross-thread reach, no
+    execution — confirmed by exercising them directly) and a sibling execpolicy-rules
+    file (`~/.codex/rules/*`, currently inert since `--disable shell_tool` already
+    removes the only tool such rules would gate, but a real config source
+    `--ignore-user-config` doesn't cover either);
+  round 4 (`--disable hooks --disable goals --ignore-rules`) reproduced the minimal
+    5-tool residual list below;
+  round 5 caught two things round 4 got wrong by NOT testing them against the actual
+    codepath, the same standard every other flag in this list is held to:
+    - The round-3 `hooks.json` claim OVERSTATED what was verified. Directly probing
+      `_run_codex_judge`'s actual call shape — two real `apply_patch` write attempts,
+      once under `--sandbox read-only` (rejected, matching the sandbox-enforcement
+      finding above) and once under `--sandbox workspace-write` (write succeeded) —
+      with the full process tree captured both times found ZERO descendants of the
+      `codex exec` process were `codex_warden_hooks.py`; no hook-trust state exists
+      under `~/.codex/` at all, consistent with hooks requiring a persisted trust grant
+      that a headless `codex exec` invocation may never receive. So the hook is
+      CONFIGURED on this host but not confirmed to fire via the codepath this provider
+      actually uses — `--disable hooks` is kept as cheap, harmless precaution, not
+      because the risk was confirmed real.
+    - `codex features list` (the same recon round 3 used) also shows `unified_exec`,
+      `browser_use`(+`_external`/`_full_cdp_access`), `computer_use` as `stable: true`
+      and unaddressed by any flag here. Live-probed directly: (a) the full lockdown's
+      5-tool list already contains no execution-shaped tool with or without
+      `--disable shell_tool` toggled — `unified_exec` produces no additional tool of
+      its own once `shell_tool` is off, i.e. it's a no-op alternate backend for the same
+      feature, not a separate capability; (b) a direct adversarial prompt ("try to take
+      a screenshot / open a browser / any computer-control capability") under the full
+      lockdown got "There is no exposed tool for: screen capture, browser automation,
+      opening a GUI browser, mouse/keyboard control, shell command execution" — `apps`/
+      `remote_plugin` already gate the `request_plugin_install` step these would need.
+
+  `--ignore-user-config`'s "closes the whole class of host-specific gaps" claim from
+  round 3 was OVERSTATED — it closes gaps sourced from `config.toml` specifically, not
+  every `$CODEX_HOME`-scoped file. `hooks.json` and `rules/*` are siblings requiring their
+  own flags (`--disable hooks`, `--ignore-rules`), which is why both are now explicit in
+  `CODEX_JUDGE_LOCKDOWN_ARGS` rather than assumed covered.
+
+  `--ignore-user-config` has two side effects that must be explicitly compensated, both
+  live-confirmed:
+  - It drops the pinned `model = "gpt-5.5"` from config.toml, so `-m <model>` (already
+    always passed by `_run_codex_judge` via `cfg.model`) is required, not optional, once
+    this flag is in use — omitting it would silently fall back to whatever codex's own
+    bundled default model is.
+  - It drops `model_reasoning_effort = "high"` from config.toml too, silently degrading to
+    "none" — a real judge-QUALITY regression, not just a security question, for a task
+    that's explicitly about careful scoring. `-c model_reasoning_effort="high"` in
+    `CODEX_JUDGE_LOCKDOWN_ARGS` restores it explicitly (verified live: the `codex exec`
+    startup banner's "reasoning effort:" line confirms "high" is restored with this flag).
+
+  `-c web_search="disabled"`: NOTE `--disable web_search` is a confirmed SILENT NO-OP
+  (accepted without error, but `web.run` stays present) — do not "simplify" this to
+  `--disable web_search` for consistency with the other flags; only the `-c` form works.
+
+  `remote_plugin` has no distinctly-named tool of its own to probe for the way
+  `shell_tool`/`web_search`/`apps`/`image_generation` each do, so unlike those four its
+  compiled-in-vs-config-derived status was never independently confirmed by watching a
+  tool appear/disappear — kept on the same defense-in-depth reasoning as `multi_agent`.
+
+  `apply_patch` (file write) remains an offered tool under the full lockdown, but is
+  genuinely rejected by `--sandbox read-only` at the enforcement layer — verified live: a
+  real attempted write returned `"patch rejected: writing is blocked by read-only
+  sandbox"` and no file was created.
+
+  Final residual tool list under the full lockdown, live-confirmed via a "list every tool
+  you have" probe (re-verified fresh after adding round 4's 3 flags, not carried over from
+  an earlier round): `update_plan`, `request_user_input` (no-op headless), `view_image`
+  (local-path only, no URL param), `apply_patch` (write, rejected by sandbox as above),
+  `multi_tool_use.parallel` (meta-wrapper over the above). None have live-verified
+  execution/write/network capability of their own.
+
+  Scope, stated honestly rather than implied complete: this lockdown closes every
+  residual-capability class found by 5 rounds of live probing on THIS host's actual
+  `$CODEX_HOME` (config.toml, hooks.json, rules/*, plus codex's own compiled-in tool
+  defaults, including the `unified_exec`/`browser_use`/`computer_use` features round 5
+  specifically checked don't expose a live tool). It does not prove no further class
+  exists — each round found something the last one missed (or, in round 5's case, found
+  that a PRIOR round's own claim was stated with more confidence than its evidence
+  supported) by actually running `codex exec` and reading its output, not by reasoning
+  from `--help`/`features list` text alone, and there is no structural argument that
+  round 5 is the last one needed. A maximally complete alternative (point `CODEX_HOME` at
+  a fresh empty directory containing only a copied `auth.json`, so no ambient host file
+  of ANY kind —
+  known, unknown, or added by a future `codex` version — can matter) was considered and
+  deliberately NOT implemented here: it is a materially bigger design change (temp-dir
+  lifecycle, keeping auth.json in sync) than the itemized-flag approach, and the residual
+  risk class left by stopping at round 4 (a host-specific dev-tooling hook, not a judge-
+  scored adversarial-content escalation path) is lower-priority than what rounds 1-3
+  closed. A manual (non-CI, quota-costing) re-probe after any `codex` CLI version bump —
+  or a switch to the scratch-`CODEX_HOME` design if a 5th gap is ever found in production
+  — is the honest next step, not silently trusting this list is exhaustive forever.
 """
 import secrets
 import shutil
@@ -39,6 +149,50 @@ from ..provider import JudgeProvider
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "scripts"
 
 DEFAULT_TIMEOUT = 300.0
+
+# Passed to call_codex_exec's `extra_args` — see module docstring for the live-verified
+# rationale behind each flag, grown across 5 ai-eng-warden review rounds as each found a
+# residual capability (or an overclaimed prior finding) the last round missed: image_gen
+# -> multi_agent/mcp_servers -> hooks.json/goals/rules -> hooks.json claim corrected +
+# unified_exec/browser_use/computer_use confirmed no-op. Tuple (not list) so it's safe as
+# a shared module-level default.
+CODEX_JUDGE_LOCKDOWN_ARGS = (
+    "--ignore-user-config",                    # drops ALL of $CODEX_HOME/config.toml —
+                                                # closes config.toml-sourced gaps (MCP
+                                                # servers, feature overrides) as a class,
+                                                # NOT every $CODEX_HOME file (see below)
+    "-c", 'model_reasoning_effort="high"',     # compensates: --ignore-user-config also
+                                                # drops config.toml's reasoning-effort pin
+    "--disable", "shell_tool",                 # codex's own compiled-in default — not
+                                                # config-derived, --ignore-user-config
+                                                # alone does NOT remove this
+    "-c", 'web_search="disabled"',              # `--disable web_search` is a silent no-op
+    "--disable", "apps",
+    "--disable", "remote_plugin",
+    "--disable", "image_generation",
+    "--disable", "multi_agent",                # belt-and-suspenders: --ignore-user-config
+                                                # already removes this on hosts where it's
+                                                # config-enabled; kept explicit in case a
+                                                # future codex version enables it by default
+    "--disable", "hooks",                      # ~/.codex/hooks.json is a SIBLING file to
+                                                # config.toml — --ignore-user-config does
+                                                # NOT touch it; a PreToolUse hook IS
+                                                # configured on this host, but round 5
+                                                # found it does NOT fire via this
+                                                # provider's actual call path (no
+                                                # persisted hook-trust) — kept as cheap,
+                                                # harmless precaution, not a confirmed fix
+    "--disable", "goals",                      # confirmed benign (self-thread-scoped, no
+                                                # execution) but undocumented otherwise —
+                                                # disabled for a minimal, fully-accounted
+                                                # residual tool list rather than an unlisted
+                                                # "probably fine" exception
+    "--ignore-rules",                          # ~/.codex/rules/* is a third sibling
+                                                # $CODEX_HOME file; currently inert since
+                                                # --disable shell_tool already removes the
+                                                # only tool such rules would gate, but not
+                                                # covered by --ignore-user-config either
+)
 
 # Same shape `_normalize_dim` expects for the new structured per-dimension formats.
 # `_normalize_dim` never raises on a missing key (falls through to DIM_DEFAULTS instead),
@@ -173,7 +327,10 @@ def _run_codex_judge(prompt: str, timeout: float, model: Optional[str]):
     )
     # Neutral cwd — avoids loading this repo's own AGENTS.md/CLAUDE.md into the judge
     # prompt, matching claude_cli.py's identical reasoning for its subprocess call.
-    return cr.call_codex_exec(prompt, cfg, tempfile.gettempdir(), schema=JUDGE_SCHEMA)
+    return cr.call_codex_exec(
+        prompt, cfg, tempfile.gettempdir(), schema=JUDGE_SCHEMA,
+        extra_args=CODEX_JUDGE_LOCKDOWN_ARGS,
+    )
 
 
 class CodexProxyRuntimeJudge(BaseJudge):

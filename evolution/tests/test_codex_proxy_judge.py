@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from evolution.judge.providers.codex_proxy import (
+    CODEX_JUDGE_LOCKDOWN_ARGS,
     CodexProxyProvider,
     CodexProxyRuntimeJudge,
     JUDGE_SCHEMA,
@@ -102,6 +103,39 @@ def test_success_round_trips_through_real_call_codex_exec():
     # this is the schema-parsing-boundary behavior a call_codex_exec-level mock would hide.
     assert written_schema["properties"]["results"]["items"]["properties"].keys() == \
         JUDGE_SCHEMA["properties"]["results"]["items"]["properties"].keys()
+
+
+def test_run_codex_judge_applies_tool_lockdown_args():
+    # The full CODEX_JUDGE_LOCKDOWN_ARGS tuple (currently: --ignore-user-config, a
+    # model_reasoning_effort compensation, and several --disable/-c overrides — see the
+    # module docstring for the live-verified rationale behind each, grown across several
+    # review rounds as new residual capabilities were found) must actually reach the real
+    # `codex exec` command line — this closes the gap where --sandbox read-only alone
+    # still lets a judge session execute shell commands / reach the network / spawn
+    # sub-agents / reach host-configured MCP servers or connector plugins. Imports the
+    # tuple directly from the module rather than hardcoding it here, so this test doesn't
+    # go stale as the lockdown grows.
+    envelope = {"verdict": "SHIP", "summary": "ok", "results": [_WELL_FORMED_ITEM]}
+    captured_cmd = {}
+
+    def _run(cmd, **kwargs):
+        captured_cmd["cmd"] = cmd
+        out_path = cmd[cmd.index("-o") + 1]
+        Path(out_path).write_text(json.dumps(envelope), encoding="utf-8")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=_run):
+        _run_codex_judge("prompt", timeout=5, model=None)
+    cmd = captured_cmd["cmd"]
+    # CODEX_JUDGE_LOCKDOWN_ARGS repeats --disable multiple times and mixes standalone
+    # flags with flag+value pairs, so cmd.index("--disable") alone would only ever find
+    # the first occurrence — check the full lockdown tuple appears as a contiguous
+    # subsequence instead, which is arity-agnostic by construction.
+    lockdown = list(CODEX_JUDGE_LOCKDOWN_ARGS)
+    n = len(lockdown)
+    assert any(cmd[i:i + n] == lockdown for i in range(len(cmd) - n + 1)), (
+        f"lockdown args {lockdown} not found contiguously in {cmd}"
+    )
 
 
 def test_cli_not_found():
@@ -239,7 +273,8 @@ def test_provider_name_and_priority():
 
 def test_call_codex_exec_default_schema_unaffected():
     """The one existing internal caller (codex_review.review()) never passes
-    schema — confirm the default still writes FINDINGS_SCHEMA, not JUDGE_SCHEMA."""
+    schema/extra_args — confirm the defaults still write FINDINGS_SCHEMA, not
+    JUDGE_SCHEMA, and add none of the judge's --disable/-c lockdown flags."""
     import sys
     import tempfile as _tempfile
     from pathlib import Path as _Path
@@ -250,8 +285,10 @@ def test_call_codex_exec_default_schema_unaffected():
         import codex_review as cr
 
         written_schema = {}
+        captured_cmd = {}
 
         def _run(cmd, **kwargs):
+            captured_cmd["cmd"] = cmd
             schema_path = cmd[cmd.index("--output-schema") + 1]
             written_schema.update(json.loads(_Path(schema_path).read_text()))
             out_path = cmd[cmd.index("-o") + 1]
@@ -265,6 +302,7 @@ def test_call_codex_exec_default_schema_unaffected():
             cfg = cr.CodexReviewConfig()
             cr.call_codex_exec("prompt", cfg, _tempfile.gettempdir())
         assert written_schema == cr.FINDINGS_SCHEMA
+        assert "--disable" not in captured_cmd["cmd"]
     finally:
         if str(scripts_dir) in sys.path:
             sys.path.remove(str(scripts_dir))
