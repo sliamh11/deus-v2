@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -56,6 +57,38 @@ DEFAULT_HEALTH = Path(
 DEFAULT_MAINT_LOG = Path(
     os.environ.get("DEUS_MORNING_REPORT_MAINT_LOG", str(_REPO_ROOT / "logs" / "maintenance.log"))  # LIA-254
 )
+# LIA-552: the cockpit healthcheck's persisted verdict. Same contract as
+# DEFAULT_HEALTH above — this report READS the artifact the 06:45 run already
+# wrote, it never re-probes.
+DEFAULT_COCKPIT = Path(
+    os.environ.get(
+        "DEUS_MORNING_REPORT_COCKPIT", str(Path("~/.deus/cockpit_health.json").expanduser())
+    )
+)
+#: Sized to THIS report's cadence (cockpit 06:45 -> report 07:00), deliberately
+#: not the cockpit's own 36h. That constant tolerates a user simply not
+#: launching `deus` for a day; here, 36h would stay silent through a whole
+#: missed run and only speak up on the second — a full day of a dead checker
+#: looking quiet, which is the failure this exists to catch. 30h = one cycle
+#: plus tolerance for a crashed checker (a sleeping machine self-heals: launchd
+#: runs a missed StartCalendarInterval after wake).
+COCKPIT_MAX_AGE_SEC = 30 * 3600
+#: A verdict is only "missing" if something was supposed to write one. An
+#: optional component that was never enabled must read as not-applicable, never
+#: as broken (mirrors _launch_agent_installed in cockpit_healthcheck.py).
+#:
+#: One marker per platform, because setup installs this job on all three
+#: (SCHEDULED_JOBS in setup/service.ts): launchd, systemd --user or system, and
+#: Task Scheduler. Checking only the macOS plist would silently omit every
+#: verdict — failures included — on supported Linux and Windows installs.
+_JOB_ID = "cockpit-healthcheck"
+COCKPIT_JOB_MARKERS = (
+    Path(f"~/Library/LaunchAgents/com.deus.{_JOB_ID}.plist").expanduser(),
+    Path(f"~/.config/systemd/user/deus-{_JOB_ID}.timer").expanduser(),
+    Path(f"/etc/systemd/system/deus-{_JOB_ID}.timer"),
+)
+#: Windows has no install marker on disk; Task Scheduler is queried instead.
+COCKPIT_TASK_NAME = "DeusCockpitHealthcheck"
 
 
 def _read_health(path: Path) -> "tuple[dict | None, dict | None]":
@@ -85,6 +118,60 @@ def _read_health(path: Path) -> "tuple[dict | None, dict | None]":
     if not snaps:
         return None, None
     return snaps[0], (snaps[1] if len(snaps) >= 2 else None)
+
+
+def _cockpit_expected() -> bool:
+    """Was a cockpit verdict supposed to exist? True iff its scheduled job is installed.
+
+    Absence is only a signal where something was expected. Without this, every
+    install that never enabled the cockpit — all Linux ones — would receive a
+    "no verdict on record" warning every single day.
+    """
+    if any(m.is_file() for m in COCKPIT_JOB_MARKERS):
+        return True
+    if sys.platform.startswith("win"):
+        try:
+            return subprocess.run(
+                ["schtasks", "/Query", "/TN", COCKPIT_TASK_NAME],
+                capture_output=True, timeout=10,
+            ).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            # Cannot tell. Say "not expected" rather than emit a daily
+            # missing-verdict warning we are not sure is warranted.
+            return False
+    return False
+
+
+def _read_cockpit(path: Path) -> "dict | None":
+    """The cockpit's last verdict, or None if unavailable for any reason.
+
+    Tolerant in the same way as _read_health: a missing, unreadable, malformed
+    or unexpectedly-shaped artifact must never take down the whole morning
+    report. None means "no usable verdict", and the caller decides whether that
+    is newsworthy.
+    """
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    # Validate field shapes, not just the top-level type. This artifact is
+    # written by a separate process in another repo — a real system boundary —
+    # and a string `checked_at` or a non-list `probes` would otherwise raise out
+    # of the formatter and take down the whole unattended report.
+    if not isinstance(obj.get("checked_at"), (int, float)):
+        return None
+    probes = obj.get("probes")
+    if not isinstance(probes, list):
+        return None
+    if not all(isinstance(p, dict) for p in probes):
+        # A non-dict element would be skipped when collecting failures but still
+        # counted in the "all OK (N probes)" total, manufacturing a false-clean
+        # verdict out of garbage. Reject the artifact rather than report a
+        # number that is not what it says it is.
+        return None
+    return obj
 
 
 def _parse_last_maintenance_run(path: Path) -> "dict | None":
@@ -145,7 +232,43 @@ def _fmt_delta(cur, prev, *, places: int = 0) -> str:
     return f" ({d:+.{places}f})"
 
 
-def _format_digest(latest: "dict | None", prev: "dict | None", maint: "dict | None", today: str) -> str:
+def _format_cockpit(cockpit: "dict | None", expected: bool, now: float) -> "list[str]":
+    """The cockpit section, or nothing at all when no verdict was expected.
+
+    Three states, and the middle one is why this exists: a verdict that should
+    be here and is not must be reported, never rendered as silence — a dead
+    subsystem looked like a quiet one for five months (LIA-552).
+    """
+    if not expected:
+        return []  # never enabled here: not-applicable, not broken
+    if cockpit is None:
+        return ["⚠️ no cockpit verdict on record (healthcheck may never have run)"]
+
+    probes = cockpit.get("probes") or []
+    age_sec = now - float(cockpit.get("checked_at") or 0)
+    age_h = age_sec / 3600
+    out: list[str] = []
+    if age_sec > COCKPIT_MAX_AGE_SEC:
+        out.append(f"⚠️ cockpit verdict is {age_h:.0f}h old (healthcheck may not be running)")
+
+    bad = [p for p in probes if isinstance(p, dict) and p.get("status") != "OK"]
+    if not bad:
+        out.append(f"Systems: all OK ({len(probes)} probes)")
+        return out
+    for p in bad:
+        # The raw status is kept: the cockpit treats UNKNOWN (partial blindness)
+        # as meaningfully different from FAILED, and collapsing them would throw
+        # away a distinction it goes out of its way to preserve.
+        tag = "NEW" if p.get("is_regression") else "ONGOING"
+        name = p.get("probe") or "<unnamed probe>"
+        why = p.get("observed") or "no detail recorded"
+        out.append(f"  {p.get('status')} {name} ({tag}) — {why}")
+    return out
+
+
+def _format_digest(latest: "dict | None", prev: "dict | None", maint: "dict | None", today: str,
+                   cockpit: "dict | None" = None, cockpit_expected: bool = False,
+                   now: "float | None" = None) -> str:
     """Build the concise, skimmable 'while you slept' digest. Pure function."""
     out: list[str] = [f"🌙 While you slept — {today}"]
 
@@ -184,6 +307,9 @@ def _format_digest(latest: "dict | None", prev: "dict | None", maint: "dict | No
             out.append(f"  ⚠️ {w}")
     else:
         out.append("Maintenance: no overnight run found.")
+
+    out.extend(_format_cockpit(cockpit, cockpit_expected,
+                               now if now is not None else time.time()))
 
     return "\n".join(out)
 
@@ -240,19 +366,26 @@ def main(argv: "list[str] | None" = None, deliverer=_deliver, notifier=macos_not
     parser.add_argument("--maint-log", type=Path, default=DEFAULT_MAINT_LOG)
     parser.add_argument("--db", type=Path, default=STORE_DIR / "messages.db")
     parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
+    parser.add_argument("--cockpit", type=Path, default=DEFAULT_COCKPIT)
     args = parser.parse_args(argv)
 
     ts = int((now if now is not None else time.time()) * 1000)
     latest, prev = _read_health(args.health)
     maint = _parse_last_maintenance_run(args.maint_log)
+    cockpit = _read_cockpit(args.cockpit)
+    cockpit_expected = _cockpit_expected()
 
-    # Nothing to report at all (fresh install, no run yet): benign skip.
-    if latest is None and maint is None:
-        print("morning_report: no health snapshot or maintenance log yet — nothing to report")
+    # Benign skip for a fresh install where nothing is configured yet. Keyed on
+    # whether a cockpit verdict was EXPECTED, not on whether one is present:
+    # gating on presence would exit precisely when the verdict is missing, which
+    # is the one case that most needs reporting.
+    if latest is None and maint is None and cockpit is None and not cockpit_expected:
+        print("morning_report: nothing configured to report on yet — skipping")
         return 0
 
-    today = time.strftime("%Y-%m-%d", time.localtime(now if now is not None else time.time()))
-    digest = _format_digest(latest, prev, maint, today)
+    now_s = now if now is not None else time.time()
+    today = time.strftime("%Y-%m-%d", time.localtime(now_s))
+    digest = _format_digest(latest, prev, maint, today, cockpit, cockpit_expected, now_s)
 
     control = _find_control_group(args.db)
     if control is None:
