@@ -55,7 +55,7 @@
     "ink": "npm:@jrichman/ink@6.6.9",
     "langchain": "^1.5.3",
     "lowlight": "^3.3.0",
-    "minimatch": "^10.2.5",
+    "minimatch": "^10.2.6",
     "pino": "^10.3.1",
     "pino-pretty": "^13.0.0",
     "react": "^19.2.4",
